@@ -73,8 +73,17 @@ All macOS-specific code (ScreenCaptureKit, CoreGraphics FFI, AVFoundation FFI) m
 - React + TypeScript + Vite
 - Tauri commands are called via `invoke()` from `@tauri-apps/api/core`
 - Backend-to-frontend events use `listen()` from `@tauri-apps/api/event`
-- Component styles are colocated as `.css` files alongside `.tsx` files
+- **Tailwind CSS v4** for all styling — no custom CSS files per component
 - Audio level meters use dB-scale conversion with peak-hold smoothing
+
+### Styling with Tailwind CSS v4
+
+- All styles use Tailwind utility classes directly in JSX `className` props. Do not create separate `.css` files for components.
+- Tailwind is loaded via `@tailwindcss/vite` plugin — no PostCSS config or `tailwind.config.js`.
+- Theme customization (brand colors, fonts) is in `src/App.css` using `@theme { }` blocks, not a config file.
+- Custom brand tokens: `primary` (#4361ee), `primary-hover` (#3a56d4), `success` (#06d6a0), `danger` (#e53e3e). Use as `bg-primary`, `text-danger`, etc.
+- Dark mode uses Tailwind's `dark:` variant, which follows `prefers-color-scheme` automatically. Base dark/light styles are set on `<html>` in `index.html`.
+- Custom keyframe animations (e.g., `pulse-ring`) live in `src/App.css` alongside the `@theme` block.
 
 ## Key Dependencies
 
@@ -82,3 +91,4 @@ All macOS-specific code (ScreenCaptureKit, CoreGraphics FFI, AVFoundation FFI) m
 - `objc2` / `objc2-foundation` / `block2` — Objective-C FFI for AVFoundation permissions
 - `bytemuck` — Zero-copy casting for PCM audio data
 - `tokio` — Async runtime for the audio chunk processing pipeline
+- `tailwindcss` / `@tailwindcss/vite` — Utility-first CSS framework (v4) with Vite integration
