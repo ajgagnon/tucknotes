@@ -8,6 +8,7 @@ pub enum AppError {
     DownloadFailed(String),
     IoError(String),
     InvalidModel(String),
+    TranscriptionFailed(String),
     LockPoisoned,
     NotSupported,
 }
@@ -20,6 +21,7 @@ impl std::fmt::Display for AppError {
             AppError::DownloadFailed(msg) => write!(f, "Download failed: {}", msg),
             AppError::IoError(msg) => write!(f, "IO error: {}", msg),
             AppError::InvalidModel(msg) => write!(f, "Invalid model: {}", msg),
+            AppError::TranscriptionFailed(msg) => write!(f, "Transcription failed: {}", msg),
             AppError::LockPoisoned => write!(f, "Lock poisoned"),
             AppError::NotSupported => write!(f, "Not supported on this platform"),
         }

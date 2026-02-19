@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum AudioSource {
@@ -14,9 +14,78 @@ pub struct AudioChunkEvent {
     pub timestamp: f64,
 }
 
+#[derive(Clone, serde::Serialize)]
+pub struct TranscriptEvent {
+    pub text: String,
+    pub source: String,
+    pub timestamp_ms: u64,
+}
+
+pub struct AccumulatedAudio {
+    pub samples: Vec<f32>,
+    pub start_timestamp: f64,
+}
+
+pub struct PcmAccumulator {
+    system_buf: Vec<f32>,
+    mic_buf: Vec<f32>,
+    system_start_ts: Option<f64>,
+    mic_start_ts: Option<f64>,
+}
+
+impl PcmAccumulator {
+    pub fn new() -> Self {
+        Self {
+            system_buf: Vec::new(),
+            mic_buf: Vec::new(),
+            system_start_ts: None,
+            mic_start_ts: None,
+        }
+    }
+
+    pub fn append(&mut self, source: &AudioSource, samples: &[f32], timestamp: f64) {
+        match source {
+            AudioSource::SystemAudio => {
+                self.system_start_ts.get_or_insert(timestamp);
+                self.system_buf.extend_from_slice(samples);
+            }
+            AudioSource::Microphone => {
+                self.mic_start_ts.get_or_insert(timestamp);
+                self.mic_buf.extend_from_slice(samples);
+            }
+        }
+    }
+
+    /// Flush both buffers, returning accumulated audio for each source.
+    /// Uses `std::mem::take` to swap buffers with empty Vecs (zero-copy).
+    pub fn flush(&mut self) -> (Option<AccumulatedAudio>, Option<AccumulatedAudio>) {
+        let system = if self.system_buf.is_empty() {
+            None
+        } else {
+            Some(AccumulatedAudio {
+                samples: std::mem::take(&mut self.system_buf),
+                start_timestamp: self.system_start_ts.take().unwrap_or(0.0),
+            })
+        };
+
+        let mic = if self.mic_buf.is_empty() {
+            None
+        } else {
+            Some(AccumulatedAudio {
+                samples: std::mem::take(&mut self.mic_buf),
+                start_timestamp: self.mic_start_ts.take().unwrap_or(0.0),
+            })
+        };
+
+        (system, mic)
+    }
+}
+
 #[cfg(target_os = "macos")]
 pub struct RecordingState {
     pub capture: Mutex<Option<crate::services::audio_capture::AudioCapture>>,
+    pub accumulator: Arc<Mutex<PcmAccumulator>>,
+    pub cancel_token: Mutex<Option<tokio_util::sync::CancellationToken>>,
 }
 
 #[cfg(not(target_os = "macos"))]

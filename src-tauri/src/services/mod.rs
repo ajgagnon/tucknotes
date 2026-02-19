@@ -5,3 +5,5 @@ pub mod model_manager;
 pub mod audio_capture;
 #[cfg(target_os = "macos")]
 pub mod permissions;
+#[cfg(target_os = "macos")]
+pub mod transcription;
