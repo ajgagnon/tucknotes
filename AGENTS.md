@@ -1,0 +1,84 @@
+# Grain - Agent Guidelines
+
+## Project Overview
+
+Grain is a macOS desktop app that captures meeting audio (system + microphone) for local AI-powered note-taking. Built with Tauri (Rust backend, React/TypeScript frontend). Audio capture uses Apple's ScreenCaptureKit via the `screencapturekit` crate.
+
+## Rust Backend Architecture (`src-tauri/src/`)
+
+```
+src-tauri/src/
+├── main.rs               # Entry point — do not modify
+├── lib.rs                # Module declarations + Tauri builder (run())
+├── errors.rs             # Centralized AppError enum
+├── commands/             # Thin #[tauri::command] handlers
+├── models/               # Serializable structs, shared types, app state
+└── services/             # Business logic, FFI, capture pipeline
+```
+
+### Layer responsibilities
+
+- **`commands/`** — Tauri command handlers. These are thin: validate input, call a service, return a result. No business logic here. Each command must be `pub` and registered in `lib.rs` via `tauri::generate_handler![]`.
+- **`models/`** — Data structs that cross boundaries (Rust-to-JS serialization, shared between commands and services). All models derive `serde::Serialize`. App state structs (e.g., `RecordingState`) also live here.
+- **`services/`** — Where the real work happens. Audio capture, permission FFI, and any future processing logic. Services should not depend on Tauri types (`AppHandle`, `State`) directly — those are passed in by commands.
+- **`errors.rs`** — Single `AppError` enum for all command errors. Do not use `Result<T, String>` in commands.
+
+### Adding a new feature
+
+1. Define data types in `models/`
+2. Implement logic in `services/`
+3. Create a thin command in `commands/` that calls the service
+4. Register the command in `lib.rs`
+5. Add any new error variants to `AppError` in `errors.rs`
+
+## Error Handling
+
+All `#[tauri::command]` functions return `Result<T, AppError>`. Never use `Result<T, String>`.
+
+`AppError` uses tagged serde serialization so the frontend receives structured errors:
+
+```rust
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", content = "message")]
+pub enum AppError {
+    CaptureFailed(String),
+    LockPoisoned,
+    NotSupported,
+}
+```
+
+On the frontend, catch blocks receive `{ kind: string; message?: string }`:
+
+```typescript
+try {
+    await invoke("start_recording");
+} catch (error) {
+    const err = error as { kind: string; message?: string };
+    switch (err.kind) {
+        case "CaptureFailed": // err.message has details
+        case "LockPoisoned":  // internal state error
+        case "NotSupported":  // non-macOS platform
+    }
+}
+```
+
+When adding new error variants, add them to the `AppError` enum with appropriate `Display` formatting.
+
+## macOS Platform Guards
+
+All macOS-specific code (ScreenCaptureKit, CoreGraphics FFI, AVFoundation FFI) must be gated with `#[cfg(target_os = "macos")]`. Non-macOS paths should return `AppError::NotSupported`. The `services/` module declarations in `services/mod.rs` are already cfg-gated.
+
+## Frontend (`src/`)
+
+- React + TypeScript + Vite
+- Tauri commands are called via `invoke()` from `@tauri-apps/api/core`
+- Backend-to-frontend events use `listen()` from `@tauri-apps/api/event`
+- Component styles are colocated as `.css` files alongside `.tsx` files
+- Audio level meters use dB-scale conversion with peak-hold smoothing
+
+## Key Dependencies
+
+- `screencapturekit` — Rust bindings for Apple ScreenCaptureKit (macOS only)
+- `objc2` / `objc2-foundation` / `block2` — Objective-C FFI for AVFoundation permissions
+- `bytemuck` — Zero-copy casting for PCM audio data
+- `tokio` — Async runtime for the audio chunk processing pipeline
