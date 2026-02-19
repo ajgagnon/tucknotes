@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import PermissionSetup from "./components/PermissionSetup";
 import RecordingView from "./components/RecordingView";
-import "./App.css";
 
 function App() {
   const [permissionsReady, setPermissionsReady] = useState<boolean | null>(null);

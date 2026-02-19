@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import "./PermissionSetup.css";
 
 interface PermissionSetupProps {
   onComplete: () => void;
@@ -62,14 +61,19 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
 
   if (allGranted) {
     return (
-      <div className="permission-screen">
-        <div className="permission-card">
-          <div className="permission-icon success-icon">✓</div>
-          <h1>You're all set!</h1>
-          <p className="permission-subtitle">
+      <div className="min-h-screen flex items-center justify-center p-8">
+        <div className="max-w-[460px] w-full text-center">
+          <div className="w-16 h-16 rounded-full bg-success text-white text-2xl flex items-center justify-center mx-auto mb-6">
+            ✓
+          </div>
+          <h1 className="text-2xl font-bold mb-2">You're all set!</h1>
+          <p className="text-neutral-500 dark:text-neutral-400 text-[0.95rem] mb-7 leading-relaxed">
             All permissions are granted. Grain can capture meeting audio.
           </p>
-          <button className="permission-btn primary" onClick={onComplete}>
+          <button
+            className="w-full border-none rounded-xl py-3 px-8 text-[0.95rem] font-semibold cursor-pointer bg-primary text-white shadow-[0_2px_8px_rgba(67,97,238,0.25)] transition-all duration-200 hover:bg-primary-hover hover:shadow-[0_4px_12px_rgba(67,97,238,0.35)] hover:-translate-y-px active:translate-y-0"
+            onClick={onComplete}
+          >
             Get Started
           </button>
         </div>
@@ -78,37 +82,52 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
   }
 
   return (
-    <div className="permission-screen">
-      <div className="permission-card">
-        <div className="permission-icon">🎙️</div>
-        <h1>Before we get started</h1>
-        <p className="permission-subtitle">
+    <div className="min-h-screen flex items-center justify-center p-8">
+      <div className="max-w-[460px] w-full text-center">
+        <div className="text-4xl mb-3 leading-none">🎙️</div>
+        <h1 className="text-2xl font-bold mb-2">Before we get started</h1>
+        <p className="text-neutral-500 dark:text-neutral-400 text-[0.95rem] mb-7 leading-relaxed">
           Grain needs two macOS permissions to capture audio from your meetings.
         </p>
 
         {/* Screen Recording */}
-        <div className={`permission-explainer ${screenGranted ? "granted" : ""}`}>
-          <div className="explainer-header">
-            <span className="explainer-icon">🖥️</span>
+        <div
+          className={`rounded-xl p-5 px-6 text-left mb-4 transition-all duration-300 ${
+            screenGranted
+              ? "border border-success/30 opacity-70 bg-black/3 dark:bg-white/5 dark:border-success/25"
+              : "border border-black/8 bg-black/3 dark:bg-white/5 dark:border-white/10"
+          }`}
+        >
+          <div className="flex items-start gap-3 mb-3">
+            <span className="text-2xl leading-none shrink-0 mt-0.5">🖥️</span>
             <div>
-              <h3>Screen Recording</h3>
-              <span className={`status-badge ${screenGranted ? "granted" : "not-granted"}`}>
+              <h3 className="text-[0.95rem] font-semibold m-0 mb-1">Screen Recording</h3>
+              <span
+                className={`text-[0.7rem] font-semibold px-2 py-0.5 rounded-full inline-block tracking-tight ${
+                  screenGranted
+                    ? "bg-green-100 text-green-800 dark:bg-success/15 dark:text-success"
+                    : "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+                }`}
+              >
                 {screenGranted ? "Granted" : "Not Granted"}
               </span>
             </div>
           </div>
           {!screenGranted && (
             <>
-              <p>
+              <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-400 mb-3">
                 macOS requires the <strong>Screen Recording</strong> permission
                 to capture system audio. There is no separate "audio only"
                 permission — no video or screenshots are ever taken.
               </p>
-              <button className="permission-btn secondary" onClick={handleScreenEnable}>
+              <button
+                className="border-[1.5px] border-primary dark:border-blue-400 text-primary dark:text-blue-400 bg-transparent rounded-xl py-2 px-6 text-sm font-semibold cursor-pointer transition-all duration-200 w-full mt-2 hover:bg-primary/8 dark:hover:bg-blue-400/10"
+                onClick={handleScreenEnable}
+              >
                 {screenRequested ? "Open System Settings" : "Enable Screen Recording"}
               </button>
               {screenRequested && (
-                <p className="permission-hint">
+                <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-4 leading-relaxed">
                   Find <strong>Grain</strong> in the list and toggle it on.
                 </p>
               )}
@@ -117,13 +136,23 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
         </div>
 
         {/* Microphone */}
-        <div className={`permission-explainer ${micStatus === "authorized" ? "granted" : ""}`}>
-          <div className="explainer-header">
-            <span className="explainer-icon">🎤</span>
+        <div
+          className={`rounded-xl p-5 px-6 text-left mb-4 transition-all duration-300 ${
+            micStatus === "authorized"
+              ? "border border-success/30 opacity-70 bg-black/3 dark:bg-white/5 dark:border-success/25"
+              : "border border-black/8 bg-black/3 dark:bg-white/5 dark:border-white/10"
+          }`}
+        >
+          <div className="flex items-start gap-3 mb-3">
+            <span className="text-2xl leading-none shrink-0 mt-0.5">🎤</span>
             <div>
-              <h3>Microphone</h3>
+              <h3 className="text-[0.95rem] font-semibold m-0 mb-1">Microphone</h3>
               <span
-                className={`status-badge ${micStatus === "authorized" ? "granted" : "not-granted"}`}
+                className={`text-[0.7rem] font-semibold px-2 py-0.5 rounded-full inline-block tracking-tight ${
+                  micStatus === "authorized"
+                    ? "bg-green-100 text-green-800 dark:bg-success/15 dark:text-success"
+                    : "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+                }`}
               >
                 {micStatus === "authorized" ? "Granted" : "Not Granted"}
               </span>
@@ -131,13 +160,13 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
           </div>
           {micStatus !== "authorized" && (
             <>
-              <p>
+              <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-400 mb-3">
                 Microphone access is needed to capture your voice during
                 meetings. Audio is processed locally and never leaves your
                 device.
               </p>
               <button
-                className="permission-btn secondary"
+                className="border-[1.5px] border-primary dark:border-blue-400 text-primary dark:text-blue-400 bg-transparent rounded-xl py-2 px-6 text-sm font-semibold cursor-pointer transition-all duration-200 w-full mt-2 hover:bg-primary/8 dark:hover:bg-blue-400/10 disabled:opacity-50 disabled:cursor-default"
                 onClick={handleMicEnable}
                 disabled={micRequesting}
               >
@@ -148,7 +177,7 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
                     : "Enable Microphone"}
               </button>
               {micStatus === "denied" && (
-                <p className="permission-hint">
+                <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-4 leading-relaxed">
                   Toggle <strong>Grain</strong> on in System Settings &gt;
                   Privacy &amp; Security &gt; Microphone.
                 </p>
