@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { formatTime } from "../lib/formatTime";
+import { rmsToLevel, smoothLevel } from "../lib/audioLevel";
 import "./RecordingView.css";
 
 interface AudioChunkEvent {
@@ -8,16 +10,6 @@ interface AudioChunkEvent {
   rms: number;
   source: string;
   timestamp: number;
-}
-
-function formatTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  const mm = String(m).padStart(2, "0");
-  const ss = String(s).padStart(2, "0");
-  if (h > 0) return `${h}:${mm}:${ss}`;
-  return `${mm}:${ss}`;
 }
 
 function RecordingView() {
@@ -82,18 +74,14 @@ function RecordingView() {
     listen<AudioChunkEvent>("audio-chunk", (event) => {
       if (!mounted) return;
       const { source, rms } = event.payload;
+      const level = rmsToLevel(rms);
 
-      // dB-based meter: maps -60dB (near-silence) → 0, 0dB (full scale) → 1
-      const db = rms > 0 ? 20 * Math.log10(rms) : -100;
-      const level = Math.max(0, Math.min(1, (db + 60) / 60));
-
-      // Fast attack, slow decay: jump to peaks instantly, fade out gradually
       if (source === "system") {
         setSystemChunks((c) => c + 1);
-        setSystemLevel((prev) => (level > prev ? level : prev * 0.92 + level * 0.08));
+        setSystemLevel((prev) => smoothLevel(prev, level));
       } else {
         setMicChunks((c) => c + 1);
-        setMicLevel((prev) => (level > prev ? level : prev * 0.92 + level * 0.08));
+        setMicLevel((prev) => smoothLevel(prev, level));
       }
     }).then((unlisten) => {
       unlistenRef.current = unlisten;

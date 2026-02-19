@@ -26,12 +26,7 @@ pub async fn start_recording(
                     AudioSource::SystemAudio => "system",
                     AudioSource::Microphone => "microphone",
                 };
-                let rms = if chunk.pcm_data.is_empty() {
-                    0.0
-                } else {
-                    let sum_sq: f32 = chunk.pcm_data.iter().map(|s| s * s).sum();
-                    (sum_sq / chunk.pcm_data.len() as f32).sqrt()
-                };
+                let rms = crate::services::audio::compute_rms(&chunk.pcm_data);
                 let _ = app.emit(
                     "audio-chunk",
                     AudioChunkEvent {
