@@ -5,6 +5,7 @@ pub mod services;
 
 use std::sync::Mutex;
 
+use commands::models::*;
 use commands::permissions::*;
 use commands::recording::*;
 use models::RecordingState;
@@ -31,6 +32,11 @@ pub fn run() {
             open_microphone_settings,
             start_recording,
             stop_recording,
+            list_available_models,
+            get_model_status,
+            download_model,
+            get_selected_model,
+            set_selected_model,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

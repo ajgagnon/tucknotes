@@ -1,4 +1,6 @@
 pub mod audio;
+pub mod model_manager;
+
 #[cfg(target_os = "macos")]
 pub mod audio_capture;
 #[cfg(target_os = "macos")]

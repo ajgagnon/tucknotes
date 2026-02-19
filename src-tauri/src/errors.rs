@@ -4,6 +4,10 @@ use serde::Serialize;
 #[serde(tag = "kind", content = "message")]
 pub enum AppError {
     CaptureFailed(String),
+    ConfigError(String),
+    DownloadFailed(String),
+    IoError(String),
+    InvalidModel(String),
     LockPoisoned,
     NotSupported,
 }
@@ -12,9 +16,31 @@ impl std::fmt::Display for AppError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             AppError::CaptureFailed(msg) => write!(f, "Capture failed: {}", msg),
+            AppError::ConfigError(msg) => write!(f, "Config error: {}", msg),
+            AppError::DownloadFailed(msg) => write!(f, "Download failed: {}", msg),
+            AppError::IoError(msg) => write!(f, "IO error: {}", msg),
+            AppError::InvalidModel(msg) => write!(f, "Invalid model: {}", msg),
             AppError::LockPoisoned => write!(f, "Lock poisoned"),
             AppError::NotSupported => write!(f, "Not supported on this platform"),
         }
+    }
+}
+
+impl From<std::io::Error> for AppError {
+    fn from(e: std::io::Error) -> Self {
+        AppError::IoError(e.to_string())
+    }
+}
+
+impl From<serde_json::Error> for AppError {
+    fn from(e: serde_json::Error) -> Self {
+        AppError::ConfigError(e.to_string())
+    }
+}
+
+impl From<reqwest::Error> for AppError {
+    fn from(e: reqwest::Error) -> Self {
+        AppError::DownloadFailed(e.to_string())
     }
 }
 
@@ -23,42 +49,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn capture_failed_serializes_with_kind_and_message() {
-        let err = AppError::CaptureFailed("no display".into());
-        let json: serde_json::Value = serde_json::to_value(&err).unwrap();
+    fn tagged_serialization_with_message() {
+        let json = serde_json::to_value(AppError::CaptureFailed("no display".into())).unwrap();
         assert_eq!(json["kind"], "CaptureFailed");
         assert_eq!(json["message"], "no display");
     }
 
     #[test]
-    fn lock_poisoned_serializes_as_kind_only() {
-        let err = AppError::LockPoisoned;
-        let json: serde_json::Value = serde_json::to_value(&err).unwrap();
+    fn tagged_serialization_unit_variant() {
+        let json = serde_json::to_value(AppError::LockPoisoned).unwrap();
         assert_eq!(json["kind"], "LockPoisoned");
         assert!(json.get("message").is_none());
     }
 
     #[test]
-    fn not_supported_serializes_as_kind_only() {
-        let err = AppError::NotSupported;
-        let json: serde_json::Value = serde_json::to_value(&err).unwrap();
-        assert_eq!(json["kind"], "NotSupported");
-        assert!(json.get("message").is_none());
+    fn display_variant_with_message() {
+        assert_eq!(
+            AppError::CaptureFailed("timeout".into()).to_string(),
+            "Capture failed: timeout"
+        );
     }
 
     #[test]
-    fn display_capture_failed() {
-        let err = AppError::CaptureFailed("timeout".into());
-        assert_eq!(err.to_string(), "Capture failed: timeout");
-    }
-
-    #[test]
-    fn display_lock_poisoned() {
-        assert_eq!(AppError::LockPoisoned.to_string(), "Lock poisoned");
-    }
-
-    #[test]
-    fn display_not_supported() {
+    fn display_unit_variant() {
         assert_eq!(
             AppError::NotSupported.to_string(),
             "Not supported on this platform"

@@ -1,30 +1,51 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import PermissionSetup from "./components/PermissionSetup";
+import ModelSetup from "./components/ModelSetup";
 import RecordingView from "./components/RecordingView";
 
+type OnboardingStep = "loading" | "permissions" | "model-setup" | "ready";
+
 function App() {
-  const [permissionsReady, setPermissionsReady] = useState<boolean | null>(null);
+  const [step, setStep] = useState<OnboardingStep>("loading");
 
   useEffect(() => {
-    Promise.all([
-      invoke<boolean>("check_screen_recording_permission"),
-      invoke<string>("check_microphone_permission"),
-    ])
-      .then(([screen, mic]) => {
-        setPermissionsReady(screen && mic === "authorized");
-      })
-      .catch(() => {
-        setPermissionsReady(true);
-      });
+    async function checkOnboarding() {
+      const [screen, mic] = await Promise.all([
+        invoke<boolean>("check_screen_recording_permission"),
+        invoke<string>("check_microphone_permission"),
+      ]);
+      const permissionsGranted = screen && mic === "authorized";
+      if (!permissionsGranted) {
+        setStep("permissions");
+        return;
+      }
+
+      const modelReady = await checkModelReady();
+      setStep(modelReady ? "ready" : "model-setup");
+    }
+
+    checkOnboarding().catch(() => setStep("permissions"));
   }, []);
 
-  if (permissionsReady === null) return null;
-
-  if (!permissionsReady) {
-    return <PermissionSetup onComplete={() => setPermissionsReady(true)} />;
+  async function checkModelReady(): Promise<boolean> {
+    const selected = await invoke<string | null>("get_selected_model");
+    if (!selected) return false;
+    return invoke<boolean>("get_model_status", { modelId: selected });
   }
 
+  async function handlePermissionsComplete() {
+    const modelReady = await checkModelReady();
+    setStep(modelReady ? "ready" : "model-setup");
+  }
+
+  if (step === "loading") return null;
+  if (step === "permissions") {
+    return <PermissionSetup onComplete={handlePermissionsComplete} />;
+  }
+  if (step === "model-setup") {
+    return <ModelSetup onComplete={() => setStep("ready")} />;
+  }
   return <RecordingView />;
 }
 
