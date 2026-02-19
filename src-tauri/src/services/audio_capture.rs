@@ -1,11 +1,7 @@
 use screencapturekit::prelude::*;
 use tokio::sync::mpsc;
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub enum AudioSource {
-    SystemAudio,
-    Microphone,
-}
+use crate::models::AudioSource;
 
 pub struct AudioChunk {
     pub pcm_data: Vec<f32>,
@@ -55,7 +51,6 @@ fn extract_pcm_f32(sample: &CMSampleBuffer) -> Option<Vec<f32>> {
     let mut samples = Vec::new();
     for buffer in buffer_list.iter() {
         let bytes = buffer.data();
-        // ScreenCaptureKit delivers 32-bit float PCM; reinterpret the raw bytes
         let floats: &[f32] = bytemuck::cast_slice(bytes);
         samples.extend_from_slice(floats);
     }
