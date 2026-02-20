@@ -36,4 +36,5 @@ screencapturekit = "1.5"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString"] }
 block2 = "0.6"
+aec3 = { git = "https://github.com/RubyBit/aec3-rs" }
 

@@ -239,8 +239,10 @@ pub async fn start_recording(
 
         // Task 1: Forward audio chunks as events and accumulate for transcription
         let app_for_chunks = app.clone();
-        tokio::spawn(async move {
-            while let Some(chunk) = rx.recv().await {
+        tokio::task::spawn_blocking(move || {
+            let mut aec = crate::services::echo_cancel::EchoCanceller::new().ok();
+
+            while let Some(chunk) = rx.blocking_recv() {
                 let source_str = match chunk.source {
                     AudioSource::SystemAudio => "system",
                     AudioSource::Microphone => "microphone",
@@ -256,12 +258,41 @@ pub async fn start_recording(
                     },
                 );
                 if let Ok(mut acc) = accumulator.lock() {
-                    acc.append(
-                        &chunk.source,
-                        &chunk.pcm_data,
-                        chunk.timestamp,
-                        chunk.sample_rate,
-                    );
+                    match chunk.source {
+                        AudioSource::SystemAudio => {
+                            if let Some(aec) = aec.as_mut() {
+                                aec.feed_system(&chunk.pcm_data);
+                            }
+                            acc.append(
+                                &chunk.source,
+                                &chunk.pcm_data,
+                                chunk.timestamp,
+                                chunk.sample_rate,
+                            );
+                        }
+                        AudioSource::Microphone => {
+                            let cleaned = aec
+                                .as_mut()
+                                .map(|aec| aec.feed_mic(&chunk.pcm_data, chunk.sample_rate));
+                            if let Some(samples) = cleaned {
+                                if !samples.is_empty() {
+                                    acc.append(
+                                        &chunk.source,
+                                        &samples,
+                                        chunk.timestamp,
+                                        16000,
+                                    );
+                                }
+                            } else {
+                                acc.append(
+                                    &chunk.source,
+                                    &chunk.pcm_data,
+                                    chunk.timestamp,
+                                    chunk.sample_rate,
+                                );
+                            }
+                        }
+                    }
                 }
             }
         });
