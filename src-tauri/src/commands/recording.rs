@@ -4,6 +4,8 @@ use crate::errors::AppError;
 use crate::models::{AudioChunkEvent, AudioSource, RecordingState};
 
 #[cfg(target_os = "macos")]
+use std::collections::HashMap;
+#[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "macos")]
 use std::sync::{Arc, Mutex};
@@ -25,9 +27,9 @@ const STEP_INTERVAL: Duration = Duration::from_secs(3);
 #[cfg(target_os = "macos")]
 const WINDOW_MAX_SECS: f64 = 10.0;
 #[cfg(target_os = "macos")]
-const KEEP_OVERLAP_SECS: f64 = 0.5;
-#[cfg(target_os = "macos")]
 const MIN_DURATION_SECS: f64 = 2.0;
+#[cfg(target_os = "macos")]
+const MIN_SPEECH_RATIO: f32 = 0.01;
 
 // ---------------------------------------------------------------------------
 // Transcription pipeline helpers (macOS only)
@@ -55,6 +57,10 @@ fn collect_batch_items(
             }
             let samples =
                 crate::services::audio::resample_to_16khz(audio.samples, audio.sample_rate);
+            let ratio = crate::services::vad::speech_ratio(&samples);
+            if ratio < MIN_SPEECH_RATIO {
+                continue;
+            }
             items.push(BatchItem {
                 timestamp_ms: (audio.start_timestamp * 1000.0) as u64,
                 samples,
@@ -66,6 +72,7 @@ fn collect_batch_items(
 }
 
 /// Run batch transcription and emit events for each result.
+/// Updates `prev_texts` with the latest transcript per source for cross-window context.
 #[cfg(target_os = "macos")]
 async fn transcribe_and_emit(
     items: Vec<BatchItem>,
@@ -73,10 +80,16 @@ async fn transcribe_and_emit(
     service: &Arc<TranscriptionService>,
     app: &tauri::AppHandle,
     model_path: &std::path::Path,
+    prev_texts: &Mutex<HashMap<String, String>>,
 ) {
     if items.is_empty() {
         return;
     }
+
+    let prompts: Vec<Option<String>> = {
+        let map = prev_texts.lock().unwrap_or_else(|e| e.into_inner());
+        items.iter().map(|i| map.get(&i.label).cloned()).collect()
+    };
 
     let svc = Arc::clone(service);
     let path = model_path.to_path_buf();
@@ -84,7 +97,7 @@ async fn transcribe_and_emit(
 
     let results = tokio::task::spawn_blocking(move || {
         let buffers: Vec<&[f32]> = items.iter().map(|i| i.samples.as_slice()).collect();
-        let texts = svc.transcribe_batch(&path, &buffers);
+        let texts = svc.transcribe_batch(&path, &buffers, &prompts);
         (items, texts)
     })
     .await;
@@ -96,6 +109,11 @@ async fn transcribe_and_emit(
                     || crate::services::transcription::is_low_quality_output(&text)
                 {
                     continue;
+                }
+                // Update context for next window (only on finalized results)
+                if !is_provisional {
+                    let mut map = prev_texts.lock().unwrap_or_else(|e| e.into_inner());
+                    map.insert(item.label.clone(), text.clone());
                 }
                 let _ = app.emit(
                     "transcript-segment",
@@ -121,6 +139,7 @@ async fn step_transcribe(
     app: &tauri::AppHandle,
     base_dir: &std::path::Path,
     busy: &AtomicBool,
+    prev_texts: &Mutex<HashMap<String, String>>,
 ) {
     if busy
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -143,14 +162,14 @@ async fn step_transcribe(
             return;
         };
         if acc.max_duration_secs() >= WINDOW_MAX_SECS {
-            (acc.flush_with_overlap(KEEP_OVERLAP_SECS), false)
+            (acc.flush(), false)
         } else {
             (acc.peek(), true)
         }
     };
 
     let items = collect_batch_items(sources);
-    transcribe_and_emit(items, is_provisional, service, app, &model_path).await;
+    transcribe_and_emit(items, is_provisional, service, app, &model_path, prev_texts).await;
 
     busy.store(false, Ordering::SeqCst);
 }
@@ -162,6 +181,7 @@ async fn final_flush(
     service: &Arc<TranscriptionService>,
     app: &tauri::AppHandle,
     base_dir: &std::path::Path,
+    prev_texts: &Mutex<HashMap<String, String>>,
 ) {
     let model_path = match crate::services::model_manager::resolve_model_path(base_dir) {
         Ok(Some(path)) => path,
@@ -176,7 +196,7 @@ async fn final_flush(
     };
 
     let items = collect_batch_items(sources);
-    transcribe_and_emit(items, false, &Arc::clone(service), app, &model_path).await;
+    transcribe_and_emit(items, false, &Arc::clone(service), app, &model_path, prev_texts).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +276,7 @@ pub async fn start_recording(
         let app_for_transcribe = app.clone();
         tokio::spawn(async move {
             let busy = Arc::new(AtomicBool::new(false));
+            let prev_texts = Mutex::new(HashMap::<String, String>::new());
             let mut interval = tokio::time::interval(STEP_INTERVAL);
             interval.tick().await; // skip immediate first tick
 
@@ -268,6 +289,7 @@ pub async fn start_recording(
                             &app_for_transcribe,
                             &base_dir,
                             &busy,
+                            &prev_texts,
                         ).await;
                     }
                     _ = cancel.cancelled() => {
@@ -276,6 +298,7 @@ pub async fn start_recording(
                             &service,
                             &app_for_transcribe,
                             &base_dir,
+                            &prev_texts,
                         ).await;
                         break;
                     }

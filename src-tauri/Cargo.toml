@@ -29,6 +29,7 @@ futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["rt"] }
 whisper-rs = { version = "0.15", features = ["metal"] }
 rubato = "0.16"
+voice_activity_detector = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 screencapturekit = "1.5"

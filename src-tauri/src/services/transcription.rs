@@ -6,9 +6,9 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 use crate::errors::AppError;
 
 /// Wraps a lazily-loaded whisper.cpp model and exposes a blocking
-/// `transcribe()` method.  The model is loaded on the first call and
-/// reused for every subsequent call (loading takes ~1-2 s, so we only
-/// want to pay that cost once).
+/// `transcribe_batch()` method.  The model is loaded on the first call
+/// and reused for every subsequent call (loading takes ~1-2 s, so we
+/// only want to pay that cost once).
 pub struct TranscriptionService {
     /// `None` until the first transcription request triggers model loading.
     /// Protected by a Mutex so multiple flush tasks can't race on init.
@@ -45,13 +45,16 @@ impl TranscriptionService {
         Ok(())
     }
 
-    fn decode_params() -> FullParams<'static, 'static> {
+    fn decode_params(initial_prompt: Option<&str>) -> FullParams<'static, 'static> {
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_language(Some("en"));
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
+        if let Some(prompt) = initial_prompt {
+            params.set_initial_prompt(prompt);
+        }
         params
     }
 
@@ -75,11 +78,16 @@ impl TranscriptionService {
     /// Run Whisper inference on multiple 16 kHz mono f32 PCM buffers using a
     /// single GPU state allocation to avoid repeated Metal init/free cycles.
     ///
+    /// `prompts` provides an optional initial prompt per buffer (e.g. the tail
+    /// of the previous transcription) to give Whisper linguistic context across
+    /// window boundaries.
+    ///
     /// **Blocking** — call from `spawn_blocking`.
     pub fn transcribe_batch(
         &self,
         model_path: &Path,
         buffers: &[&[f32]],
+        prompts: &[Option<String>],
     ) -> Result<Vec<String>, AppError> {
         self.ensure_loaded(model_path)?;
 
@@ -93,9 +101,10 @@ impl TranscriptionService {
             .map_err(|e| AppError::TranscriptionFailed(e.to_string()))?;
 
         let mut results = Vec::with_capacity(buffers.len());
-        for samples in buffers {
+        for (i, samples) in buffers.iter().enumerate() {
+            let prompt = prompts.get(i).and_then(|p| p.as_deref());
             state
-                .full(Self::decode_params(), samples)
+                .full(Self::decode_params(prompt), samples)
                 .map_err(|e| AppError::TranscriptionFailed(e.to_string()))?;
             results.push(Self::extract_text(&state));
         }

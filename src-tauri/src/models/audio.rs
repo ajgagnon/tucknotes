@@ -72,23 +72,13 @@ impl PcmAccumulator {
         buf: &mut Vec<f32>,
         start_ts: &mut Option<f64>,
         rate: u32,
-        keep_secs: Option<f64>,
     ) -> Option<AccumulatedAudio> {
         if buf.is_empty() {
             return None;
         }
         let ts = start_ts.take().unwrap_or(0.0);
-        let full = std::mem::take(buf);
-        if let Some(keep) = keep_secs {
-            let keep_samples = (keep * rate as f64) as usize;
-            if keep_samples > 0 && full.len() > keep_samples {
-                *buf = full[full.len() - keep_samples..].to_vec();
-                let full_dur = full.len() as f64 / rate as f64;
-                *start_ts = Some(ts + full_dur - keep);
-            }
-        }
         Some(AccumulatedAudio {
-            samples: full,
+            samples: std::mem::take(buf),
             sample_rate: rate,
             start_timestamp: ts,
         })
@@ -96,8 +86,8 @@ impl PcmAccumulator {
 
     /// Flush both buffers, returning accumulated audio for each source.
     pub fn flush(&mut self) -> (Option<AccumulatedAudio>, Option<AccumulatedAudio>) {
-        let system = Self::flush_buf(&mut self.system_buf, &mut self.system_start_ts, self.system_rate, None);
-        let mic = Self::flush_buf(&mut self.mic_buf, &mut self.mic_start_ts, self.mic_rate, None);
+        let system = Self::flush_buf(&mut self.system_buf, &mut self.system_start_ts, self.system_rate);
+        let mic = Self::flush_buf(&mut self.mic_buf, &mut self.mic_start_ts, self.mic_rate);
         (system, mic)
     }
 
@@ -121,16 +111,6 @@ impl PcmAccumulator {
                 start_timestamp: self.mic_start_ts.unwrap_or(0.0),
             })
         };
-        (system, mic)
-    }
-
-    /// Flush buffers but retain `keep_secs` of audio as overlap for context.
-    pub fn flush_with_overlap(
-        &mut self,
-        keep_secs: f64,
-    ) -> (Option<AccumulatedAudio>, Option<AccumulatedAudio>) {
-        let system = Self::flush_buf(&mut self.system_buf, &mut self.system_start_ts, self.system_rate, Some(keep_secs));
-        let mic = Self::flush_buf(&mut self.mic_buf, &mut self.mic_start_ts, self.mic_rate, Some(keep_secs));
         (system, mic)
     }
 
