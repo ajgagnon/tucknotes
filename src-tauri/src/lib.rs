@@ -5,6 +5,8 @@ pub mod services;
 
 use std::sync::{Arc, Mutex};
 
+use tauri::{TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
+
 use commands::models::*;
 use commands::permissions::*;
 use commands::recording::*;
@@ -31,6 +33,39 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let win_builder =
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+                    .title("Grain")
+                    .inner_size(1024.0, 768.0);
+
+            #[cfg(target_os = "macos")]
+            let win_builder = win_builder
+                .title_bar_style(TitleBarStyle::Overlay)
+                .hidden_title(true)
+                .traffic_light_position(tauri::LogicalPosition::new(16.0, 24.0));
+
+            let window = win_builder.build().unwrap();
+
+            #[cfg(target_os = "macos")]
+            {
+                use objc2::rc::Retained;
+                use objc2_app_kit::{NSColor, NSWindow};
+
+                let ptr = window.ns_window().unwrap() as *mut NSWindow;
+                let ns_window: Retained<NSWindow> =
+                    unsafe { Retained::retain(ptr).unwrap() };
+                let bg_color = NSColor::colorWithSRGBRed_green_blue_alpha(
+                    32.0 / 255.0,
+                    32.0 / 255.0,
+                    32.0 / 255.0,
+                    1.0,
+                );
+                ns_window.setBackgroundColor(Some(&bg_color));
+            }
+
+            Ok(())
+        })
         .manage(recording_state);
 
     #[cfg(target_os = "macos")]

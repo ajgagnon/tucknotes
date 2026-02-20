@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import PermissionSetup from "./components/PermissionSetup";
 import ModelSetup from "./components/ModelSetup";
-import RecordingView from "./components/RecordingView";
+import AppLayout from "./components/AppLayout";
 
 type OnboardingStep = "loading" | "permissions" | "model-setup" | "ready";
 
@@ -39,14 +39,14 @@ function App() {
     setStep(modelReady ? "ready" : "model-setup");
   }
 
-  if (step === "loading") return null;
-  if (step === "permissions") {
-    return <PermissionSetup onComplete={handlePermissionsComplete} />;
-  }
-  if (step === "model-setup") {
-    return <ModelSetup onComplete={() => setStep("ready")} />;
-  }
-  return <RecordingView />;
+  // if (step === "loading") return null;
+  // if (step === "permissions") {
+  //   return <PermissionSetup onComplete={handlePermissionsComplete} />;
+  // }
+  // if (step === "model-setup") {
+  //   return <ModelSetup onComplete={() => setStep("ready")} />;
+  // }
+  return <AppLayout />;
 }
 
 export default App;

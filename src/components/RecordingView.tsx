@@ -143,7 +143,7 @@ function RecordingView() {
   }, [recording]);
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-8 gap-8">
+    <div className="h-full flex flex-col items-center justify-center p-8 gap-8">
       {recording && (
         <p className="text-[2.5rem] font-light tabular-nums tracking-wide text-danger m-0">
           {formatTime(elapsed)}
