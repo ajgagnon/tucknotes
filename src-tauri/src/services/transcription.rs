@@ -45,58 +45,73 @@ impl TranscriptionService {
         Ok(())
     }
 
-    /// Run Whisper inference on a buffer of 16 kHz mono f32 PCM samples.
-    ///
-    /// This is a **blocking, CPU-intensive** call — callers should run it
-    /// inside `tokio::task::spawn_blocking` to avoid starving the async
-    /// runtime.
-    ///
-    /// `model_path` is only used on the first invocation to load the model;
-    /// after that it's ignored (the cached context is reused).
-    pub fn transcribe(&self, model_path: &Path, samples: &[f32]) -> Result<String, AppError> {
-        self.ensure_loaded(model_path)?;
-
-        let guard = self.context.lock().map_err(|_| AppError::LockPoisoned)?;
-        let ctx = guard.as_ref().ok_or_else(|| {
-            AppError::TranscriptionFailed("Context not loaded".into())
-        })?;
-
-        // A WhisperState holds the per-inference scratch buffers.
-        // Creating one is cheap; it borrows the heavy weights from the context.
-        let mut state = ctx
-            .create_state()
-            .map_err(|e| AppError::TranscriptionFailed(e.to_string()))?;
-
-        // Configure the decoding pass:
-        //   - Greedy decoding (pick the single best token at each step)
-        //   - English language
-        //   - Suppress all diagnostic output from whisper.cpp
+    fn decode_params() -> FullParams<'static, 'static> {
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_language(Some("en"));
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
+        params
+    }
 
-        // Run the full pipeline: PCM → mel spectrogram → encoder → decoder → text
-        state
-            .full(params, samples)
-            .map_err(|e| AppError::TranscriptionFailed(e.to_string()))?;
+    const NO_SPEECH_THRESHOLD: f32 = 0.6;
 
-        // Collect the decoded text from all segments whisper produced.
-        // A "segment" is typically a sentence or clause boundary that
-        // whisper.cpp detected in the audio.
-        let num_segments = state.full_n_segments();
+    fn extract_text(state: &whisper_rs::WhisperState) -> String {
         let mut text = String::new();
-        for i in 0..num_segments {
+        for i in 0..state.full_n_segments() {
             if let Some(segment) = state.get_segment(i) {
+                if segment.no_speech_probability() > Self::NO_SPEECH_THRESHOLD {
+                    continue;
+                }
                 if let Ok(s) = segment.to_str() {
                     text.push_str(s);
                 }
             }
         }
-        Ok(text.trim().to_string())
+        text.trim().to_string()
     }
+
+    /// Run Whisper inference on multiple 16 kHz mono f32 PCM buffers using a
+    /// single GPU state allocation to avoid repeated Metal init/free cycles.
+    ///
+    /// **Blocking** — call from `spawn_blocking`.
+    pub fn transcribe_batch(
+        &self,
+        model_path: &Path,
+        buffers: &[&[f32]],
+    ) -> Result<Vec<String>, AppError> {
+        self.ensure_loaded(model_path)?;
+
+        let guard = self.context.lock().map_err(|_| AppError::LockPoisoned)?;
+        let ctx = guard
+            .as_ref()
+            .ok_or_else(|| AppError::TranscriptionFailed("Context not loaded".into()))?;
+
+        let mut state = ctx
+            .create_state()
+            .map_err(|e| AppError::TranscriptionFailed(e.to_string()))?;
+
+        let mut results = Vec::with_capacity(buffers.len());
+        for samples in buffers {
+            state
+                .full(Self::decode_params(), samples)
+                .map_err(|e| AppError::TranscriptionFailed(e.to_string()))?;
+            results.push(Self::extract_text(&state));
+        }
+        Ok(results)
+    }
+}
+
+/// Returns true if the final transcription text is a structural marker
+/// rather than real speech (e.g. `[BLANK_AUDIO]`, `(buzzing)`).
+pub fn is_low_quality_output(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.len() < 2 {
+        return true;
+    }
+    (trimmed.starts_with('[') && trimmed.ends_with(']'))
+        || (trimmed.starts_with('(') && trimmed.ends_with(')'))
 }
 
 /// Tauri managed-state wrapper.  The `Arc` allows cloning a handle into

@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use screencapturekit::prelude::*;
 use tokio::sync::mpsc;
 
@@ -17,6 +19,8 @@ pub struct AudioCapture {
 
 struct CaptureHandler {
     tx: mpsc::Sender<AudioChunk>,
+    logged_system: AtomicBool,
+    logged_mic: AtomicBool,
 }
 
 impl SCStreamOutputTrait for CaptureHandler {
@@ -31,30 +35,71 @@ impl SCStreamOutputTrait for CaptureHandler {
             SCStreamOutputType::Screen => return,
         };
 
-        if let Some(pcm) = extract_pcm_f32(&sample_buffer) {
-            let chunk = AudioChunk {
-                pcm_data: pcm,
-                sample_rate: 16000,
-                source,
-                timestamp: sample_buffer
-                    .presentation_timestamp()
-                    .as_seconds()
-                    .unwrap_or(0.0),
-            };
-            let _ = self.tx.try_send(chunk);
-        }
-    }
-}
+        // Read the actual audio format from the buffer's format description.
+        let fmt = sample_buffer.format_description();
+        let sample_rate = fmt
+            .as_ref()
+            .and_then(|f| f.audio_sample_rate())
+            .unwrap_or(16000.0);
+        let fmt_channels = fmt
+            .as_ref()
+            .and_then(|f| f.audio_channel_count())
+            .unwrap_or(1);
 
-fn extract_pcm_f32(sample: &CMSampleBuffer) -> Option<Vec<f32>> {
-    let buffer_list = sample.audio_buffer_list()?;
-    let mut samples = Vec::new();
-    for buffer in buffer_list.iter() {
-        let bytes = buffer.data();
-        let floats: &[f32] = bytemuck::cast_slice(bytes);
-        samples.extend_from_slice(floats);
+        let Some(buffer_list) = sample_buffer.audio_buffer_list() else {
+            return;
+        };
+
+        let n_buffers: usize = buffer_list.iter().count();
+        let Some(first_buffer) = buffer_list.iter().next() else {
+            return;
+        };
+        let buf_channels = first_buffer.number_channels;
+        let bytes = first_buffer.data();
+        let raw: &[f32] = bytemuck::cast_slice(bytes);
+        let num_frames = sample_buffer.num_samples();
+
+        // Extract mono audio:
+        // - n_buffers >= 2: non-interleaved, first buffer = channel 0, already mono
+        // - n_buffers == 1 with buf_channels >= 2: interleaved, deinterleave
+        // - n_buffers == 1 with buf_channels == 1: mono, use as-is
+        let pcm = if n_buffers >= 2 || buf_channels <= 1 {
+            raw.to_vec()
+        } else {
+            // Interleaved multi-channel: average all channels per frame
+            let ch = buf_channels as usize;
+            raw.chunks_exact(ch)
+                .map(|frame| frame.iter().sum::<f32>() / ch as f32)
+                .collect()
+        };
+
+        // Log the actual audio format once per source for diagnostics.
+        let logged = match source {
+            AudioSource::SystemAudio => &self.logged_system,
+            AudioSource::Microphone => &self.logged_mic,
+        };
+        if !logged.swap(true, Ordering::Relaxed) {
+            let source_name = match source {
+                AudioSource::SystemAudio => "system",
+                AudioSource::Microphone => "mic",
+            };
+            eprintln!(
+                "[audio_capture] {source_name}: rate={sample_rate}Hz, fmt_ch={fmt_channels}, buf_ch={buf_channels}, n_buffers={n_buffers}, frames={num_frames}, raw_f32={}, mono={}",
+                raw.len(), pcm.len()
+            );
+        }
+
+        let chunk = AudioChunk {
+            pcm_data: pcm,
+            sample_rate: sample_rate as u32,
+            source,
+            timestamp: sample_buffer
+                .presentation_timestamp()
+                .as_seconds()
+                .unwrap_or(0.0),
+        };
+        let _ = self.tx.try_send(chunk);
     }
-    Some(samples)
 }
 
 impl AudioCapture {
@@ -84,15 +129,21 @@ impl AudioCapture {
 
         let (tx, rx) = mpsc::channel(1024);
 
+        let handler = CaptureHandler {
+            tx: tx.clone(),
+            logged_system: AtomicBool::new(false),
+            logged_mic: AtomicBool::new(false),
+        };
+
         let mut stream = SCStream::new(&filter, &config);
-        stream.add_output_handler(
-            CaptureHandler { tx: tx.clone() },
-            SCStreamOutputType::Audio,
-        );
-        stream.add_output_handler(
-            CaptureHandler { tx: tx.clone() },
-            SCStreamOutputType::Microphone,
-        );
+        stream.add_output_handler(handler, SCStreamOutputType::Audio);
+        // Mic handler needs its own instance
+        let mic_handler = CaptureHandler {
+            tx: tx.clone(),
+            logged_system: AtomicBool::new(false),
+            logged_mic: AtomicBool::new(false),
+        };
+        stream.add_output_handler(mic_handler, SCStreamOutputType::Microphone);
         stream.start_capture()?;
 
         Ok((

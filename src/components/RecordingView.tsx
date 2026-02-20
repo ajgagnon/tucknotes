@@ -11,6 +11,13 @@ interface AudioChunkEvent {
   timestamp: number;
 }
 
+interface TranscriptSegment {
+  text: string;
+  source: string;
+  timestamp_ms: number;
+  is_provisional: boolean;
+}
+
 function RecordingView() {
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -19,9 +26,15 @@ function RecordingView() {
   const [micChunks, setMicChunks] = useState(0);
   const [systemLevel, setSystemLevel] = useState(0);
   const [micLevel, setMicLevel] = useState(0);
+  const [segments, setSegments] = useState<TranscriptSegment[]>([]);
+  const [provisional, setProvisional] = useState<
+    Record<string, TranscriptSegment>
+  >({});
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
+  const transcriptUnlistenRef = useRef<UnlistenFn | null>(null);
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -38,6 +51,8 @@ function RecordingView() {
       setElapsed(0);
       setSystemChunks(0);
       setMicChunks(0);
+      setSegments([]);
+      setProvisional({});
 
       timerRef.current = setInterval(() => {
         setElapsed((prev) => prev + 1);
@@ -86,15 +101,37 @@ function RecordingView() {
       unlistenRef.current = unlisten;
     });
 
+    listen<TranscriptSegment>("transcript-segment", (event) => {
+      if (!mounted) return;
+      const seg = event.payload;
+      if (seg.is_provisional) {
+        setProvisional((prev) => ({ ...prev, [seg.source]: seg }));
+      } else {
+        setSegments((prev) => [...prev, seg]);
+        setProvisional((prev) => {
+          const next = { ...prev };
+          delete next[seg.source];
+          return next;
+        });
+      }
+    }).then((unlisten) => {
+      transcriptUnlistenRef.current = unlisten;
+    });
+
     return () => {
       mounted = false;
       unlistenRef.current?.();
+      transcriptUnlistenRef.current?.();
     };
   }, []);
 
   useEffect(() => {
     return clearTimer;
   }, [clearTimer]);
+
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [segments, provisional]);
 
   useEffect(() => {
     if (!recording) return;
@@ -188,6 +225,54 @@ function RecordingView() {
                 Mic chunks
               </span>
             </div>
+          </div>
+
+          <div className="w-full max-w-80 max-h-64 overflow-y-auto rounded-lg bg-black/4 dark:bg-white/4 p-3 flex flex-col gap-2">
+            {segments.length === 0 &&
+            Object.keys(provisional).length === 0 ? (
+              <p className="text-xs text-neutral-400 text-center m-0">
+                Transcript will appear here...
+              </p>
+            ) : (
+              <>
+                {segments.map((seg, i) => (
+                  <div key={i} className="flex flex-col gap-0.5">
+                    <span
+                      className={`text-[0.65rem] font-semibold uppercase tracking-wider ${
+                        seg.source === "system"
+                          ? "text-primary"
+                          : "text-success"
+                      }`}
+                    >
+                      {seg.source === "system" ? "System" : "Mic"}
+                    </span>
+                    <p className="text-sm text-neutral-700 dark:text-neutral-300 m-0 leading-snug">
+                      {seg.text}
+                    </p>
+                  </div>
+                ))}
+                {Object.values(provisional).map((seg) => (
+                  <div
+                    key={`provisional-${seg.source}`}
+                    className="flex flex-col gap-0.5 opacity-50"
+                  >
+                    <span
+                      className={`text-[0.65rem] font-semibold uppercase tracking-wider ${
+                        seg.source === "system"
+                          ? "text-primary"
+                          : "text-success"
+                      }`}
+                    >
+                      {seg.source === "system" ? "System" : "Mic"}
+                    </span>
+                    <p className="text-sm text-neutral-700 dark:text-neutral-300 m-0 leading-snug italic">
+                      {seg.text}
+                    </p>
+                  </div>
+                ))}
+              </>
+            )}
+            <div ref={transcriptEndRef} />
           </div>
         </>
       )}

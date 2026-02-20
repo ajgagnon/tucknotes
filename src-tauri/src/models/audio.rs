@@ -19,10 +19,12 @@ pub struct TranscriptEvent {
     pub text: String,
     pub source: String,
     pub timestamp_ms: u64,
+    pub is_provisional: bool,
 }
 
 pub struct AccumulatedAudio {
     pub samples: Vec<f32>,
+    pub sample_rate: u32,
     pub start_timestamp: f64,
 }
 
@@ -31,6 +33,8 @@ pub struct PcmAccumulator {
     mic_buf: Vec<f32>,
     system_start_ts: Option<f64>,
     mic_start_ts: Option<f64>,
+    system_rate: u32,
+    mic_rate: u32,
 }
 
 impl PcmAccumulator {
@@ -40,44 +44,101 @@ impl PcmAccumulator {
             mic_buf: Vec::new(),
             system_start_ts: None,
             mic_start_ts: None,
+            system_rate: 16000,
+            mic_rate: 48000,
         }
     }
 
-    pub fn append(&mut self, source: &AudioSource, samples: &[f32], timestamp: f64) {
+    pub fn append(&mut self, source: &AudioSource, samples: &[f32], timestamp: f64, sample_rate: u32) {
         match source {
             AudioSource::SystemAudio => {
                 self.system_start_ts.get_or_insert(timestamp);
+                self.system_rate = sample_rate;
                 self.system_buf.extend_from_slice(samples);
             }
             AudioSource::Microphone => {
                 self.mic_start_ts.get_or_insert(timestamp);
+                self.mic_rate = sample_rate;
                 self.mic_buf.extend_from_slice(samples);
             }
         }
     }
 
+    fn duration_secs(buf: &[f32], rate: u32) -> f64 {
+        if rate == 0 { 0.0 } else { buf.len() as f64 / rate as f64 }
+    }
+
+    fn flush_buf(
+        buf: &mut Vec<f32>,
+        start_ts: &mut Option<f64>,
+        rate: u32,
+        keep_secs: Option<f64>,
+    ) -> Option<AccumulatedAudio> {
+        if buf.is_empty() {
+            return None;
+        }
+        let ts = start_ts.take().unwrap_or(0.0);
+        let full = std::mem::take(buf);
+        if let Some(keep) = keep_secs {
+            let keep_samples = (keep * rate as f64) as usize;
+            if keep_samples > 0 && full.len() > keep_samples {
+                *buf = full[full.len() - keep_samples..].to_vec();
+                let full_dur = full.len() as f64 / rate as f64;
+                *start_ts = Some(ts + full_dur - keep);
+            }
+        }
+        Some(AccumulatedAudio {
+            samples: full,
+            sample_rate: rate,
+            start_timestamp: ts,
+        })
+    }
+
     /// Flush both buffers, returning accumulated audio for each source.
-    /// Uses `std::mem::take` to swap buffers with empty Vecs (zero-copy).
     pub fn flush(&mut self) -> (Option<AccumulatedAudio>, Option<AccumulatedAudio>) {
+        let system = Self::flush_buf(&mut self.system_buf, &mut self.system_start_ts, self.system_rate, None);
+        let mic = Self::flush_buf(&mut self.mic_buf, &mut self.mic_start_ts, self.mic_rate, None);
+        (system, mic)
+    }
+
+    /// Clone current buffers without clearing (for provisional transcription).
+    pub fn peek(&self) -> (Option<AccumulatedAudio>, Option<AccumulatedAudio>) {
         let system = if self.system_buf.is_empty() {
             None
         } else {
             Some(AccumulatedAudio {
-                samples: std::mem::take(&mut self.system_buf),
-                start_timestamp: self.system_start_ts.take().unwrap_or(0.0),
+                samples: self.system_buf.clone(),
+                sample_rate: self.system_rate,
+                start_timestamp: self.system_start_ts.unwrap_or(0.0),
             })
         };
-
         let mic = if self.mic_buf.is_empty() {
             None
         } else {
             Some(AccumulatedAudio {
-                samples: std::mem::take(&mut self.mic_buf),
-                start_timestamp: self.mic_start_ts.take().unwrap_or(0.0),
+                samples: self.mic_buf.clone(),
+                sample_rate: self.mic_rate,
+                start_timestamp: self.mic_start_ts.unwrap_or(0.0),
             })
         };
-
         (system, mic)
+    }
+
+    /// Flush buffers but retain `keep_secs` of audio as overlap for context.
+    pub fn flush_with_overlap(
+        &mut self,
+        keep_secs: f64,
+    ) -> (Option<AccumulatedAudio>, Option<AccumulatedAudio>) {
+        let system = Self::flush_buf(&mut self.system_buf, &mut self.system_start_ts, self.system_rate, Some(keep_secs));
+        let mic = Self::flush_buf(&mut self.mic_buf, &mut self.mic_start_ts, self.mic_rate, Some(keep_secs));
+        (system, mic)
+    }
+
+    /// Returns the maximum duration in seconds across both buffers.
+    pub fn max_duration_secs(&self) -> f64 {
+        let sys = Self::duration_secs(&self.system_buf, self.system_rate);
+        let mic = Self::duration_secs(&self.mic_buf, self.mic_rate);
+        sys.max(mic)
     }
 }
 
