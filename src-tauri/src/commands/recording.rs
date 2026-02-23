@@ -1,266 +1,239 @@
-use tauri::Emitter;
-
 use crate::errors::AppError;
-use crate::models::{AudioChunkEvent, AudioSource, RecordingState};
-
-#[cfg(target_os = "macos")]
-use std::collections::HashMap;
-#[cfg(target_os = "macos")]
-use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(target_os = "macos")]
-use std::sync::{Arc, Mutex};
-#[cfg(target_os = "macos")]
-use std::time::Duration;
-
-#[cfg(target_os = "macos")]
-use tauri::Manager;
-#[cfg(target_os = "macos")]
-use tokio_util::sync::CancellationToken;
-
-#[cfg(target_os = "macos")]
-use crate::models::{AccumulatedAudio, PcmAccumulator, TranscriptEvent};
-#[cfg(target_os = "macos")]
-use crate::services::database::{self, DatabaseState};
-#[cfg(target_os = "macos")]
-use crate::services::transcription::{TranscriptionService, TranscriptionState};
-
-#[cfg(target_os = "macos")]
-const STEP_INTERVAL: Duration = Duration::from_secs(3);
-#[cfg(target_os = "macos")]
-const WINDOW_MAX_SECS: f64 = 10.0;
-#[cfg(target_os = "macos")]
-const MIN_DURATION_SECS: f64 = 2.0;
-#[cfg(target_os = "macos")]
-const MIN_SPEECH_RATIO: f32 = 0.01;
+use crate::models::RecordingState;
 
 // ---------------------------------------------------------------------------
-// Transcription pipeline helpers (macOS only)
+// macOS-specific implementation
 // ---------------------------------------------------------------------------
 
 #[cfg(target_os = "macos")]
-struct BatchItem {
-    samples: Vec<f32>,
-    label: String,
-    timestamp_ms: u64,
-}
+mod macos {
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
-/// Collect eligible audio sources, resample to 16 kHz, and return as batch items.
-#[cfg(target_os = "macos")]
-fn collect_batch_items(
-    sources: (Option<AccumulatedAudio>, Option<AccumulatedAudio>),
-) -> Vec<BatchItem> {
-    let (system, mic) = sources;
-    let mut items = Vec::new();
-    for (audio, label) in [(system, "system"), (mic, "microphone")] {
-        if let Some(audio) = audio {
-            let duration = audio.samples.len() as f64 / audio.sample_rate as f64;
-            if duration < MIN_DURATION_SECS {
-                continue;
-            }
-            let samples =
-                crate::services::audio::resample_to_16khz(audio.samples, audio.sample_rate);
-            let ratio = crate::services::vad::speech_ratio(&samples);
-            if ratio < MIN_SPEECH_RATIO {
-                continue;
-            }
-            items.push(BatchItem {
-                timestamp_ms: (audio.start_timestamp * 1000.0) as u64,
-                samples,
-                label: label.to_string(),
-            });
-        }
-    }
-    items
-}
+    use tauri::{Emitter, Manager};
+    use tokio_util::sync::CancellationToken;
 
-/// Run batch transcription and emit events for each result.
-/// Updates `prev_texts` with the latest transcript per source for cross-window context.
-/// Saves finalized (non-provisional) segments to the database.
-#[cfg(target_os = "macos")]
-async fn transcribe_and_emit(
-    items: Vec<BatchItem>,
-    is_provisional: bool,
-    service: &Arc<TranscriptionService>,
-    app: &tauri::AppHandle,
-    model_path: &std::path::Path,
-    prev_texts: &Mutex<HashMap<String, String>>,
-    meeting_id: &str,
-) {
-    if items.is_empty() {
-        return;
-    }
-
-    let prompts: Vec<Option<String>> = {
-        let map = prev_texts.lock().unwrap_or_else(|e| e.into_inner());
-        items.iter().map(|i| map.get(&i.label).cloned()).collect()
+    use crate::errors::{lock_or_err, AppError};
+    use crate::models::{
+        AccumulatedAudio, AudioChunkEvent, AudioSource, PcmAccumulator, RecordingState,
+        TranscriptEvent,
     };
+    use crate::services::database::{self, DatabaseState};
+    use crate::services::transcription::{TranscriptionService, TranscriptionState};
 
-    let svc = Arc::clone(service);
-    let path = model_path.to_path_buf();
-    let app = app.clone();
-    let meeting_id = meeting_id.to_string();
+    const STEP_INTERVAL: Duration = Duration::from_secs(3);
+    const WINDOW_MAX_SECS: f64 = 10.0;
+    const MIN_DURATION_SECS: f64 = 2.0;
+    const MIN_SPEECH_RATIO: f32 = 0.01;
 
-    let results = tokio::task::spawn_blocking(move || {
-        let buffers: Vec<&[f32]> = items.iter().map(|i| i.samples.as_slice()).collect();
-        let texts = svc.transcribe_batch(&path, &buffers, &prompts);
-        (items, texts, prompts)
-    })
-    .await;
+    struct BatchItem {
+        samples: Vec<f32>,
+        label: String,
+        timestamp_ms: u64,
+    }
 
-    match results {
-        Ok((items, Ok(texts), prompts)) => {
-            for (i, (item, text)) in items.into_iter().zip(texts).enumerate() {
-                if text.is_empty()
-                    || crate::services::transcription::is_low_quality_output(&text)
-                {
+    /// Collect eligible audio sources, resample to 16 kHz, and return as batch items.
+    fn collect_batch_items(
+        sources: (Option<AccumulatedAudio>, Option<AccumulatedAudio>),
+    ) -> Vec<BatchItem> {
+        let (system, mic) = sources;
+        let mut items = Vec::new();
+        for (audio, label) in [(system, "system"), (mic, "microphone")] {
+            if let Some(audio) = audio {
+                let duration = audio.samples.len() as f64 / audio.sample_rate as f64;
+                if duration < MIN_DURATION_SECS {
                     continue;
                 }
-                // Update context for next window (only on finalized results)
-                if !is_provisional {
-                    let mut map = prev_texts.lock().unwrap_or_else(|e| e.into_inner());
-                    map.insert(item.label.clone(), text.clone());
+                let samples =
+                    crate::services::audio::resample_to_16khz(audio.samples, audio.sample_rate);
+                let ratio = crate::services::vad::speech_ratio(&samples);
+                if ratio < MIN_SPEECH_RATIO {
+                    continue;
                 }
-                let _ = app.emit(
-                    "transcript-segment",
-                    TranscriptEvent {
-                        text: text.clone(),
-                        source: item.label.clone(),
-                        timestamp_ms: item.timestamp_ms,
-                        is_provisional,
-                    },
-                );
-                // Persist finalized segments to SQLite
-                if !is_provisional {
-                    let db: &DatabaseState = app.state::<DatabaseState>().inner();
-                    if let Ok(conn) = db.conn.lock() {
-                        let prompt = prompts.get(i).and_then(|p| p.as_deref());
-                        let _ = database::insert_segment(
-                            &conn,
-                            &meeting_id,
-                            &text,
-                            &item.label,
-                            item.timestamp_ms as i64,
-                            prompt,
-                            database::now_unix_ms(),
-                        );
+                items.push(BatchItem {
+                    timestamp_ms: (audio.start_timestamp * 1000.0) as u64,
+                    samples,
+                    label: label.to_string(),
+                });
+            }
+        }
+        items
+    }
+
+    /// Run batch transcription and emit events for each result.
+    /// Updates `prev_texts` with the latest transcript per source for cross-window context.
+    /// Saves finalized (non-provisional) segments to the database.
+    async fn transcribe_and_emit(
+        items: Vec<BatchItem>,
+        is_provisional: bool,
+        service: &Arc<TranscriptionService>,
+        app: &tauri::AppHandle,
+        model_path: &std::path::Path,
+        prev_texts: &Mutex<HashMap<String, String>>,
+        meeting_id: &str,
+    ) {
+        if items.is_empty() {
+            return;
+        }
+
+        let prompts: Vec<Option<String>> = {
+            let map = prev_texts.lock().unwrap_or_else(|e| e.into_inner());
+            items.iter().map(|i| map.get(&i.label).cloned()).collect()
+        };
+
+        let svc = Arc::clone(service);
+        let path = model_path.to_path_buf();
+        let app = app.clone();
+        let meeting_id = meeting_id.to_string();
+
+        let results = tokio::task::spawn_blocking(move || {
+            let buffers: Vec<&[f32]> = items.iter().map(|i| i.samples.as_slice()).collect();
+            let texts = svc.transcribe_batch(&path, &buffers, &prompts);
+            (items, texts, prompts)
+        })
+        .await;
+
+        match results {
+            Ok((items, Ok(texts), prompts)) => {
+                for (i, (item, text)) in items.into_iter().zip(texts).enumerate() {
+                    if text.is_empty()
+                        || crate::services::transcription::is_low_quality_output(&text)
+                    {
+                        continue;
+                    }
+                    // Update context for next window (only on finalized results)
+                    if !is_provisional {
+                        let mut map = prev_texts.lock().unwrap_or_else(|e| e.into_inner());
+                        map.insert(item.label.clone(), text.clone());
+                    }
+                    let _ = app.emit(
+                        "transcript-segment",
+                        TranscriptEvent {
+                            text: text.clone(),
+                            source: item.label.clone(),
+                            timestamp_ms: item.timestamp_ms,
+                            is_provisional,
+                        },
+                    );
+                    // Persist finalized segments to SQLite
+                    if !is_provisional {
+                        let db: &DatabaseState = app.state::<DatabaseState>().inner();
+                        match db.conn.lock() {
+                            Ok(conn) => {
+                                let prompt = prompts.get(i).and_then(|p| p.as_deref());
+                                if let Err(e) = database::insert_segment(
+                                    &conn,
+                                    &meeting_id,
+                                    &text,
+                                    &item.label,
+                                    item.timestamp_ms as i64,
+                                    prompt,
+                                    database::now_unix_ms(),
+                                ) {
+                                    eprintln!("[transcribe] failed to insert segment: {e}");
+                                }
+                            }
+                            Err(e) => eprintln!("[transcribe] db lock poisoned: {e}"),
+                        }
                     }
                 }
             }
+            Ok((_, Err(e), _)) => eprintln!("[transcribe] error: {e}"),
+            Err(e) => eprintln!("[transcribe] task panicked: {e}"),
         }
-        Ok((_, Err(e), _)) => eprintln!("[transcribe] error: {e}"),
-        Err(e) => eprintln!("[transcribe] task panicked: {e}"),
-    }
-}
-
-/// One tick of the sliding-window transcription loop.
-#[cfg(target_os = "macos")]
-async fn step_transcribe(
-    accumulator: &Mutex<PcmAccumulator>,
-    service: &Arc<TranscriptionService>,
-    app: &tauri::AppHandle,
-    base_dir: &std::path::Path,
-    busy: &AtomicBool,
-    prev_texts: &Mutex<HashMap<String, String>>,
-    meeting_id: &str,
-) {
-    if busy
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return;
     }
 
-    let model_path = match crate::services::model_manager::resolve_model_path(base_dir) {
-        Ok(Some(path)) => path,
-        _ => {
-            busy.store(false, Ordering::SeqCst);
+    /// One tick of the sliding-window transcription loop.
+    async fn step_transcribe(
+        accumulator: &Mutex<PcmAccumulator>,
+        service: &Arc<TranscriptionService>,
+        app: &tauri::AppHandle,
+        base_dir: &std::path::Path,
+        busy: &AtomicBool,
+        prev_texts: &Mutex<HashMap<String, String>>,
+        meeting_id: &str,
+    ) {
+        if busy
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             return;
         }
-    };
 
-    let (sources, is_provisional) = {
-        let Ok(mut acc) = accumulator.lock() else {
-            busy.store(false, Ordering::SeqCst);
-            return;
+        let model_path = match crate::services::model_manager::resolve_model_path(base_dir) {
+            Ok(Some(path)) => path,
+            _ => {
+                busy.store(false, Ordering::SeqCst);
+                return;
+            }
         };
-        if acc.max_duration_secs() >= WINDOW_MAX_SECS {
-            (acc.flush(), false)
-        } else {
-            (acc.peek(), true)
-        }
-    };
 
-    let items = collect_batch_items(sources);
-    transcribe_and_emit(
-        items,
-        is_provisional,
-        service,
-        app,
-        &model_path,
-        prev_texts,
-        meeting_id,
-    )
-    .await;
-
-    busy.store(false, Ordering::SeqCst);
-}
-
-/// Final flush: transcribe all remaining audio as non-provisional.
-#[cfg(target_os = "macos")]
-async fn final_flush(
-    accumulator: &Mutex<PcmAccumulator>,
-    service: &Arc<TranscriptionService>,
-    app: &tauri::AppHandle,
-    base_dir: &std::path::Path,
-    prev_texts: &Mutex<HashMap<String, String>>,
-    meeting_id: &str,
-) {
-    let model_path = match crate::services::model_manager::resolve_model_path(base_dir) {
-        Ok(Some(path)) => path,
-        _ => return,
-    };
-
-    let sources = {
-        let Ok(mut acc) = accumulator.lock() else {
-            return;
+        let (sources, is_provisional) = {
+            let Ok(mut acc) = accumulator.lock() else {
+                busy.store(false, Ordering::SeqCst);
+                return;
+            };
+            if acc.max_duration_secs() >= WINDOW_MAX_SECS {
+                (acc.flush(), false)
+            } else {
+                (acc.peek(), true)
+            }
         };
-        acc.flush()
-    };
 
-    let items = collect_batch_items(sources);
-    transcribe_and_emit(
-        items,
-        false,
-        &Arc::clone(service),
-        app,
-        &model_path,
-        prev_texts,
-        meeting_id,
-    )
-    .await;
-}
+        let items = collect_batch_items(sources);
+        transcribe_and_emit(
+            items,
+            is_provisional,
+            service,
+            app,
+            &model_path,
+            prev_texts,
+            meeting_id,
+        )
+        .await;
 
-// ---------------------------------------------------------------------------
-// Tauri commands
-// ---------------------------------------------------------------------------
+        busy.store(false, Ordering::SeqCst);
+    }
 
-#[tauri::command]
-pub async fn start_recording(
-    state: tauri::State<'_, RecordingState>,
-    app: tauri::AppHandle,
-) -> Result<(), AppError> {
-    #[cfg(target_os = "macos")]
-    {
+    /// Final flush: transcribe all remaining audio as non-provisional.
+    async fn final_flush(
+        accumulator: &Mutex<PcmAccumulator>,
+        service: &Arc<TranscriptionService>,
+        app: &tauri::AppHandle,
+        base_dir: &std::path::Path,
+        prev_texts: &Mutex<HashMap<String, String>>,
+        meeting_id: &str,
+    ) {
+        let model_path = match crate::services::model_manager::resolve_model_path(base_dir) {
+            Ok(Some(path)) => path,
+            _ => return,
+        };
+
+        let sources = {
+            let Ok(mut acc) = accumulator.lock() else {
+                return;
+            };
+            acc.flush()
+        };
+
+        let items = collect_batch_items(sources);
+        transcribe_and_emit(items, false, service, app, &model_path, prev_texts, meeting_id).await;
+    }
+
+    /// Core implementation of start_recording for macOS.
+    pub(super) async fn do_start_recording(
+        state: tauri::State<'_, RecordingState>,
+        app: tauri::AppHandle,
+    ) -> Result<String, AppError> {
         if !unsafe { crate::services::permissions::CGPreflightScreenCaptureAccess() } {
             return Err(AppError::PermissionDenied(
                 "Screen recording permission is required to capture audio.".into(),
             ));
         }
 
-        let mut guard = state
-            .capture
-            .lock()
-            .map_err(|_| AppError::LockPoisoned("Capture lock poisoned".into()))?;
+        let mut guard = lock_or_err(&state.capture)?;
         if guard.is_some() {
             return Err(AppError::CaptureFailed("Already recording".into()));
         }
@@ -271,10 +244,7 @@ pub async fn start_recording(
         drop(guard);
 
         {
-            let mut acc = state
-            .accumulator
-            .lock()
-            .map_err(|_| AppError::LockPoisoned("Accumulator lock poisoned".into()))?;
+            let mut acc = lock_or_err(&state.accumulator)?;
             *acc = PcmAccumulator::new();
         }
 
@@ -283,15 +253,15 @@ pub async fn start_recording(
         let now = database::now_unix_ms();
         {
             let db_state: tauri::State<'_, DatabaseState> = app.state::<DatabaseState>();
-            let conn = db_state.conn.lock().map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))?;
+            let conn = lock_or_err(&db_state.conn)?;
             database::create_meeting(&conn, &meeting_id, "Recording", now)?;
         }
         {
-            let mut sid = state.session_id.lock().map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))?;
+            let mut sid = lock_or_err(&state.session_id)?;
             *sid = Some(meeting_id.clone());
         }
         {
-            let mut started = state.started_at.lock().map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))?;
+            let mut started = lock_or_err(&state.started_at)?;
             *started = Some(std::time::Instant::now());
         }
 
@@ -341,25 +311,22 @@ pub async fn start_recording(
                             );
                         }
                         AudioSource::Microphone => {
-                            let cleaned = aec
+                            match aec
                                 .as_mut()
-                                .map(|aec| aec.feed_mic(&chunk.pcm_data, chunk.sample_rate));
-                            if let Some(samples) = cleaned {
-                                if !samples.is_empty() {
+                                .map(|aec| aec.feed_mic(&chunk.pcm_data, chunk.sample_rate))
+                            {
+                                Some(samples) if !samples.is_empty() => {
+                                    acc.append(&chunk.source, &samples, chunk.timestamp, 16000);
+                                }
+                                Some(_) => { /* AEC returned empty, skip this chunk */ }
+                                None => {
                                     acc.append(
                                         &chunk.source,
-                                        &samples,
+                                        &chunk.pcm_data,
                                         chunk.timestamp,
-                                        16000,
+                                        chunk.sample_rate,
                                     );
                                 }
-                            } else {
-                                acc.append(
-                                    &chunk.source,
-                                    &chunk.pcm_data,
-                                    chunk.timestamp,
-                                    chunk.sample_rate,
-                                );
                             }
                         }
                     }
@@ -370,11 +337,12 @@ pub async fn start_recording(
         // Task 2: Sliding-window transcription loop
         let cancel = CancellationToken::new();
         {
-            let mut token_guard = state.cancel_token.lock().map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))?;
+            let mut token_guard = lock_or_err(&state.cancel_token)?;
             *token_guard = Some(cancel.clone());
         }
 
         let app_for_transcribe = app.clone();
+        let meeting_id_for_return = meeting_id.clone();
         tokio::spawn(async move {
             let busy = Arc::new(AtomicBool::new(false));
             let prev_texts = Mutex::new(HashMap::<String, String>::new());
@@ -409,13 +377,81 @@ pub async fn start_recording(
             }
         });
 
+        Ok(meeting_id_for_return)
+    }
+
+    /// Core implementation of stop_recording for macOS.
+    pub(super) async fn do_stop_recording(
+        state: tauri::State<'_, RecordingState>,
+        app: tauri::AppHandle,
+    ) -> Result<(), AppError> {
+        match state.cancel_token.lock() {
+            Ok(mut token) => {
+                if let Some(token) = token.take() {
+                    token.cancel();
+                }
+            }
+            Err(e) => eprintln!("[stop_recording] cancel_token lock poisoned: {e}"),
+        }
+
+        let mut guard = lock_or_err(&state.capture)?;
+        if let Some(mut capture) = guard.take() {
+            capture
+                .stop()
+                .map_err(|e| AppError::CaptureFailed(e.to_string()))?;
+        }
+
+        match state.accumulator.lock() {
+            Ok(mut acc) => {
+                *acc = PcmAccumulator::new();
+            }
+            Err(e) => eprintln!("[stop_recording] accumulator lock poisoned: {e}"),
+        }
+
+        // End the meeting in the database
+        let meeting_id = lock_or_err(&state.session_id)?.take();
+        let started_at = lock_or_err(&state.started_at)?.take();
+        if let Some(mid) = meeting_id {
+            let duration_ms = started_at
+                .map(|s| s.elapsed().as_millis() as i64)
+                .unwrap_or(0);
+            let db: &DatabaseState = app.state::<DatabaseState>().inner();
+            match db.conn.lock() {
+                Ok(conn) => {
+                    if let Err(e) =
+                        database::end_meeting(&conn, &mid, database::now_unix_ms(), duration_ms)
+                    {
+                        eprintln!("[stop_recording] failed to end meeting {mid}: {e}");
+                    }
+                }
+                Err(e) => eprintln!("[stop_recording] db lock poisoned: {e}"),
+            }
+        }
+
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tauri commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn start_recording(
+    state: tauri::State<'_, RecordingState>,
+    app: tauri::AppHandle,
+) -> Result<String, AppError> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::do_start_recording(state, app).await
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (&state, &app);
-        Err(AppError::NotSupported("Not supported on this platform".into()))
+        Err(AppError::NotSupported(
+            "Not supported on this platform".into(),
+        ))
     }
 }
 
@@ -426,50 +462,14 @@ pub async fn stop_recording(
 ) -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     {
-        if let Ok(mut token) = state.cancel_token.lock() {
-            if let Some(token) = token.take() {
-                token.cancel();
-            }
-        }
-
-        let mut guard = state.capture.lock().map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))?;
-        if let Some(mut capture) = guard.take() {
-            capture
-                .stop()
-                .map_err(|e| AppError::CaptureFailed(e.to_string()))?;
-        }
-
-        if let Ok(mut acc) = state.accumulator.lock() {
-            *acc = PcmAccumulator::new();
-        }
-
-        // End the meeting in the database
-        let meeting_id = state
-            .session_id
-            .lock()
-            .map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))?
-            .take();
-        let started_at = state
-            .started_at
-            .lock()
-            .map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))?
-            .take();
-        if let Some(mid) = meeting_id {
-            let duration_ms = started_at
-                .map(|s| s.elapsed().as_millis() as i64)
-                .unwrap_or(0);
-            let db: &DatabaseState = app.state::<DatabaseState>().inner();
-            if let Ok(conn) = db.conn.lock() {
-                let _ = database::end_meeting(&conn, &mid, database::now_unix_ms(), duration_ms);
-            }
-        }
-
-        Ok(())
+        macos::do_stop_recording(state, app).await
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (&state, &app);
-        Err(AppError::NotSupported("Not supported on this platform".into()))
+        Err(AppError::NotSupported(
+            "Not supported on this platform".into(),
+        ))
     }
 }
