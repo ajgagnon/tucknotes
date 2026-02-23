@@ -5,12 +5,14 @@ pub mod services;
 
 use std::sync::{Arc, Mutex};
 
-use tauri::{TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
 
 use commands::models::*;
 use commands::permissions::*;
 use commands::recording::*;
+use commands::transcripts::*;
 use models::{PcmAccumulator, RecordingState};
+use services::database::DatabaseState;
 #[cfg(target_os = "macos")]
 use services::transcription::{TranscriptionService, TranscriptionState};
 
@@ -21,6 +23,8 @@ pub fn run() {
         capture: Mutex::new(None),
         accumulator: Arc::new(Mutex::new(PcmAccumulator::new())),
         cancel_token: Mutex::new(None),
+        session_id: Mutex::new(None),
+        started_at: Mutex::new(None),
     };
 
     #[cfg(not(target_os = "macos"))]
@@ -34,6 +38,18 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // Initialize database
+            let base_dir = app
+                .path()
+                .app_data_dir()
+                .expect("failed to resolve app data dir");
+            std::fs::create_dir_all(&base_dir).expect("failed to create app data dir");
+            let conn = services::database::open_db(&base_dir)
+                .expect("failed to open database");
+            app.manage(DatabaseState {
+                conn: Mutex::new(conn),
+            });
+
             let win_builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                     .title("Grain")
@@ -74,6 +90,9 @@ pub fn run() {
             open_microphone_settings,
             start_recording,
             stop_recording,
+            list_sessions,
+            get_session,
+            delete_session,
             list_available_models,
             get_model_status,
             download_model,

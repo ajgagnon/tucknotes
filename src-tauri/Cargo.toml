@@ -30,6 +30,8 @@ tokio-util = { version = "0.7", features = ["rt"] }
 whisper-rs = { version = "0.15", features = ["metal"] }
 rubato = "0.16"
 voice_activity_detector = "0.2"
+rusqlite = { version = "0.34", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 screencapturekit = "1.5"

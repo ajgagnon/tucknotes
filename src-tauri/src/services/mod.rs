@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod database;
 pub mod model_manager;
 pub mod vad;
 

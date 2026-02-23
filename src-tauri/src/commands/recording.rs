@@ -20,6 +20,8 @@ use tokio_util::sync::CancellationToken;
 #[cfg(target_os = "macos")]
 use crate::models::{AccumulatedAudio, PcmAccumulator, TranscriptEvent};
 #[cfg(target_os = "macos")]
+use crate::services::database::{self, DatabaseState};
+#[cfg(target_os = "macos")]
 use crate::services::transcription::{TranscriptionService, TranscriptionState};
 
 #[cfg(target_os = "macos")]
@@ -73,6 +75,7 @@ fn collect_batch_items(
 
 /// Run batch transcription and emit events for each result.
 /// Updates `prev_texts` with the latest transcript per source for cross-window context.
+/// Saves finalized (non-provisional) segments to the database.
 #[cfg(target_os = "macos")]
 async fn transcribe_and_emit(
     items: Vec<BatchItem>,
@@ -81,6 +84,7 @@ async fn transcribe_and_emit(
     app: &tauri::AppHandle,
     model_path: &std::path::Path,
     prev_texts: &Mutex<HashMap<String, String>>,
+    session_id: &str,
 ) {
     if items.is_empty() {
         return;
@@ -94,17 +98,18 @@ async fn transcribe_and_emit(
     let svc = Arc::clone(service);
     let path = model_path.to_path_buf();
     let app = app.clone();
+    let session_id = session_id.to_string();
 
     let results = tokio::task::spawn_blocking(move || {
         let buffers: Vec<&[f32]> = items.iter().map(|i| i.samples.as_slice()).collect();
         let texts = svc.transcribe_batch(&path, &buffers, &prompts);
-        (items, texts)
+        (items, texts, prompts)
     })
     .await;
 
     match results {
-        Ok((items, Ok(texts))) => {
-            for (item, text) in items.into_iter().zip(texts) {
+        Ok((items, Ok(texts), prompts)) => {
+            for (i, (item, text)) in items.into_iter().zip(texts).enumerate() {
                 if text.is_empty()
                     || crate::services::transcription::is_low_quality_output(&text)
                 {
@@ -118,15 +123,31 @@ async fn transcribe_and_emit(
                 let _ = app.emit(
                     "transcript-segment",
                     TranscriptEvent {
-                        text,
-                        source: item.label,
+                        text: text.clone(),
+                        source: item.label.clone(),
                         timestamp_ms: item.timestamp_ms,
                         is_provisional,
                     },
                 );
+                // Persist finalized segments to SQLite
+                if !is_provisional {
+                    let db: &DatabaseState = app.state::<DatabaseState>().inner();
+                    if let Ok(conn) = db.conn.lock() {
+                        let prompt = prompts.get(i).and_then(|p| p.as_deref());
+                        let _ = database::insert_segment(
+                            &conn,
+                            &session_id,
+                            &text,
+                            &item.label,
+                            item.timestamp_ms as i64,
+                            prompt,
+                            database::now_unix_ms(),
+                        );
+                    }
+                }
             }
         }
-        Ok((_, Err(e))) => eprintln!("[transcribe] error: {e}"),
+        Ok((_, Err(e), _)) => eprintln!("[transcribe] error: {e}"),
         Err(e) => eprintln!("[transcribe] task panicked: {e}"),
     }
 }
@@ -140,6 +161,7 @@ async fn step_transcribe(
     base_dir: &std::path::Path,
     busy: &AtomicBool,
     prev_texts: &Mutex<HashMap<String, String>>,
+    session_id: &str,
 ) {
     if busy
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -169,7 +191,16 @@ async fn step_transcribe(
     };
 
     let items = collect_batch_items(sources);
-    transcribe_and_emit(items, is_provisional, service, app, &model_path, prev_texts).await;
+    transcribe_and_emit(
+        items,
+        is_provisional,
+        service,
+        app,
+        &model_path,
+        prev_texts,
+        session_id,
+    )
+    .await;
 
     busy.store(false, Ordering::SeqCst);
 }
@@ -182,6 +213,7 @@ async fn final_flush(
     app: &tauri::AppHandle,
     base_dir: &std::path::Path,
     prev_texts: &Mutex<HashMap<String, String>>,
+    session_id: &str,
 ) {
     let model_path = match crate::services::model_manager::resolve_model_path(base_dir) {
         Ok(Some(path)) => path,
@@ -196,7 +228,16 @@ async fn final_flush(
     };
 
     let items = collect_batch_items(sources);
-    transcribe_and_emit(items, false, &Arc::clone(service), app, &model_path, prev_texts).await;
+    transcribe_and_emit(
+        items,
+        false,
+        &Arc::clone(service),
+        app,
+        &model_path,
+        prev_texts,
+        session_id,
+    )
+    .await;
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +264,23 @@ pub async fn start_recording(
         {
             let mut acc = state.accumulator.lock().map_err(|_| AppError::LockPoisoned)?;
             *acc = PcmAccumulator::new();
+        }
+
+        // Create a new session in the database
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let now = database::now_unix_ms();
+        {
+            let db_state: tauri::State<'_, DatabaseState> = app.state::<DatabaseState>();
+            let conn = db_state.conn.lock().map_err(|_| AppError::LockPoisoned)?;
+            database::create_session(&conn, &session_id, "Recording", now)?;
+        }
+        {
+            let mut sid = state.session_id.lock().map_err(|_| AppError::LockPoisoned)?;
+            *sid = Some(session_id.clone());
+        }
+        {
+            let mut started = state.started_at.lock().map_err(|_| AppError::LockPoisoned)?;
+            *started = Some(std::time::Instant::now());
         }
 
         let accumulator = Arc::clone(&state.accumulator);
@@ -321,6 +379,7 @@ pub async fn start_recording(
                             &base_dir,
                             &busy,
                             &prev_texts,
+                            &session_id,
                         ).await;
                     }
                     _ = cancel.cancelled() => {
@@ -330,6 +389,7 @@ pub async fn start_recording(
                             &app_for_transcribe,
                             &base_dir,
                             &prev_texts,
+                            &session_id,
                         ).await;
                         break;
                     }
@@ -348,7 +408,10 @@ pub async fn start_recording(
 }
 
 #[tauri::command]
-pub async fn stop_recording(state: tauri::State<'_, RecordingState>) -> Result<(), AppError> {
+pub async fn stop_recording(
+    state: tauri::State<'_, RecordingState>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     {
         if let Ok(mut token) = state.cancel_token.lock() {
@@ -368,12 +431,33 @@ pub async fn stop_recording(state: tauri::State<'_, RecordingState>) -> Result<(
             *acc = PcmAccumulator::new();
         }
 
+        // End the session in the database
+        let session_id = state
+            .session_id
+            .lock()
+            .map_err(|_| AppError::LockPoisoned)?
+            .take();
+        let started_at = state
+            .started_at
+            .lock()
+            .map_err(|_| AppError::LockPoisoned)?
+            .take();
+        if let Some(sid) = session_id {
+            let duration_ms = started_at
+                .map(|s| s.elapsed().as_millis() as i64)
+                .unwrap_or(0);
+            let db: &DatabaseState = app.state::<DatabaseState>().inner();
+            if let Ok(conn) = db.conn.lock() {
+                let _ = database::end_session(&conn, &sid, database::now_unix_ms(), duration_ms);
+            }
+        }
+
         Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = &state;
+        let _ = (&state, &app);
         Err(AppError::NotSupported)
     }
 }
