@@ -251,7 +251,16 @@ pub async fn start_recording(
 ) -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     {
-        let mut guard = state.capture.lock().map_err(|_| AppError::LockPoisoned)?;
+        if !unsafe { crate::services::permissions::CGPreflightScreenCaptureAccess() } {
+            return Err(AppError::PermissionDenied(
+                "Screen recording permission is required to capture audio.".into(),
+            ));
+        }
+
+        let mut guard = state
+            .capture
+            .lock()
+            .map_err(|_| AppError::LockPoisoned("Capture lock poisoned".into()))?;
         if guard.is_some() {
             return Err(AppError::CaptureFailed("Already recording".into()));
         }
@@ -262,7 +271,10 @@ pub async fn start_recording(
         drop(guard);
 
         {
-            let mut acc = state.accumulator.lock().map_err(|_| AppError::LockPoisoned)?;
+            let mut acc = state
+            .accumulator
+            .lock()
+            .map_err(|_| AppError::LockPoisoned("Accumulator lock poisoned".into()))?;
             *acc = PcmAccumulator::new();
         }
 
@@ -271,15 +283,15 @@ pub async fn start_recording(
         let now = database::now_unix_ms();
         {
             let db_state: tauri::State<'_, DatabaseState> = app.state::<DatabaseState>();
-            let conn = db_state.conn.lock().map_err(|_| AppError::LockPoisoned)?;
+            let conn = db_state.conn.lock().map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))?;
             database::create_meeting(&conn, &meeting_id, "Recording", now)?;
         }
         {
-            let mut sid = state.session_id.lock().map_err(|_| AppError::LockPoisoned)?;
+            let mut sid = state.session_id.lock().map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))?;
             *sid = Some(meeting_id.clone());
         }
         {
-            let mut started = state.started_at.lock().map_err(|_| AppError::LockPoisoned)?;
+            let mut started = state.started_at.lock().map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))?;
             *started = Some(std::time::Instant::now());
         }
 
@@ -358,7 +370,7 @@ pub async fn start_recording(
         // Task 2: Sliding-window transcription loop
         let cancel = CancellationToken::new();
         {
-            let mut token_guard = state.cancel_token.lock().map_err(|_| AppError::LockPoisoned)?;
+            let mut token_guard = state.cancel_token.lock().map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))?;
             *token_guard = Some(cancel.clone());
         }
 
@@ -403,7 +415,7 @@ pub async fn start_recording(
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (&state, &app);
-        Err(AppError::NotSupported)
+        Err(AppError::NotSupported("Not supported on this platform".into()))
     }
 }
 
@@ -420,7 +432,7 @@ pub async fn stop_recording(
             }
         }
 
-        let mut guard = state.capture.lock().map_err(|_| AppError::LockPoisoned)?;
+        let mut guard = state.capture.lock().map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))?;
         if let Some(mut capture) = guard.take() {
             capture
                 .stop()
@@ -435,12 +447,12 @@ pub async fn stop_recording(
         let meeting_id = state
             .session_id
             .lock()
-            .map_err(|_| AppError::LockPoisoned)?
+            .map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))?
             .take();
         let started_at = state
             .started_at
             .lock()
-            .map_err(|_| AppError::LockPoisoned)?
+            .map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))?
             .take();
         if let Some(mid) = meeting_id {
             let duration_ms = started_at
@@ -458,6 +470,6 @@ pub async fn stop_recording(
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (&state, &app);
-        Err(AppError::NotSupported)
+        Err(AppError::NotSupported("Not supported on this platform".into()))
     }
 }

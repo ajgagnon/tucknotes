@@ -30,7 +30,7 @@ impl TranscriptionService {
     /// Load the Whisper model from disk if it hasn't been loaded yet.
     /// Subsequent calls are a no-op (the context is already `Some`).
     fn ensure_loaded(&self, model_path: &Path) -> Result<(), AppError> {
-        let mut guard = self.context.lock().map_err(|_| AppError::LockPoisoned)?;
+        let mut guard = self.context.lock().map_err(|_| AppError::LockPoisoned("Whisper context lock poisoned".into()))?;
         if guard.is_some() {
             return Ok(());
         }
@@ -91,7 +91,7 @@ impl TranscriptionService {
     ) -> Result<Vec<String>, AppError> {
         self.ensure_loaded(model_path)?;
 
-        let guard = self.context.lock().map_err(|_| AppError::LockPoisoned)?;
+        let guard = self.context.lock().map_err(|_| AppError::LockPoisoned("Whisper context lock poisoned".into()))?;
         let ctx = guard
             .as_ref()
             .ok_or_else(|| AppError::TranscriptionFailed("Context not loaded".into()))?;

@@ -18,17 +18,15 @@ interface TranscriptSegment {
   is_provisional: boolean;
 }
 
-function extractErrorMessage(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  if (typeof e === "object" && e !== null && "message" in e)
-    return String((e as Record<string, unknown>).message);
-  return String(e);
+interface AppError {
+  kind: string;
+  message: string;
 }
 
 function RecordingView() {
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AppError | null>(null);
   const [systemChunks, setSystemChunks] = useState(0);
   const [micChunks, setMicChunks] = useState(0);
   const [systemLevel, setSystemLevel] = useState(0);
@@ -65,7 +63,7 @@ function RecordingView() {
         setElapsed((prev) => prev + 1);
       }, 1000);
     } catch (e: unknown) {
-      setError(extractErrorMessage(e));
+      setError(e as AppError);
     }
   };
 
@@ -73,7 +71,7 @@ function RecordingView() {
     try {
       await invoke("stop_recording");
     } catch (e: unknown) {
-      setError(extractErrorMessage(e));
+      setError(e as AppError);
     }
     setRecording(false);
     clearTimer();
@@ -285,7 +283,7 @@ function RecordingView() {
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg py-3 px-4 text-sm max-w-[360px] text-center dark:bg-danger/10 dark:border-danger/25 dark:text-red-300">
-          {/tcc|permission|screen.?capture|not authorized/i.test(error) ? (
+          {error.kind === "PermissionDenied" ? (
             <>
               <p className="m-0 mb-2 font-medium">
                 Permission needed to capture audio
@@ -301,7 +299,7 @@ function RecordingView() {
               </button>
             </>
           ) : (
-            error
+            error.message
           )}
         </div>
       )}

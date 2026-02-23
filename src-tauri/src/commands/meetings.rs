@@ -5,7 +5,7 @@ use crate::services::database::{self, DatabaseState, MeetingRow, SegmentRow};
 pub fn list_meetings(
     state: tauri::State<'_, DatabaseState>,
 ) -> Result<Vec<MeetingRow>, AppError> {
-    let conn = state.conn.lock().map_err(|_| AppError::LockPoisoned)?;
+    let conn = state.conn.lock().map_err(|_| AppError::LockPoisoned("Database lock poisoned".into()))?;
     database::list_meetings(&conn)
 }
 
@@ -20,7 +20,7 @@ pub fn get_meeting(
     state: tauri::State<'_, DatabaseState>,
     meeting_id: String,
 ) -> Result<MeetingDetail, AppError> {
-    let conn = state.conn.lock().map_err(|_| AppError::LockPoisoned)?;
+    let conn = state.conn.lock().map_err(|_| AppError::LockPoisoned("Database lock poisoned".into()))?;
     let (meeting, segments) = database::get_meeting_with_segments(&conn, &meeting_id)?;
     Ok(MeetingDetail { meeting, segments })
 }
@@ -30,6 +30,6 @@ pub fn delete_meeting(
     state: tauri::State<'_, DatabaseState>,
     meeting_id: String,
 ) -> Result<(), AppError> {
-    let conn = state.conn.lock().map_err(|_| AppError::LockPoisoned)?;
+    let conn = state.conn.lock().map_err(|_| AppError::LockPoisoned("Database lock poisoned".into()))?;
     database::delete_meeting(&conn, &meeting_id)
 }
