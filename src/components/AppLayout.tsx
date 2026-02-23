@@ -40,19 +40,20 @@ function AppLayout() {
   return (
     <TooltipProvider>
       <SidebarProvider>
-        <Sidebar>
-          <SidebarTrigger className="fixed left-[88px] top-[8px] text-muted-foreground" />
+        <Sidebar variant="inset">
+          <SidebarTrigger className="fixed left-[100px] top-[8px] text-muted-foreground/60 hover:text-muted-foreground" />
           <SidebarHeader
             className="h-[50px]"
             onMouseDown={onDrag}
           ></SidebarHeader>
           <SidebarContent>
-            <SidebarGroup>
+            <SidebarGroup className="px-3">
               <SidebarGroupContent>
-                <SidebarMenu className="gap-1">
+                <SidebarMenu className="gap-1.5">
                   {navItems.map((item) => (
                     <SidebarMenuItem key={item.id}>
                       <SidebarMenuButton
+                        size="lg"
                         isActive={activePage === item.id}
                         onClick={() => setActivePage(item.id)}
                         tooltip={item.label}
@@ -76,7 +77,9 @@ function AppLayout() {
         <SidebarInset>
           <div className="h-[50px] shrink-0" onMouseDown={onDrag}>
             <div className="flex items-center justify-end p-3">
-              <Button variant="default">Start Recording</Button>
+              <Button variant="default" className="rounded-full">
+                Start Recording
+              </Button>
             </div>
           </div>
           <div className="flex-1 overflow-auto">
