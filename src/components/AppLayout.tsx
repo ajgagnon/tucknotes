@@ -76,7 +76,12 @@ function AppLayout() {
         </Sidebar>
         <SidebarInset>
           <div className="h-[50px] shrink-0" onMouseDown={onDrag}>
-            <div className="flex items-center justify-end p-3">
+            <div className="flex items-center justify-between p-3">
+              <h1 className="text-lg font-semibold px-2">
+                {activePage === "recording" && "Recording"}
+                {activePage === "transcripts" && "Transcripts"}
+                {activePage === "settings" && "Settings"}
+              </h1>
               <Button variant="default" className="rounded-full">
                 Start Recording
               </Button>

@@ -9,6 +9,7 @@ pub enum AppError {
     IoError(String),
     InvalidModel(String),
     TranscriptionFailed(String),
+    DatabaseError(String),
     LockPoisoned,
     NotSupported,
 }
@@ -22,6 +23,7 @@ impl std::fmt::Display for AppError {
             AppError::IoError(msg) => write!(f, "IO error: {}", msg),
             AppError::InvalidModel(msg) => write!(f, "Invalid model: {}", msg),
             AppError::TranscriptionFailed(msg) => write!(f, "Transcription failed: {}", msg),
+            AppError::DatabaseError(msg) => write!(f, "Database error: {}", msg),
             AppError::LockPoisoned => write!(f, "Lock poisoned"),
             AppError::NotSupported => write!(f, "Not supported on this platform"),
         }
@@ -43,6 +45,12 @@ impl From<serde_json::Error> for AppError {
 impl From<reqwest::Error> for AppError {
     fn from(e: reqwest::Error) -> Self {
         AppError::DownloadFailed(e.to_string())
+    }
+}
+
+impl From<rusqlite::Error> for AppError {
+    fn from(e: rusqlite::Error) -> Self {
+        AppError::DatabaseError(e.to_string())
     }
 }
 
