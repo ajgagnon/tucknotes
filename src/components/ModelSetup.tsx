@@ -1,29 +1,11 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { ModelInfo, DownloadProgress } from "@/lib/models";
+import { formatSize } from "@/lib/models";
 
 interface ModelSetupProps {
   onComplete: () => void;
-}
-
-interface ModelInfo {
-  id: string;
-  name: string;
-  description: string;
-  size_bytes: number;
-  filename: string;
-}
-
-interface DownloadProgress {
-  model_id: string;
-  downloaded_bytes: number;
-  total_bytes: number;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
-  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(0)} MB`;
-  return `${(bytes / 1_000).toFixed(0)} KB`;
 }
 
 function ModelSetup({ onComplete }: ModelSetupProps) {

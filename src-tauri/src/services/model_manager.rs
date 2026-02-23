@@ -162,6 +162,7 @@ pub fn list_models() -> Vec<ModelInfo> {
             description: "Fast and lightweight. Best for English-only meetings.".into(),
             size_bytes: 148_000_000,
             filename: WhisperModel::BaseEn.filename().into(),
+            recommended: false,
         },
         ModelInfo {
             id: WhisperModel::LargeV3TurboQ5,
@@ -169,6 +170,7 @@ pub fn list_models() -> Vec<ModelInfo> {
             description: "Higher accuracy, multilingual support. Larger download.".into(),
             size_bytes: 547_000_000,
             filename: WhisperModel::LargeV3TurboQ5.filename().into(),
+            recommended: true,
         },
     ]
 }

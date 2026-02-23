@@ -48,6 +48,7 @@ pub struct ModelInfo {
     pub description: String,
     pub size_bytes: u64,
     pub filename: String,
+    pub recommended: bool,
 }
 
 #[derive(Clone, Serialize)]
