@@ -108,9 +108,9 @@ function AppLayout() {
       <RecordingProvider>
         <SidebarProvider>
           <Sidebar variant="inset">
-            <SidebarTrigger className="fixed left-[100px] top-[8px] text-muted-foreground/60 hover:text-muted-foreground" />
+            <SidebarTrigger className="fixed left-[85px] top-[8px] text-muted-foreground/60 hover:text-muted-foreground" />
             <SidebarHeader
-              className="h-[50px]"
+              className="h-[35px]"
               onMouseDown={onDrag}
             ></SidebarHeader>
             <SidebarContent>
@@ -142,7 +142,7 @@ function AppLayout() {
             </SidebarContent>
           </Sidebar>
           <SidebarInset>
-            <div className="h-[50px] shrink-0" onMouseDown={onDrag}>
+            <div className="h-[35px] shrink-0" onMouseDown={onDrag}>
               <div className="flex items-center justify-between p-3">
                 <h1 className="text-lg font-semibold px-2">
                   {pageTitles[activePage]}
