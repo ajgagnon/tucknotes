@@ -16,15 +16,15 @@ import {
 } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import RecordingView from "./RecordingView";
-import TranscriptsView from "./TranscriptsView";
+import MeetingsView from "./MeetingsView";
 import SettingsView from "./SettingsView";
 import { Button } from "./ui/button";
 
-type Page = "recording" | "transcripts" | "settings";
+type Page = "recording" | "meetings" | "settings";
 
 const navItems = [
   { id: "recording" as const, label: "Recording", icon: Mic },
-  { id: "transcripts" as const, label: "Transcripts", icon: FileText },
+  { id: "meetings" as const, label: "Meetings", icon: FileText },
   { id: "settings" as const, label: "Settings", icon: Settings },
 ];
 
@@ -79,7 +79,7 @@ function AppLayout() {
             <div className="flex items-center justify-between p-3">
               <h1 className="text-lg font-semibold px-2">
                 {activePage === "recording" && "Recording"}
-                {activePage === "transcripts" && "Transcripts"}
+                {activePage === "meetings" && "Meetings"}
                 {activePage === "settings" && "Settings"}
               </h1>
               <Button variant="default" className="rounded-full">
@@ -89,7 +89,7 @@ function AppLayout() {
           </div>
           <div className="flex-1 overflow-auto">
             {activePage === "recording" && <RecordingView />}
-            {activePage === "transcripts" && <TranscriptsView />}
+            {activePage === "meetings" && <MeetingsView />}
             {activePage === "settings" && <SettingsView />}
           </div>
         </SidebarInset>

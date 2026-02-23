@@ -10,7 +10,7 @@ use tauri::{Manager, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
 use commands::models::*;
 use commands::permissions::*;
 use commands::recording::*;
-use commands::transcripts::*;
+use commands::meetings::*;
 use models::{PcmAccumulator, RecordingState};
 use services::database::DatabaseState;
 #[cfg(target_os = "macos")]
@@ -90,9 +90,9 @@ pub fn run() {
             open_microphone_settings,
             start_recording,
             stop_recording,
-            list_sessions,
-            get_session,
-            delete_session,
+            list_meetings,
+            get_meeting,
+            delete_meeting,
             list_available_models,
             get_model_status,
             download_model,

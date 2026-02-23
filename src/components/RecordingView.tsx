@@ -18,10 +18,15 @@ interface TranscriptSegment {
   is_provisional: boolean;
 }
 
+interface AppError {
+  kind: string;
+  message: string;
+}
+
 function RecordingView() {
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AppError | null>(null);
   const [systemChunks, setSystemChunks] = useState(0);
   const [micChunks, setMicChunks] = useState(0);
   const [systemLevel, setSystemLevel] = useState(0);
@@ -57,16 +62,16 @@ function RecordingView() {
       timerRef.current = setInterval(() => {
         setElapsed((prev) => prev + 1);
       }, 1000);
-    } catch (e) {
-      setError(String(e));
+    } catch (e: unknown) {
+      setError(e as AppError);
     }
   };
 
   const stopRecording = async () => {
     try {
       await invoke("stop_recording");
-    } catch (e) {
-      setError(String(e));
+    } catch (e: unknown) {
+      setError(e as AppError);
     }
     setRecording(false);
     clearTimer();
@@ -228,8 +233,7 @@ function RecordingView() {
           </div>
 
           <div className="w-full max-w-80 max-h-64 overflow-y-auto rounded-lg bg-black/4 dark:bg-white/4 p-3 flex flex-col gap-2">
-            {segments.length === 0 &&
-            Object.keys(provisional).length === 0 ? (
+            {segments.length === 0 && Object.keys(provisional).length === 0 ? (
               <p className="text-xs text-neutral-400 text-center m-0">
                 Transcript will appear here...
               </p>
@@ -278,8 +282,25 @@ function RecordingView() {
       )}
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg py-2.5 px-4 text-sm max-w-[360px] text-center dark:bg-danger/10 dark:border-danger/25 dark:text-red-300">
-          {error}
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg py-3 px-4 text-sm max-w-[360px] text-center dark:bg-danger/10 dark:border-danger/25 dark:text-red-300">
+          {error.kind === "PermissionDenied" ? (
+            <>
+              <p className="m-0 mb-2 font-medium">
+                Permission needed to capture audio
+              </p>
+              <p className="m-0 mb-3 text-xs text-red-500 dark:text-red-400">
+                Enable Screen Recording in macOS settings to get started.
+              </p>
+              <button
+                className="border-[1.5px] border-red-300 dark:border-red-400/50 text-red-700 dark:text-red-300 bg-transparent rounded-lg py-1.5 px-4 text-xs font-semibold cursor-pointer transition-all duration-200 hover:bg-red-100 dark:hover:bg-red-400/10"
+                onClick={() => invoke("open_screen_recording_settings")}
+              >
+                Open System Settings
+              </button>
+            </>
+          ) : (
+            error.message
+          )}
         </div>
       )}
     </div>

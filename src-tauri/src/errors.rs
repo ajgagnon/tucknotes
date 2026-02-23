@@ -10,8 +10,9 @@ pub enum AppError {
     InvalidModel(String),
     TranscriptionFailed(String),
     DatabaseError(String),
-    LockPoisoned,
-    NotSupported,
+    LockPoisoned(String),
+    NotSupported(String),
+    PermissionDenied(String),
 }
 
 impl std::fmt::Display for AppError {
@@ -24,8 +25,9 @@ impl std::fmt::Display for AppError {
             AppError::InvalidModel(msg) => write!(f, "Invalid model: {}", msg),
             AppError::TranscriptionFailed(msg) => write!(f, "Transcription failed: {}", msg),
             AppError::DatabaseError(msg) => write!(f, "Database error: {}", msg),
-            AppError::LockPoisoned => write!(f, "Lock poisoned"),
-            AppError::NotSupported => write!(f, "Not supported on this platform"),
+            AppError::LockPoisoned(msg) => write!(f, "Lock poisoned: {}", msg),
+            AppError::NotSupported(msg) => write!(f, "Not supported: {}", msg),
+            AppError::PermissionDenied(msg) => write!(f, "Permission denied: {}", msg),
         }
     }
 }
@@ -66,10 +68,19 @@ mod tests {
     }
 
     #[test]
-    fn tagged_serialization_unit_variant() {
-        let json = serde_json::to_value(AppError::LockPoisoned).unwrap();
+    fn tagged_serialization_lock_poisoned() {
+        let json =
+            serde_json::to_value(AppError::LockPoisoned("mutex poisoned".into())).unwrap();
         assert_eq!(json["kind"], "LockPoisoned");
-        assert!(json.get("message").is_none());
+        assert_eq!(json["message"], "mutex poisoned");
+    }
+
+    #[test]
+    fn tagged_serialization_permission_denied() {
+        let json =
+            serde_json::to_value(AppError::PermissionDenied("no screen access".into())).unwrap();
+        assert_eq!(json["kind"], "PermissionDenied");
+        assert_eq!(json["message"], "no screen access");
     }
 
     #[test]
@@ -81,10 +92,10 @@ mod tests {
     }
 
     #[test]
-    fn display_unit_variant() {
+    fn display_not_supported() {
         assert_eq!(
-            AppError::NotSupported.to_string(),
-            "Not supported on this platform"
+            AppError::NotSupported("this platform".into()).to_string(),
+            "Not supported: this platform"
         );
     }
 }

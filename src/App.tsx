@@ -39,13 +39,13 @@ function App() {
     setStep(modelReady ? "ready" : "model-setup");
   }
 
-  // if (step === "loading") return null;
-  // if (step === "permissions") {
-  //   return <PermissionSetup onComplete={handlePermissionsComplete} />;
-  // }
-  // if (step === "model-setup") {
-  //   return <ModelSetup onComplete={() => setStep("ready")} />;
-  // }
+  if (step === "loading") return null;
+  if (step === "permissions") {
+    return <PermissionSetup onComplete={handlePermissionsComplete} />;
+  }
+  if (step === "model-setup") {
+    return <ModelSetup onComplete={() => setStep("ready")} />;
+  }
   return <AppLayout />;
 }
 
