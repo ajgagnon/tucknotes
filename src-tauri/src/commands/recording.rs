@@ -84,7 +84,7 @@ async fn transcribe_and_emit(
     app: &tauri::AppHandle,
     model_path: &std::path::Path,
     prev_texts: &Mutex<HashMap<String, String>>,
-    session_id: &str,
+    meeting_id: &str,
 ) {
     if items.is_empty() {
         return;
@@ -98,7 +98,7 @@ async fn transcribe_and_emit(
     let svc = Arc::clone(service);
     let path = model_path.to_path_buf();
     let app = app.clone();
-    let session_id = session_id.to_string();
+    let meeting_id = meeting_id.to_string();
 
     let results = tokio::task::spawn_blocking(move || {
         let buffers: Vec<&[f32]> = items.iter().map(|i| i.samples.as_slice()).collect();
@@ -136,7 +136,7 @@ async fn transcribe_and_emit(
                         let prompt = prompts.get(i).and_then(|p| p.as_deref());
                         let _ = database::insert_segment(
                             &conn,
-                            &session_id,
+                            &meeting_id,
                             &text,
                             &item.label,
                             item.timestamp_ms as i64,
@@ -161,7 +161,7 @@ async fn step_transcribe(
     base_dir: &std::path::Path,
     busy: &AtomicBool,
     prev_texts: &Mutex<HashMap<String, String>>,
-    session_id: &str,
+    meeting_id: &str,
 ) {
     if busy
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -198,7 +198,7 @@ async fn step_transcribe(
         app,
         &model_path,
         prev_texts,
-        session_id,
+        meeting_id,
     )
     .await;
 
@@ -213,7 +213,7 @@ async fn final_flush(
     app: &tauri::AppHandle,
     base_dir: &std::path::Path,
     prev_texts: &Mutex<HashMap<String, String>>,
-    session_id: &str,
+    meeting_id: &str,
 ) {
     let model_path = match crate::services::model_manager::resolve_model_path(base_dir) {
         Ok(Some(path)) => path,
@@ -235,7 +235,7 @@ async fn final_flush(
         app,
         &model_path,
         prev_texts,
-        session_id,
+        meeting_id,
     )
     .await;
 }
@@ -267,16 +267,16 @@ pub async fn start_recording(
         }
 
         // Create a new meeting in the database
-        let session_id = uuid::Uuid::new_v4().to_string();
+        let meeting_id = uuid::Uuid::new_v4().to_string();
         let now = database::now_unix_ms();
         {
             let db_state: tauri::State<'_, DatabaseState> = app.state::<DatabaseState>();
             let conn = db_state.conn.lock().map_err(|_| AppError::LockPoisoned)?;
-            database::create_meeting(&conn, &session_id, "Recording", now)?;
+            database::create_meeting(&conn, &meeting_id, "Recording", now)?;
         }
         {
             let mut sid = state.session_id.lock().map_err(|_| AppError::LockPoisoned)?;
-            *sid = Some(session_id.clone());
+            *sid = Some(meeting_id.clone());
         }
         {
             let mut started = state.started_at.lock().map_err(|_| AppError::LockPoisoned)?;
@@ -379,7 +379,7 @@ pub async fn start_recording(
                             &base_dir,
                             &busy,
                             &prev_texts,
-                            &session_id,
+                            &meeting_id,
                         ).await;
                     }
                     _ = cancel.cancelled() => {
@@ -389,7 +389,7 @@ pub async fn start_recording(
                             &app_for_transcribe,
                             &base_dir,
                             &prev_texts,
-                            &session_id,
+                            &meeting_id,
                         ).await;
                         break;
                     }
@@ -432,7 +432,7 @@ pub async fn stop_recording(
         }
 
         // End the meeting in the database
-        let session_id = state
+        let meeting_id = state
             .session_id
             .lock()
             .map_err(|_| AppError::LockPoisoned)?
@@ -442,13 +442,13 @@ pub async fn stop_recording(
             .lock()
             .map_err(|_| AppError::LockPoisoned)?
             .take();
-        if let Some(sid) = session_id {
+        if let Some(mid) = meeting_id {
             let duration_ms = started_at
                 .map(|s| s.elapsed().as_millis() as i64)
                 .unwrap_or(0);
             let db: &DatabaseState = app.state::<DatabaseState>().inner();
             if let Ok(conn) = db.conn.lock() {
-                let _ = database::end_meeting(&conn, &sid, database::now_unix_ms(), duration_ms);
+                let _ = database::end_meeting(&conn, &mid, database::now_unix_ms(), duration_ms);
             }
         }
 

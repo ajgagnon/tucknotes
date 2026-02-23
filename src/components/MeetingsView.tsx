@@ -14,7 +14,7 @@ interface MeetingRow {
 
 interface SegmentRow {
   id: number;
-  session_id: string;
+  meeting_id: string;
   text: string;
   source: string;
   timestamp_ms: number;

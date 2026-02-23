@@ -18,6 +18,13 @@ interface TranscriptSegment {
   is_provisional: boolean;
 }
 
+function extractErrorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === "object" && e !== null && "message" in e)
+    return String((e as Record<string, unknown>).message);
+  return String(e);
+}
+
 function RecordingView() {
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -58,13 +65,7 @@ function RecordingView() {
         setElapsed((prev) => prev + 1);
       }, 1000);
     } catch (e: unknown) {
-      setError(
-        e instanceof Error
-          ? e.message
-          : typeof e === "object" && e !== null && "message" in e
-            ? String((e as Record<string, unknown>).message)
-            : String(e),
-      );
+      setError(extractErrorMessage(e));
     }
   };
 
@@ -72,13 +73,7 @@ function RecordingView() {
     try {
       await invoke("stop_recording");
     } catch (e: unknown) {
-      setError(
-        e instanceof Error
-          ? e.message
-          : typeof e === "object" && e !== null && "message" in e
-            ? String((e as Record<string, unknown>).message)
-            : String(e),
-      );
+      setError(extractErrorMessage(e));
     }
     setRecording(false);
     clearTimer();
