@@ -37,7 +37,8 @@ pub fn run() {
             let win_builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                     .title("Grain")
-                    .inner_size(1024.0, 768.0);
+                    .inner_size(1024.0, 768.0)
+                    .transparent(true);
 
             #[cfg(target_os = "macos")]
             let win_builder = win_builder
@@ -49,19 +50,9 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             {
-                use objc2::rc::Retained;
-                use objc2_app_kit::{NSColor, NSWindow};
-
-                let ptr = window.ns_window().unwrap() as *mut NSWindow;
-                let ns_window: Retained<NSWindow> =
-                    unsafe { Retained::retain(ptr).unwrap() };
-                let bg_color = NSColor::colorWithSRGBRed_green_blue_alpha(
-                    32.0 / 255.0,
-                    32.0 / 255.0,
-                    32.0 / 255.0,
-                    1.0,
-                );
-                ns_window.setBackgroundColor(Some(&bg_color));
+                use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+                apply_vibrancy(&window, NSVisualEffectMaterial::Sidebar, None, None)
+                    .expect("Failed to apply vibrancy");
             }
 
             Ok(())
