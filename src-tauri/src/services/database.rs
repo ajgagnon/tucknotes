@@ -38,12 +38,12 @@ pub fn now_unix_ms() -> i64 {
         .as_millis() as i64
 }
 
-/// Open (or create) the database at `<base_dir>/grain.db` and run migrations.
+/// Open (or create) the database at `<base_dir>/grain.db` and initialise the schema.
 pub fn open_db(base_dir: &Path) -> Result<Connection, AppError> {
     let db_path = base_dir.join("grain.db");
     let conn = Connection::open(&db_path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-    migrate(&conn)?;
+    init_schema(&conn)?;
     Ok(conn)
 }
 
@@ -51,52 +51,33 @@ pub fn open_db(base_dir: &Path) -> Result<Connection, AppError> {
 fn open_db_memory() -> Result<Connection, AppError> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-    migrate(&conn)?;
+    init_schema(&conn)?;
     Ok(conn)
 }
 
-fn migrate(conn: &Connection) -> Result<(), AppError> {
-    let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-
-    if version < 1 {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS meetings (
-                id           TEXT PRIMARY KEY,
-                title        TEXT,
-                created_at   INTEGER NOT NULL,
-                ended_at     INTEGER,
-                duration_ms  INTEGER,
-                summary      TEXT
-            );
-            CREATE TABLE IF NOT EXISTS transcript_segments (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                meeting_id   TEXT NOT NULL,
-                text         TEXT NOT NULL,
-                source       TEXT NOT NULL,
-                timestamp_ms INTEGER NOT NULL,
-                prompt       TEXT,
-                created_at   INTEGER NOT NULL,
-                FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_segments_meeting
-                ON transcript_segments(meeting_id);
-            PRAGMA user_version = 2;",
-        )?;
-    }
-
-    if version == 1 {
-        // Migrate v1 databases: rename tables/columns, add summary
-        conn.execute_batch(
-            "ALTER TABLE sessions RENAME TO meetings;
-            ALTER TABLE transcript_segments RENAME COLUMN session_id TO meeting_id;
-            ALTER TABLE meetings ADD COLUMN summary TEXT;
-            DROP INDEX IF EXISTS idx_segments_session;
-            CREATE INDEX IF NOT EXISTS idx_segments_meeting
-                ON transcript_segments(meeting_id);
-            PRAGMA user_version = 2;",
-        )?;
-    }
-
+fn init_schema(conn: &Connection) -> Result<(), AppError> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS meetings (
+            id           TEXT PRIMARY KEY,
+            title        TEXT,
+            created_at   INTEGER NOT NULL,
+            ended_at     INTEGER,
+            duration_ms  INTEGER,
+            summary      TEXT
+        );
+        CREATE TABLE IF NOT EXISTS transcript_segments (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            meeting_id   TEXT NOT NULL,
+            text         TEXT NOT NULL,
+            source       TEXT NOT NULL,
+            timestamp_ms INTEGER NOT NULL,
+            prompt       TEXT,
+            created_at   INTEGER NOT NULL,
+            FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_segments_meeting
+            ON transcript_segments(meeting_id);",
+    )?;
     Ok(())
 }
 
