@@ -266,13 +266,13 @@ pub async fn start_recording(
             *acc = PcmAccumulator::new();
         }
 
-        // Create a new session in the database
+        // Create a new meeting in the database
         let session_id = uuid::Uuid::new_v4().to_string();
         let now = database::now_unix_ms();
         {
             let db_state: tauri::State<'_, DatabaseState> = app.state::<DatabaseState>();
             let conn = db_state.conn.lock().map_err(|_| AppError::LockPoisoned)?;
-            database::create_session(&conn, &session_id, "Recording", now)?;
+            database::create_meeting(&conn, &session_id, "Recording", now)?;
         }
         {
             let mut sid = state.session_id.lock().map_err(|_| AppError::LockPoisoned)?;
@@ -431,7 +431,7 @@ pub async fn stop_recording(
             *acc = PcmAccumulator::new();
         }
 
-        // End the session in the database
+        // End the meeting in the database
         let session_id = state
             .session_id
             .lock()
@@ -448,7 +448,7 @@ pub async fn stop_recording(
                 .unwrap_or(0);
             let db: &DatabaseState = app.state::<DatabaseState>().inner();
             if let Ok(conn) = db.conn.lock() {
-                let _ = database::end_session(&conn, &sid, database::now_unix_ms(), duration_ms);
+                let _ = database::end_meeting(&conn, &sid, database::now_unix_ms(), duration_ms);
             }
         }
 

@@ -11,12 +11,13 @@ pub struct DatabaseState {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SessionRow {
+pub struct MeetingRow {
     pub id: String,
     pub title: Option<String>,
     pub created_at: i64,
     pub ended_at: Option<i64>,
     pub duration_ms: Option<i64>,
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -64,7 +65,8 @@ fn migrate(conn: &Connection) -> Result<(), AppError> {
                 title        TEXT,
                 created_at   INTEGER NOT NULL,
                 ended_at     INTEGER,
-                duration_ms  INTEGER
+                duration_ms  INTEGER,
+                summary      TEXT
             );
             CREATE TABLE IF NOT EXISTS transcript_segments (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,10 +84,24 @@ fn migrate(conn: &Connection) -> Result<(), AppError> {
         )?;
     }
 
+    if version < 2 {
+        // Add summary column for databases created before meetings feature
+        let has_summary: bool = conn
+            .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='sessions'")?
+            .query_row([], |row| row.get::<_, String>(0))
+            .map(|sql| sql.contains("summary"))
+            .unwrap_or(false);
+
+        if !has_summary {
+            conn.execute_batch("ALTER TABLE sessions ADD COLUMN summary TEXT;")?;
+        }
+        conn.execute_batch("PRAGMA user_version = 2;")?;
+    }
+
     Ok(())
 }
 
-pub fn create_session(
+pub fn create_meeting(
     conn: &Connection,
     id: &str,
     title: &str,
@@ -98,7 +114,7 @@ pub fn create_session(
     Ok(())
 }
 
-pub fn end_session(
+pub fn end_meeting(
     conn: &Connection,
     id: &str,
     ended_at: i64,
@@ -107,6 +123,18 @@ pub fn end_session(
     conn.execute(
         "UPDATE sessions SET ended_at = ?1, duration_ms = ?2 WHERE id = ?3",
         rusqlite::params![ended_at, duration_ms, id],
+    )?;
+    Ok(())
+}
+
+pub fn update_meeting_summary(
+    conn: &Connection,
+    id: &str,
+    summary: &str,
+) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE sessions SET summary = ?1 WHERE id = ?2",
+        rusqlite::params![summary, id],
     )?;
     Ok(())
 }
@@ -128,41 +156,43 @@ pub fn insert_segment(
     Ok(())
 }
 
-pub fn list_sessions(conn: &Connection) -> Result<Vec<SessionRow>, AppError> {
+pub fn list_meetings(conn: &Connection) -> Result<Vec<MeetingRow>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, created_at, ended_at, duration_ms
+        "SELECT id, title, created_at, ended_at, duration_ms, summary
          FROM sessions ORDER BY created_at DESC",
     )?;
     let rows = stmt.query_map([], |row| {
-        Ok(SessionRow {
+        Ok(MeetingRow {
             id: row.get(0)?,
             title: row.get(1)?,
             created_at: row.get(2)?,
             ended_at: row.get(3)?,
             duration_ms: row.get(4)?,
+            summary: row.get(5)?,
         })
     })?;
-    let mut sessions = Vec::new();
+    let mut meetings = Vec::new();
     for row in rows {
-        sessions.push(row?);
+        meetings.push(row?);
     }
-    Ok(sessions)
+    Ok(meetings)
 }
 
-pub fn get_session_with_segments(
+pub fn get_meeting_with_segments(
     conn: &Connection,
-    session_id: &str,
-) -> Result<(SessionRow, Vec<SegmentRow>), AppError> {
-    let session = conn.query_row(
-        "SELECT id, title, created_at, ended_at, duration_ms FROM sessions WHERE id = ?1",
-        rusqlite::params![session_id],
+    meeting_id: &str,
+) -> Result<(MeetingRow, Vec<SegmentRow>), AppError> {
+    let meeting = conn.query_row(
+        "SELECT id, title, created_at, ended_at, duration_ms, summary FROM sessions WHERE id = ?1",
+        rusqlite::params![meeting_id],
         |row| {
-            Ok(SessionRow {
+            Ok(MeetingRow {
                 id: row.get(0)?,
                 title: row.get(1)?,
                 created_at: row.get(2)?,
                 ended_at: row.get(3)?,
                 duration_ms: row.get(4)?,
+                summary: row.get(5)?,
             })
         },
     )?;
@@ -171,7 +201,7 @@ pub fn get_session_with_segments(
         "SELECT id, session_id, text, source, timestamp_ms, prompt, created_at
          FROM transcript_segments WHERE session_id = ?1 ORDER BY timestamp_ms ASC",
     )?;
-    let rows = stmt.query_map(rusqlite::params![session_id], |row| {
+    let rows = stmt.query_map(rusqlite::params![meeting_id], |row| {
         Ok(SegmentRow {
             id: row.get(0)?,
             session_id: row.get(1)?,
@@ -187,13 +217,13 @@ pub fn get_session_with_segments(
         segments.push(row?);
     }
 
-    Ok((session, segments))
+    Ok((meeting, segments))
 }
 
-pub fn delete_session(conn: &Connection, session_id: &str) -> Result<(), AppError> {
+pub fn delete_meeting(conn: &Connection, meeting_id: &str) -> Result<(), AppError> {
     conn.execute(
         "DELETE FROM sessions WHERE id = ?1",
-        rusqlite::params![session_id],
+        rusqlite::params![meeting_id],
     )?;
     Ok(())
 }
@@ -203,10 +233,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_and_segment_lifecycle() {
+    fn meeting_and_segment_lifecycle() {
         let conn = open_db_memory().unwrap();
 
-        create_session(&conn, "s1", "Test Session", 1708700000000).unwrap();
+        create_meeting(&conn, "s1", "Test Meeting", 1708700000000).unwrap();
         insert_segment(&conn, "s1", "Hello world", "system", 0, None, 1708700003000).unwrap();
         insert_segment(
             &conn,
@@ -218,13 +248,14 @@ mod tests {
             1708700006000,
         )
         .unwrap();
-        end_session(&conn, "s1", 1708700300000, 300000).unwrap();
+        end_meeting(&conn, "s1", 1708700300000, 300000).unwrap();
 
-        let (session, segments) = get_session_with_segments(&conn, "s1").unwrap();
-        assert_eq!(session.id, "s1");
-        assert_eq!(session.title.as_deref(), Some("Test Session"));
-        assert_eq!(session.ended_at, Some(1708700300000));
-        assert_eq!(session.duration_ms, Some(300000));
+        let (meeting, segments) = get_meeting_with_segments(&conn, "s1").unwrap();
+        assert_eq!(meeting.id, "s1");
+        assert_eq!(meeting.title.as_deref(), Some("Test Meeting"));
+        assert_eq!(meeting.ended_at, Some(1708700300000));
+        assert_eq!(meeting.duration_ms, Some(300000));
+        assert_eq!(meeting.summary, None);
         assert_eq!(segments.len(), 2);
         assert_eq!(segments[0].text, "Hello world");
         assert_eq!(segments[0].source, "system");
@@ -234,29 +265,29 @@ mod tests {
     }
 
     #[test]
-    fn list_sessions_ordering() {
+    fn list_meetings_ordering() {
         let conn = open_db_memory().unwrap();
 
-        create_session(&conn, "s1", "First", 1708700000000).unwrap();
-        create_session(&conn, "s2", "Second", 1708700060000).unwrap();
+        create_meeting(&conn, "s1", "First", 1708700000000).unwrap();
+        create_meeting(&conn, "s2", "Second", 1708700060000).unwrap();
 
-        let sessions = list_sessions(&conn).unwrap();
-        assert_eq!(sessions.len(), 2);
-        assert_eq!(sessions[0].id, "s2");
-        assert_eq!(sessions[1].id, "s1");
+        let meetings = list_meetings(&conn).unwrap();
+        assert_eq!(meetings.len(), 2);
+        assert_eq!(meetings[0].id, "s2");
+        assert_eq!(meetings[1].id, "s1");
     }
 
     #[test]
     fn delete_cascades_segments() {
         let conn = open_db_memory().unwrap();
 
-        create_session(&conn, "s1", "To Delete", 1708700000000).unwrap();
+        create_meeting(&conn, "s1", "To Delete", 1708700000000).unwrap();
         insert_segment(&conn, "s1", "text", "system", 0, None, 1708700003000).unwrap();
 
-        delete_session(&conn, "s1").unwrap();
+        delete_meeting(&conn, "s1").unwrap();
 
-        let sessions = list_sessions(&conn).unwrap();
-        assert!(sessions.is_empty());
+        let meetings = list_meetings(&conn).unwrap();
+        assert!(meetings.is_empty());
 
         let count: i64 = conn
             .query_row(
@@ -266,5 +297,23 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn update_summary() {
+        let conn = open_db_memory().unwrap();
+
+        create_meeting(&conn, "s1", "Meeting", 1708700000000).unwrap();
+        assert_eq!(
+            get_meeting_with_segments(&conn, "s1").unwrap().0.summary,
+            None
+        );
+
+        update_meeting_summary(&conn, "s1", "This was a productive meeting.").unwrap();
+        let (meeting, _) = get_meeting_with_segments(&conn, "s1").unwrap();
+        assert_eq!(
+            meeting.summary.as_deref(),
+            Some("This was a productive meeting.")
+        );
     }
 }
