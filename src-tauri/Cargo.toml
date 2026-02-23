@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-opener = "2"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -30,12 +30,14 @@ tokio-util = { version = "0.7", features = ["rt"] }
 whisper-rs = { version = "0.15", features = ["metal"] }
 rubato = "0.16"
 voice_activity_detector = "0.2"
+rusqlite = { version = "0.34", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 screencapturekit = "1.5"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString"] }
-objc2-app-kit = { version = "0.3", features = ["NSColor", "NSWindow"] }
+window-vibrancy = "0.5"
 block2 = "0.6"
 aec3 = { git = "https://github.com/RubyBit/aec3-rs" }
 

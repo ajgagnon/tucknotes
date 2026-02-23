@@ -25,10 +25,15 @@ export interface TranscriptSegment {
   is_provisional: boolean;
 }
 
+export interface AppError {
+  kind: string;
+  message: string;
+}
+
 interface RecordingContextValue {
   recording: boolean;
   elapsed: number;
-  error: string | null;
+  error: AppError | null;
   systemLevel: number;
   micLevel: number;
   segments: TranscriptSegment[];
@@ -43,7 +48,7 @@ const RecordingContext = createContext<RecordingContextValue | null>(null);
 export function RecordingProvider({ children }: { children: ReactNode }) {
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AppError | null>(null);
   const [systemLevel, setSystemLevel] = useState(0);
   const [micLevel, setMicLevel] = useState(0);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
@@ -74,8 +79,8 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       timerRef.current = setInterval(() => {
         setElapsed((prev) => prev + 1);
       }, 1000);
-    } catch (e) {
-      setError(String(e));
+    } catch (e: unknown) {
+      setError(e as AppError);
       throw e;
     }
   }, []);
@@ -83,8 +88,8 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const stopRecording = useCallback(async () => {
     try {
       await invoke("stop_recording");
-    } catch (e) {
-      setError(String(e));
+    } catch (e: unknown) {
+      setError(e as AppError);
     }
     setRecording(false);
     clearTimer();

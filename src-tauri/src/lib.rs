@@ -5,12 +5,14 @@ pub mod services;
 
 use std::sync::{Arc, Mutex};
 
-use tauri::{TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
 
 use commands::models::*;
 use commands::permissions::*;
 use commands::recording::*;
+use commands::meetings::*;
 use models::{PcmAccumulator, RecordingState};
+use services::database::DatabaseState;
 #[cfg(target_os = "macos")]
 use services::transcription::{TranscriptionService, TranscriptionState};
 
@@ -21,6 +23,8 @@ pub fn run() {
         capture: Mutex::new(None),
         accumulator: Arc::new(Mutex::new(PcmAccumulator::new())),
         cancel_token: Mutex::new(None),
+        session_id: Mutex::new(None),
+        started_at: Mutex::new(None),
     };
 
     #[cfg(not(target_os = "macos"))]
@@ -34,10 +38,23 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // Initialize database
+            let base_dir = app
+                .path()
+                .app_data_dir()
+                .expect("failed to resolve app data dir");
+            std::fs::create_dir_all(&base_dir).expect("failed to create app data dir");
+            let conn = services::database::open_db(&base_dir)
+                .expect("failed to open database");
+            app.manage(DatabaseState {
+                conn: Mutex::new(conn),
+            });
+
             let win_builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                     .title("Grain")
-                    .inner_size(1024.0, 768.0);
+                    .inner_size(1024.0, 768.0)
+                    .transparent(true);
 
             #[cfg(target_os = "macos")]
             let win_builder = win_builder
@@ -49,19 +66,9 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             {
-                use objc2::rc::Retained;
-                use objc2_app_kit::{NSColor, NSWindow};
-
-                let ptr = window.ns_window().unwrap() as *mut NSWindow;
-                let ns_window: Retained<NSWindow> =
-                    unsafe { Retained::retain(ptr).unwrap() };
-                let bg_color = NSColor::colorWithSRGBRed_green_blue_alpha(
-                    32.0 / 255.0,
-                    32.0 / 255.0,
-                    32.0 / 255.0,
-                    1.0,
-                );
-                ns_window.setBackgroundColor(Some(&bg_color));
+                use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+                apply_vibrancy(&window, NSVisualEffectMaterial::Sidebar, None, None)
+                    .expect("Failed to apply vibrancy");
             }
 
             Ok(())
@@ -83,6 +90,9 @@ pub fn run() {
             open_microphone_settings,
             start_recording,
             stop_recording,
+            list_meetings,
+            get_meeting,
+            delete_meeting,
             list_available_models,
             get_model_status,
             download_model,

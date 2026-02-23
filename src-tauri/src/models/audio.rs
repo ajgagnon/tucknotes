@@ -127,6 +127,8 @@ pub struct RecordingState {
     pub capture: Mutex<Option<crate::services::audio_capture::AudioCapture>>,
     pub accumulator: Arc<Mutex<PcmAccumulator>>,
     pub cancel_token: Mutex<Option<tokio_util::sync::CancellationToken>>,
+    pub session_id: Mutex<Option<String>>,
+    pub started_at: Mutex<Option<std::time::Instant>>,
 }
 
 #[cfg(not(target_os = "macos"))]

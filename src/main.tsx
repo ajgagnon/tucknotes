@@ -10,6 +10,11 @@ mq.addEventListener("change", (e) =>
   document.documentElement.classList.toggle("dark", e.matches),
 );
 
+// Detect Tauri runtime for transparent vibrancy backgrounds
+if ("__TAURI_INTERNALS__" in window) {
+  document.documentElement.classList.add("tauri");
+}
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />

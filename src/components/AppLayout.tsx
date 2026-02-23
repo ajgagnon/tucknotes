@@ -18,16 +18,16 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { RecordingProvider, useRecording } from "@/hooks/useRecording";
 import { formatTime } from "@/lib/formatTime";
 import MeetingView from "./MeetingView";
-import TranscriptsView from "./TranscriptsView";
+import MeetingsView from "./MeetingsView";
 import SettingsView from "./SettingsView";
 import AudioVisualizer from "./AudioVisualizer";
 import { Button } from "./ui/button";
 
-type Page = "meeting" | "transcripts" | "settings";
+type Page = "meeting" | "meetings" | "settings";
 
 const navItems = [
   { id: "meeting" as const, label: "Meeting", icon: Mic },
-  { id: "transcripts" as const, label: "Transcripts", icon: FileText },
+  { id: "meetings" as const, label: "Meetings", icon: FileText },
   { id: "settings" as const, label: "Settings", icon: Settings },
 ];
 
@@ -66,6 +66,7 @@ function HeaderControls({
       )}
       <Button
         variant={recording ? "destructive" : "default"}
+        className="rounded-full"
         onClick={handleClick}
       >
         {recording ? "Stop Recording" : "Start Recording"}
@@ -75,7 +76,7 @@ function HeaderControls({
 }
 
 function AppLayout() {
-  const [activePage, setActivePage] = useState<Page>("meeting");
+  const [activePage, setActivePage] = useState<Page>("meetings");
   const onDrag = useCallback((e: React.MouseEvent) => {
     if (e.button === 0 && e.detail === 1) {
       e.preventDefault();
@@ -87,19 +88,20 @@ function AppLayout() {
     <TooltipProvider>
       <RecordingProvider>
         <SidebarProvider>
-          <Sidebar>
-            <SidebarTrigger className="fixed left-[88px] top-[8px] text-muted-foreground" />
+          <Sidebar variant="inset">
+            <SidebarTrigger className="fixed left-[100px] top-[8px] text-muted-foreground/60 hover:text-muted-foreground" />
             <SidebarHeader
               className="h-[50px]"
               onMouseDown={onDrag}
             ></SidebarHeader>
             <SidebarContent>
-              <SidebarGroup>
+              <SidebarGroup className="px-3">
                 <SidebarGroupContent>
-                  <SidebarMenu className="gap-1">
+                  <SidebarMenu className="gap-1.5">
                     {navItems.map((item) => (
                       <SidebarMenuItem key={item.id}>
                         <SidebarMenuButton
+                          size="lg"
                           isActive={activePage === item.id}
                           onClick={() => setActivePage(item.id)}
                           tooltip={item.label}
@@ -122,7 +124,12 @@ function AppLayout() {
           </Sidebar>
           <SidebarInset>
             <div className="h-[50px] shrink-0" onMouseDown={onDrag}>
-              <div className="flex items-center justify-end p-3">
+              <div className="flex items-center justify-between p-3">
+                <h1 className="text-lg font-semibold px-2">
+                  {activePage === "meeting" && "Meeting"}
+                  {activePage === "meetings" && "Meetings"}
+                  {activePage === "settings" && "Settings"}
+                </h1>
                 <HeaderControls
                   onNavigateToMeeting={() => setActivePage("meeting")}
                 />
@@ -130,7 +137,7 @@ function AppLayout() {
             </div>
             <div className="flex-1 overflow-auto">
               {activePage === "meeting" && <MeetingView />}
-              {activePage === "transcripts" && <TranscriptsView />}
+              {activePage === "meetings" && <MeetingsView />}
               {activePage === "settings" && <SettingsView />}
             </div>
           </SidebarInset>
