@@ -1,3 +1,8 @@
+/** Minimum height for outer bars so they remain visible at silence. */
+const MIN_OUTER = 0.15;
+/** Minimum height for the center bar (tallest idle state). */
+const MIN_CENTER = 0.2;
+
 interface AudioVisualizerProps {
   systemLevel: number;
   micLevel: number;
@@ -5,9 +10,9 @@ interface AudioVisualizerProps {
 
 function AudioVisualizer({ systemLevel, micLevel }: AudioVisualizerProps) {
   const bars = [
-    Math.max(0.15, micLevel),
-    Math.max(0.2, Math.max(systemLevel, micLevel)),
-    Math.max(0.15, systemLevel),
+    Math.max(MIN_OUTER, micLevel),
+    Math.max(MIN_CENTER, Math.max(systemLevel, micLevel)),
+    Math.max(MIN_OUTER, systemLevel),
   ];
 
   return (

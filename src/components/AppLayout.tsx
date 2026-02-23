@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Mic, FileText, Settings } from "lucide-react";
+import { FileText, Settings } from "lucide-react";
 import {
   SidebarProvider,
   Sidebar,
@@ -15,54 +15,61 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { RecordingProvider, useRecording } from "@/hooks/useRecording";
+import {
+  RecordingProvider,
+  useRecording,
+  useAudioLevels,
+} from "@/hooks/useRecording";
 import { formatTime } from "@/lib/formatTime";
-import MeetingView from "./MeetingView";
 import MeetingsView from "./MeetingsView";
 import SettingsView from "./SettingsView";
 import AudioVisualizer from "./AudioVisualizer";
 import { Button } from "./ui/button";
 
-type Page = "meeting" | "meetings" | "settings";
+type Page = "meetings" | "settings";
 
 const navItems = [
-  { id: "meeting" as const, label: "Meeting", icon: Mic },
   { id: "meetings" as const, label: "Meetings", icon: FileText },
   { id: "settings" as const, label: "Settings", icon: Settings },
 ];
 
+const pageTitles: Record<Page, string> = {
+  meetings: "Meetings",
+  settings: "Settings",
+};
+
+const appWindow = getCurrentWindow();
+
 function HeaderControls({
-  onNavigateToMeeting,
+  onStartRecording,
 }: {
-  onNavigateToMeeting: () => void;
+  onStartRecording: (meetingId: string) => void;
 }) {
-  const {
-    recording,
-    startRecording,
-    stopRecording,
-    elapsed,
-    systemLevel,
-    micLevel,
-  } = useRecording();
+  const { recording, startRecording, stopRecording, elapsed } = useRecording();
+  const { systemLevel, micLevel } = useAudioLevels();
 
   const handleClick = async () => {
     if (recording) {
       await stopRecording();
     } else {
-      await startRecording();
-      onNavigateToMeeting();
+      try {
+        const meetingId = await startRecording();
+        onStartRecording(meetingId);
+      } catch {
+        // Error is already set in context by startRecording
+      }
     }
   };
 
   return (
     <div className="flex items-center gap-2">
       {recording && (
-        <AudioVisualizer systemLevel={systemLevel} micLevel={micLevel} />
-      )}
-      {recording && (
-        <span className="text-xs tabular-nums text-danger font-medium">
-          {formatTime(elapsed)}
-        </span>
+        <>
+          <AudioVisualizer systemLevel={systemLevel} micLevel={micLevel} />
+          <span className="text-xs tabular-nums text-danger font-medium">
+            {formatTime(elapsed)}
+          </span>
+        </>
       )}
       <Button
         variant={recording ? "destructive" : "default"}
@@ -77,11 +84,23 @@ function HeaderControls({
 
 function AppLayout() {
   const [activePage, setActivePage] = useState<Page>("meetings");
+  const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
+
+  // Only start window drag on primary-button single-click (ignore double-click/right-click)
   const onDrag = useCallback((e: React.MouseEvent) => {
     if (e.button === 0 && e.detail === 1) {
       e.preventDefault();
-      getCurrentWindow().startDragging();
+      appWindow.startDragging();
     }
+  }, []);
+
+  const handleStartRecording = useCallback((meetingId: string) => {
+    setActiveMeetingId(meetingId);
+    setActivePage("meetings");
+  }, []);
+
+  const clearActiveMeeting = useCallback(() => {
+    setActiveMeetingId(null);
   }, []);
 
   return (
@@ -126,18 +145,18 @@ function AppLayout() {
             <div className="h-[50px] shrink-0" onMouseDown={onDrag}>
               <div className="flex items-center justify-between p-3">
                 <h1 className="text-lg font-semibold px-2">
-                  {activePage === "meeting" && "Meeting"}
-                  {activePage === "meetings" && "Meetings"}
-                  {activePage === "settings" && "Settings"}
+                  {pageTitles[activePage]}
                 </h1>
-                <HeaderControls
-                  onNavigateToMeeting={() => setActivePage("meeting")}
-                />
+                <HeaderControls onStartRecording={handleStartRecording} />
               </div>
             </div>
             <div className="flex-1 overflow-auto">
-              {activePage === "meeting" && <MeetingView />}
-              {activePage === "meetings" && <MeetingsView />}
+              {activePage === "meetings" && (
+                <MeetingsView
+                  activeMeetingId={activeMeetingId}
+                  onClearActiveMeeting={clearActiveMeeting}
+                />
+              )}
               {activePage === "settings" && <SettingsView />}
             </div>
           </SidebarInset>

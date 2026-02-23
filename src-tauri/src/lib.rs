@@ -37,6 +37,7 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Initialize database
             let base_dir = app

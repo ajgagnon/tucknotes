@@ -56,6 +56,15 @@ impl From<rusqlite::Error> for AppError {
     }
 }
 
+/// Lock a `Mutex`, converting a poisoned lock into `AppError::LockPoisoned`.
+pub fn lock_or_err<T>(
+    mutex: &std::sync::Mutex<T>,
+) -> Result<std::sync::MutexGuard<'_, T>, AppError> {
+    mutex
+        .lock()
+        .map_err(|_| AppError::LockPoisoned("Lock poisoned".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
