@@ -55,13 +55,14 @@ pub fn run() {
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                     .title("Grain")
                     .inner_size(1024.0, 768.0)
+                    .min_inner_size(600.0, 400.0)
                     .transparent(true);
 
             #[cfg(target_os = "macos")]
             let win_builder = win_builder
                 .title_bar_style(TitleBarStyle::Overlay)
                 .hidden_title(true)
-                .traffic_light_position(tauri::LogicalPosition::new(16.0, 24.0));
+                .traffic_light_position(tauri::LogicalPosition::new(32.0, 38.0));
 
             let window = win_builder.build().unwrap();
 
