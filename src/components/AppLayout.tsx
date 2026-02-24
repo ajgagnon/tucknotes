@@ -173,13 +173,7 @@ function AppLayout() {
                           onClick={() => setActivePage(item.id)}
                           tooltip={item.label}
                         >
-                          <item.icon
-                            className={
-                              activePage === item.id
-                                ? "text-sidebar-accent-foreground"
-                                : "text-muted-foreground"
-                            }
-                          />
+                          <item.icon className={"text-muted-foreground"} />
                           <span>{item.label}</span>
                         </SidebarMenuButton>
                       </SidebarMenuItem>

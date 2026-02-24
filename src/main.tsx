@@ -2,13 +2,11 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./App.css";
+import { getStoredTheme, applyTheme, listenForSystemChanges } from "@/lib/theme";
 
-// Sync dark mode class with OS preference
-const mq = window.matchMedia("(prefers-color-scheme: dark)");
-document.documentElement.classList.toggle("dark", mq.matches);
-mq.addEventListener("change", (e) =>
-  document.documentElement.classList.toggle("dark", e.matches),
-);
+// Apply stored theme preference (light / dark / system)
+applyTheme(getStoredTheme());
+listenForSystemChanges();
 
 // Detect Tauri runtime for transparent vibrancy backgrounds
 if ("__TAURI_INTERNALS__" in window) {

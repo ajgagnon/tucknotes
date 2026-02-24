@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri::{Manager, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
 
+use commands::appearance::*;
 use commands::models::*;
 use commands::permissions::*;
 use commands::recording::*;
@@ -84,6 +85,7 @@ pub fn run() {
 
     builder
         .invoke_handler(tauri::generate_handler![
+            set_app_theme,
             check_screen_recording_permission,
             request_screen_recording_permission,
             open_screen_recording_settings,
