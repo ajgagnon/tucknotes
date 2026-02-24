@@ -1,9 +1,11 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { Sun, Moon, Monitor } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Field,
   FieldContent,
@@ -13,6 +15,12 @@ import {
 } from "@/components/ui/field";
 import type { ModelInfo, DownloadProgress } from "@/lib/models";
 import { formatSize } from "@/lib/models";
+import {
+  type Theme,
+  getStoredTheme,
+  setStoredTheme,
+  applyTheme,
+} from "@/lib/theme";
 
 function SettingsView() {
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -24,6 +32,7 @@ function SettingsView() {
   const [downloading, setDownloading] = useState<string | null>(null);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [theme, setTheme] = useState<Theme>(getStoredTheme);
 
   useEffect(() => {
     async function load() {
@@ -102,6 +111,39 @@ function SettingsView() {
   return (
     <div className="h-full overflow-auto">
       <div className="max-w-2xl mx-auto p-8">
+        {/* Appearance */}
+        <section className="mb-8">
+          <h2 className="text-sm font-medium text-muted-foreground mb-4">
+            Appearance
+          </h2>
+          <ToggleGroup
+            variant="outline"
+            value={[theme]}
+            onValueChange={(newValue) => {
+              const next = newValue.find((v) => v !== theme) as
+                | Theme
+                | undefined;
+              if (!next) return; // ignore deselect
+              setTheme(next);
+              setStoredTheme(next);
+              applyTheme(next);
+            }}
+          >
+            <ToggleGroupItem value="light">
+              <Sun className="size-4 mr-1" />
+              Light
+            </ToggleGroupItem>
+            <ToggleGroupItem value="dark">
+              <Moon className="size-4 mr-1" />
+              Dark
+            </ToggleGroupItem>
+            <ToggleGroupItem value="system">
+              <Monitor className="size-4 mr-1" />
+              System
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </section>
+
         {/* Transcription Model */}
         <section>
           <h2 className="text-sm font-medium text-muted-foreground mb-4">
