@@ -109,6 +109,7 @@
 }
 
 @theme inline {
+  --breakpoint-md: 600px;
   --font-sans: 'Geist Variable', sans-serif;
   --color-canvas: var(--canvas);
   --color-sidebar-ring: var(--sidebar-ring);

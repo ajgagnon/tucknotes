@@ -13,7 +13,9 @@ import {
   SidebarMenuButton,
   SidebarInset,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
+import { cn } from "@/lib/utils";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   RecordingProvider,
@@ -82,6 +84,52 @@ function HeaderControls({
   );
 }
 
+function LayoutContent({
+  activePage,
+  onDrag,
+  onStartRecording,
+  onClearActiveMeeting,
+  activeMeetingId,
+}: {
+  activePage: Page;
+  onDrag: (e: React.MouseEvent) => void;
+  onStartRecording: (meetingId: string) => void;
+  onClearActiveMeeting: () => void;
+  activeMeetingId: string | null;
+}) {
+  const { state } = useSidebar();
+  const needsStoplightPadding = state === "collapsed";
+
+  return (
+    <SidebarInset>
+      <div className="h-[35px] shrink-0" onMouseDown={onDrag}>
+        <div className="flex items-center justify-between p-3">
+          <div
+            className={cn(
+              "flex items-center gap-1 transition-all duration-200 ease-in-out",
+              needsStoplightPadding && "pl-[110px]",
+            )}
+          >
+            <h1 className="text-lg font-semibold px-2">
+              {pageTitles[activePage]}
+            </h1>
+          </div>
+          <HeaderControls onStartRecording={onStartRecording} />
+        </div>
+      </div>
+      <div className="flex-1 overflow-auto">
+        {activePage === "meetings" && (
+          <MeetingsView
+            activeMeetingId={activeMeetingId}
+            onClearActiveMeeting={onClearActiveMeeting}
+          />
+        )}
+        {activePage === "settings" && <SettingsView />}
+      </div>
+    </SidebarInset>
+  );
+}
+
 function AppLayout() {
   const [activePage, setActivePage] = useState<Page>("meetings");
   const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
@@ -108,9 +156,9 @@ function AppLayout() {
       <RecordingProvider>
         <SidebarProvider>
           <Sidebar variant="inset">
-            <SidebarTrigger className="fixed left-[85px] top-[8px] text-muted-foreground/60 hover:text-muted-foreground" />
+            <SidebarTrigger className="fixed left-[100px] top-[22px] text-muted-foreground/60 hover:text-muted-foreground" />
             <SidebarHeader
-              className="h-[35px]"
+              className="h-[50px]"
               onMouseDown={onDrag}
             ></SidebarHeader>
             <SidebarContent>
@@ -141,25 +189,13 @@ function AppLayout() {
               </SidebarGroup>
             </SidebarContent>
           </Sidebar>
-          <SidebarInset>
-            <div className="h-[35px] shrink-0" onMouseDown={onDrag}>
-              <div className="flex items-center justify-between p-3">
-                <h1 className="text-lg font-semibold px-2">
-                  {pageTitles[activePage]}
-                </h1>
-                <HeaderControls onStartRecording={handleStartRecording} />
-              </div>
-            </div>
-            <div className="flex-1 overflow-auto">
-              {activePage === "meetings" && (
-                <MeetingsView
-                  activeMeetingId={activeMeetingId}
-                  onClearActiveMeeting={clearActiveMeeting}
-                />
-              )}
-              {activePage === "settings" && <SettingsView />}
-            </div>
-          </SidebarInset>
+          <LayoutContent
+            activePage={activePage}
+            onDrag={onDrag}
+            onStartRecording={handleStartRecording}
+            onClearActiveMeeting={clearActiveMeeting}
+            activeMeetingId={activeMeetingId}
+          />
         </SidebarProvider>
       </RecordingProvider>
     </TooltipProvider>
