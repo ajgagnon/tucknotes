@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncWriteExt;
 
 use crate::errors::AppError;
-use crate::models::{AppSettings, DownloadProgress, ModelInfo, WhisperModel};
+use crate::models::{AppSettings, DownloadProgress, LlmModel, LlmModelInfo, ModelInfo, WhisperModel};
 
 /// Resolve the Tauri app data directory (e.g. ~/Library/Application Support/com.grain.app).
 /// This is the only place we depend on the Tauri runtime for path resolution.
@@ -175,6 +175,86 @@ pub fn list_models() -> Vec<ModelInfo> {
     ]
 }
 
+// ---------------------------------------------------------------------------
+// LLM model helpers — parallel to the Whisper model functions above.
+// ---------------------------------------------------------------------------
+
+pub fn is_llm_model_downloaded_in(base_dir: &Path, model: &LlmModel) -> Result<bool, AppError> {
+    Ok(base_dir.join("models").join(model.filename()).exists())
+}
+
+pub fn resolve_llm_model_path(base_dir: &Path) -> Result<Option<PathBuf>, AppError> {
+    let settings = load_settings_from(base_dir)?;
+    let Some(model) = settings.selected_llm_model else {
+        return Ok(None);
+    };
+    let path = ensure_models_dir(base_dir)?.join(model.filename());
+    Ok(path.exists().then_some(path))
+}
+
+pub fn is_llm_model_downloaded(app: &AppHandle, model: &LlmModel) -> Result<bool, AppError> {
+    is_llm_model_downloaded_in(&resolve_data_dir(app)?, model)
+}
+
+/// Download an LLM model GGUF file from Hugging Face.
+///
+/// Same atomic download pattern as `download_model` (stream to `.partial`,
+/// then rename). Emits `llm-model:download-progress` events.
+pub async fn download_llm_model(app: &AppHandle, model: &LlmModel) -> Result<(), AppError> {
+    let base_dir = resolve_data_dir(app)?;
+    let models_dir = ensure_models_dir(&base_dir)?;
+    let file_path = models_dir.join(model.filename());
+    let partial_path = models_dir.join(format!("{}.partial", model.filename()));
+
+    let response = reqwest::get(model.download_url()).await?;
+
+    if !response.status().is_success() {
+        return Err(AppError::DownloadFailed(format!(
+            "HTTP {}",
+            response.status()
+        )));
+    }
+
+    let total_bytes = response.content_length().unwrap_or(0);
+    let mut downloaded_bytes: u64 = 0;
+    let model_id = model.id().to_owned();
+
+    let mut file = tokio::fs::File::create(&partial_path).await?;
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        file.write_all(&chunk).await?;
+
+        downloaded_bytes += chunk.len() as u64;
+
+        let _ = app.emit(
+            "llm-model:download-progress",
+            DownloadProgress {
+                model_id: model_id.clone(),
+                downloaded_bytes,
+                total_bytes,
+            },
+        );
+    }
+
+    file.flush().await?;
+    tokio::fs::rename(&partial_path, &file_path).await?;
+
+    Ok(())
+}
+
+/// Return the catalog of available LLM models.
+pub fn list_llm_models() -> Vec<LlmModelInfo> {
+    vec![LlmModelInfo {
+        id: LlmModel::Qwen3_4B_Q4KM,
+        name: "Qwen3 4B (Q4_K_M)".into(),
+        description: "Compact 4-bit quantized model for meeting summarization.".into(),
+        size_bytes: 2_500_000_000,
+        filename: LlmModel::Qwen3_4B_Q4KM.filename().into(),
+    }]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,6 +311,7 @@ mod tests {
         let base = TempDir::new();
         let settings = AppSettings {
             selected_model: Some(WhisperModel::BaseEn),
+            ..Default::default()
         };
         save_settings_to(base.path(), &settings).unwrap();
         let loaded = load_settings_from(base.path()).unwrap();
@@ -244,6 +325,7 @@ mod tests {
         assert!(!nested.exists());
         let settings = AppSettings {
             selected_model: Some(WhisperModel::BaseEn),
+            ..Default::default()
         };
         save_settings_to(&nested, &settings).unwrap();
         assert!(nested.join("settings.json").exists());
@@ -275,6 +357,7 @@ mod tests {
         let base = TempDir::new();
         let settings = AppSettings {
             selected_model: Some(WhisperModel::BaseEn),
+            ..Default::default()
         };
         save_settings_to(base.path(), &settings).unwrap();
         assert!(resolve_model_path(base.path()).unwrap().is_none());
@@ -285,6 +368,7 @@ mod tests {
         let base = TempDir::new();
         let settings = AppSettings {
             selected_model: Some(WhisperModel::LargeV3TurboQ5),
+            ..Default::default()
         };
         save_settings_to(base.path(), &settings).unwrap();
         let models_dir = ensure_models_dir(base.path()).unwrap();
@@ -321,5 +405,93 @@ mod tests {
         fs::write(base.path().join("settings.json"), "not valid json").unwrap();
         let result = load_settings_from(base.path());
         assert!(result.is_err());
+    }
+
+    // LLM model tests
+
+    #[test]
+    fn is_llm_model_downloaded_false_when_absent() {
+        let base = TempDir::new();
+        assert!(!is_llm_model_downloaded_in(base.path(), &LlmModel::Qwen3_4B_Q4KM).unwrap());
+    }
+
+    #[test]
+    fn is_llm_model_downloaded_true_when_present() {
+        let base = TempDir::new();
+        let models_dir = ensure_models_dir(base.path()).unwrap();
+        fs::write(
+            models_dir.join(LlmModel::Qwen3_4B_Q4KM.filename()),
+            b"fake",
+        )
+        .unwrap();
+        assert!(is_llm_model_downloaded_in(base.path(), &LlmModel::Qwen3_4B_Q4KM).unwrap());
+    }
+
+    #[test]
+    fn resolve_llm_model_path_none_when_no_settings() {
+        let base = TempDir::new();
+        assert!(resolve_llm_model_path(base.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn resolve_llm_model_path_returns_path_when_file_exists() {
+        let base = TempDir::new();
+        let settings = AppSettings {
+            selected_llm_model: Some(LlmModel::Qwen3_4B_Q4KM),
+            ..Default::default()
+        };
+        save_settings_to(base.path(), &settings).unwrap();
+        let models_dir = ensure_models_dir(base.path()).unwrap();
+        fs::write(
+            models_dir.join(LlmModel::Qwen3_4B_Q4KM.filename()),
+            b"fake",
+        )
+        .unwrap();
+        let path = resolve_llm_model_path(base.path()).unwrap().unwrap();
+        assert_eq!(
+            path,
+            models_dir.join(LlmModel::Qwen3_4B_Q4KM.filename())
+        );
+    }
+
+    #[test]
+    fn list_llm_models_returns_one_model() {
+        let models = list_llm_models();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, LlmModel::Qwen3_4B_Q4KM);
+    }
+
+    #[test]
+    fn list_llm_models_filename_matches_enum() {
+        for m in &list_llm_models() {
+            assert_eq!(m.filename, m.id.filename());
+        }
+    }
+
+    #[test]
+    fn settings_roundtrip_with_llm_model() {
+        let base = TempDir::new();
+        let settings = AppSettings {
+            selected_model: Some(WhisperModel::BaseEn),
+            selected_llm_model: Some(LlmModel::Qwen3_4B_Q4KM),
+        };
+        save_settings_to(base.path(), &settings).unwrap();
+        let loaded = load_settings_from(base.path()).unwrap();
+        assert_eq!(loaded.selected_model, Some(WhisperModel::BaseEn));
+        assert_eq!(
+            loaded.selected_llm_model,
+            Some(LlmModel::Qwen3_4B_Q4KM)
+        );
+    }
+
+    #[test]
+    fn settings_backward_compatible_without_llm_model() {
+        let base = TempDir::new();
+        // Simulate old settings.json without selected_llm_model field
+        let old_json = r#"{"selected_model":"BaseEn"}"#;
+        fs::write(base.path().join("settings.json"), old_json).unwrap();
+        let loaded = load_settings_from(base.path()).unwrap();
+        assert_eq!(loaded.selected_model, Some(WhisperModel::BaseEn));
+        assert_eq!(loaded.selected_llm_model, None);
     }
 }

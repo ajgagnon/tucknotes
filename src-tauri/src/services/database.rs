@@ -119,6 +119,18 @@ pub fn update_meeting_summary(
     Ok(())
 }
 
+pub fn update_meeting_title(
+    conn: &Connection,
+    id: &str,
+    title: &str,
+) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE meetings SET title = ?1 WHERE id = ?2",
+        rusqlite::params![title, id],
+    )?;
+    Ok(())
+}
+
 pub fn insert_segment(
     conn: &Connection,
     meeting_id: &str,

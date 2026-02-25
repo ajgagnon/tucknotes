@@ -7,6 +7,14 @@ export interface ModelInfo {
   recommended: boolean;
 }
 
+export interface LlmModelInfo {
+  id: string;
+  name: string;
+  description: string;
+  size_bytes: number;
+  filename: string;
+}
+
 export interface DownloadProgress {
   model_id: string;
   downloaded_bytes: number;
