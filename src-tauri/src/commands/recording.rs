@@ -81,13 +81,7 @@ mod macos {
 
         let prompts: Vec<Option<String>> = {
             let map = prev_texts.lock().unwrap_or_else(|e| e.into_inner());
-            items
-                .iter()
-                .map(|i| {
-                    map.get(&i.label)
-                        .map(|t| crate::services::transcription::truncate_prompt(t))
-                })
-                .collect()
+            items.iter().map(|i| map.get(&i.label).cloned()).collect()
         };
 
         let svc = Arc::clone(service);

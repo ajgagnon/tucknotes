@@ -6,10 +6,6 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 use crate::errors::AppError;
 
-/// Maximum characters to keep from the previous window's transcript when
-/// building the initial prompt for cross-window context continuity.
-const MAX_PROMPT_CHARS: usize = 800;
-
 /// Wraps a lazily-loaded whisper.cpp model and exposes a blocking
 /// `transcribe_batch()` method.  The model is loaded on the first call
 /// and reused for every subsequent call (loading takes ~1-2 s, so we
@@ -187,20 +183,6 @@ fn has_excessive_repetition(text: &str) -> bool {
         }
     }
     false
-}
-
-/// Truncate prompt text to the last `MAX_PROMPT_CHARS` characters, starting
-/// at a word boundary, so Whisper's limited prompt context isn't wasted.
-pub fn truncate_prompt(text: &str) -> String {
-    if text.len() <= MAX_PROMPT_CHARS {
-        return text.to_string();
-    }
-    let tail = &text[text.len() - MAX_PROMPT_CHARS..];
-    // Find first word boundary to avoid splitting a word
-    match tail.find(' ') {
-        Some(i) => tail[i + 1..].to_string(),
-        None => tail.to_string(),
-    }
 }
 
 /// Tauri managed-state wrapper.  The `Arc` allows cloning a handle into
