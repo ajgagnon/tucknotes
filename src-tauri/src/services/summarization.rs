@@ -300,11 +300,11 @@ impl SummarizationService {
             .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
 
         let system = "Generate a short, descriptive title (max 8 words) for a meeting based on the summary below. Output ONLY the title text, nothing else. Do not use quotes.";
-        // Append /no_think to disable Qwen3's thinking mode — we want the
-        // title directly without <think> blocks eating up our token budget.
+        // Qwen3.5 small models have thinking disabled by default and do not
+        // support the /think or /no_think soft switches from Qwen3.
         let prompt = format!(
             "<|im_start|>system\n{system}<|im_end|>\n\
-             <|im_start|>user\n{summary}\n\n/no_think<|im_end|>\n\
+             <|im_start|>user\n{summary}<|im_end|>\n\
              <|im_start|>assistant\n"
         );
 
@@ -406,7 +406,7 @@ impl SummarizationService {
 }
 
 /// Strip `<think>...</think>` blocks from model output.
-/// Qwen3 may emit these even with `/no_think`.
+/// Qwen3.5 may emit empty or non-empty think blocks depending on mode.
 fn strip_think_tags(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut remaining = s;
