@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::llm::LlmModel;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum WhisperModel {
     BaseEn,
@@ -61,6 +63,7 @@ pub struct DownloadProgress {
 #[derive(Serialize, Deserialize, Default)]
 pub struct AppSettings {
     pub selected_model: Option<WhisperModel>,
+    pub selected_llm_model: Option<LlmModel>,
 }
 
 #[cfg(test)]

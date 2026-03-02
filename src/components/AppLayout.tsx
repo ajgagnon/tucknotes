@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { FileText, Settings } from "lucide-react";
+import { FileText, Mic, Settings } from "lucide-react";
 import {
   SidebarProvider,
   Sidebar,
@@ -78,6 +78,7 @@ function HeaderControls({
         className="rounded-full"
         onClick={handleClick}
       >
+        <Mic className="size-3.5" />
         {recording ? "Stop Recording" : "Start Recording"}
       </Button>
     </div>
@@ -101,7 +102,7 @@ function LayoutContent({
   const needsStoplightPadding = state === "collapsed";
 
   return (
-    <SidebarInset>
+    <SidebarInset className="overflow-hidden">
       <div className="h-[35px] shrink-0" onMouseDown={onDrag}>
         <div className="flex items-center justify-between p-3">
           <div
@@ -154,7 +155,7 @@ function AppLayout() {
   return (
     <TooltipProvider>
       <RecordingProvider>
-        <SidebarProvider>
+        <SidebarProvider className="max-h-svh overflow-hidden">
           <Sidebar variant="inset">
             <SidebarTrigger className="fixed left-[100px] top-[22px] text-muted-foreground/60 hover:text-muted-foreground" />
             <SidebarHeader

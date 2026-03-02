@@ -13,6 +13,7 @@ pub enum AppError {
     LockPoisoned(String),
     NotSupported(String),
     PermissionDenied(String),
+    SummarizationFailed(String),
 }
 
 impl std::fmt::Display for AppError {
@@ -28,6 +29,7 @@ impl std::fmt::Display for AppError {
             AppError::LockPoisoned(msg) => write!(f, "Lock poisoned: {}", msg),
             AppError::NotSupported(msg) => write!(f, "Not supported: {}", msg),
             AppError::PermissionDenied(msg) => write!(f, "Permission denied: {}", msg),
+            AppError::SummarizationFailed(msg) => write!(f, "Summarization failed: {}", msg),
         }
     }
 }

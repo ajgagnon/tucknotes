@@ -13,7 +13,7 @@ import {
   FieldLabel,
   FieldTitle,
 } from "@/components/ui/field";
-import type { ModelInfo, DownloadProgress } from "@/lib/models";
+import type { ModelInfo, LlmModelInfo, DownloadProgress } from "@/lib/models";
 import { formatSize } from "@/lib/models";
 import {
   type Theme,
@@ -34,15 +34,28 @@ function SettingsView() {
   const [error, setError] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(getStoredTheme);
 
+  // LLM model state
+  const [llmModels, setLlmModels] = useState<LlmModelInfo[]>([]);
+  const [llmDownloadStatus, setLlmDownloadStatus] = useState<
+    Record<string, boolean>
+  >({});
+  const [llmDownloading, setLlmDownloading] = useState<string | null>(null);
+  const [llmProgress, setLlmProgress] = useState<DownloadProgress | null>(
+    null,
+  );
+  const [llmError, setLlmError] = useState<string | null>(null);
+
   useEffect(() => {
     async function load() {
       try {
-        const [list, selected] = await Promise.all([
+        const [list, selected, llmList] = await Promise.all([
           invoke<ModelInfo[]>("list_available_models"),
           invoke<string | null>("get_selected_model"),
+          invoke<LlmModelInfo[]>("list_available_llm_models"),
         ]);
         setModels(list);
         setCurrentModelId(selected);
+        setLlmModels(llmList);
 
         const statuses: Record<string, boolean> = {};
         await Promise.all(
@@ -53,6 +66,16 @@ function SettingsView() {
           }),
         );
         setDownloadStatus(statuses);
+
+        const llmStatuses: Record<string, boolean> = {};
+        await Promise.all(
+          llmList.map(async (m) => {
+            llmStatuses[m.id] = await invoke<boolean>("get_llm_model_status", {
+              modelId: m.id,
+            });
+          }),
+        );
+        setLlmDownloadStatus(llmStatuses);
       } finally {
         setLoading(false);
       }
@@ -70,6 +93,17 @@ function SettingsView() {
       unlisten.then((fn) => fn());
     };
   }, [downloading]);
+
+  useEffect(() => {
+    if (!llmDownloading) return;
+    const unlisten = listen<DownloadProgress>(
+      "llm-model:download-progress",
+      (event) => setLlmProgress(event.payload),
+    );
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [llmDownloading]);
 
   async function handleSelectModel(modelId: string) {
     if (modelId === currentModelId || downloading) return;
@@ -102,6 +136,36 @@ function SettingsView() {
       }
     }
   }
+
+  async function handleDownloadLlm(modelId: string) {
+    if (llmDownloading) return;
+
+    const isDownloaded = llmDownloadStatus[modelId] ?? false;
+    if (isDownloaded) return;
+
+    setLlmDownloading(modelId);
+    setLlmError(null);
+    setLlmProgress(null);
+    try {
+      await invoke("download_llm_model", { modelId });
+      await invoke("set_selected_llm_model", { modelId });
+      setLlmDownloadStatus((prev) => ({ ...prev, [modelId]: true }));
+    } catch (err) {
+      const e = err as { message?: string };
+      setLlmError(e.message ?? "Download failed. Please try again.");
+    } finally {
+      setLlmDownloading(null);
+      setLlmProgress(null);
+    }
+  }
+
+  const llmProgressPercent =
+    llmProgress && llmProgress.total_bytes > 0
+      ? Math.min(
+          (llmProgress.downloaded_bytes / llmProgress.total_bytes) * 100,
+          100,
+        )
+      : 0;
 
   const progressPercent =
     progress && progress.total_bytes > 0
@@ -224,6 +288,77 @@ function SettingsView() {
                 );
               })}
             </RadioGroup>
+          )}
+        </section>
+
+        {/* Summarization Model */}
+        <section className="mt-8">
+          <h2 className="text-sm font-medium text-muted-foreground mb-4">
+            Summarization Model
+          </h2>
+
+          {loading ? (
+            <Skeleton className="h-20 rounded-lg" />
+          ) : (
+            <div className="flex flex-col gap-3">
+              {llmModels.map((model) => {
+                const isDownloaded = llmDownloadStatus[model.id] ?? false;
+                const isDownloading = llmDownloading === model.id;
+
+                return (
+                  <div
+                    key={model.id}
+                    className="rounded-lg border border-neutral-200 dark:border-neutral-700 p-4"
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-medium">{model.name}</span>
+                      {isDownloaded && (
+                        <Badge variant="outline">Downloaded</Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      {model.description}
+                      <span className="text-muted-foreground/60">
+                        {" "}
+                        &middot; {formatSize(model.size_bytes)}
+                      </span>
+                    </p>
+
+                    {isDownloading && (
+                      <div className="mt-1.5">
+                        <div className="w-full bg-neutral-200 dark:bg-neutral-700 rounded-full h-1.5 mb-1 overflow-hidden">
+                          <div
+                            className="bg-primary h-full rounded-full transition-all duration-300 ease-out"
+                            style={{ width: `${llmProgressPercent}%` }}
+                          />
+                        </div>
+                        <p className="text-xs text-muted-foreground tabular-nums">
+                          {llmProgress
+                            ? `${formatSize(llmProgress.downloaded_bytes)} / ${formatSize(llmProgress.total_bytes)}`
+                            : "Starting download\u2026"}
+                        </p>
+                      </div>
+                    )}
+
+                    {!isDownloaded && !isDownloading && (
+                      <button
+                        onClick={() => handleDownloadLlm(model.id)}
+                        disabled={!!llmDownloading}
+                        className="mt-1 text-xs font-medium text-primary hover:text-primary-hover transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                      >
+                        Download
+                      </button>
+                    )}
+
+                    {llmError && !llmDownloading && (
+                      <p className="text-xs text-destructive mt-1">
+                        {llmError}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           )}
         </section>
       </div>

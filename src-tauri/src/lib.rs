@@ -8,12 +8,14 @@ use std::sync::{Arc, Mutex};
 use tauri::{Manager, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
 
 use commands::appearance::*;
+use commands::meetings::*;
 use commands::models::*;
 use commands::permissions::*;
 use commands::recording::*;
-use commands::meetings::*;
+use commands::summarization::*;
 use models::{PcmAccumulator, RecordingState};
 use services::database::DatabaseState;
+use services::summarization::{SummarizationService, SummarizationState};
 #[cfg(target_os = "macos")]
 use services::transcription::{TranscriptionService, TranscriptionState};
 
@@ -34,6 +36,12 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let transcription_state = TranscriptionState {
         service: Arc::new(TranscriptionService::new()),
+    };
+
+    let summarization_state = SummarizationState {
+        service: Arc::new(
+            SummarizationService::new().expect("failed to init summarization backend"),
+        ),
     };
 
     let mut builder = tauri::Builder::default()
@@ -76,7 +84,8 @@ pub fn run() {
 
             Ok(())
         })
-        .manage(recording_state);
+        .manage(recording_state)
+        .manage(summarization_state);
 
     #[cfg(target_os = "macos")]
     {
@@ -102,6 +111,13 @@ pub fn run() {
             download_model,
             get_selected_model,
             set_selected_model,
+            list_available_llm_models,
+            get_llm_model_status,
+            download_llm_model,
+            get_selected_llm_model,
+            set_selected_llm_model,
+            summarize_meeting,
+            update_meeting_title,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
