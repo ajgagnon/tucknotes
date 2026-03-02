@@ -99,9 +99,7 @@ mod macos {
         match results {
             Ok((items, Ok(texts), prompts)) => {
                 for (i, (item, text)) in items.into_iter().zip(texts).enumerate() {
-                    if text.is_empty()
-                        || crate::services::transcription::is_low_quality_output(&text)
-                    {
+                    if text.is_empty() {
                         continue;
                     }
                     // Update context for next window (only on finalized results)

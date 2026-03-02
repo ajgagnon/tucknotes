@@ -147,17 +147,6 @@ impl TranscriptionService {
     }
 }
 
-/// Returns true if the final transcription text is a structural marker
-/// rather than real speech (e.g. `[BLANK_AUDIO]`, `(buzzing)`).
-pub fn is_low_quality_output(text: &str) -> bool {
-    let trimmed = text.trim();
-    if trimmed.len() < 2 {
-        return true;
-    }
-    (trimmed.starts_with('[') && trimmed.ends_with(']'))
-        || (trimmed.starts_with('(') && trimmed.ends_with(')'))
-}
-
 /// Tauri managed-state wrapper.  The `Arc` allows cloning a handle into
 /// spawned Tokio tasks that outlive the command handler's borrow.
 pub struct TranscriptionState {
