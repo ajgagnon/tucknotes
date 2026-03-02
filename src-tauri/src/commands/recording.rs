@@ -24,9 +24,9 @@ mod macos {
     use crate::services::transcription::{TranscriptionService, TranscriptionState};
 
     const STEP_INTERVAL: Duration = Duration::from_secs(3);
-    const WINDOW_MAX_SECS: f64 = 10.0;
+    const WINDOW_MAX_SECS: f64 = 30.0;
     const MIN_DURATION_SECS: f64 = 2.0;
-    const MIN_SPEECH_RATIO: f32 = 0.01;
+    const MIN_SPEECH_RATIO: f32 = 0.05;
 
     struct BatchItem {
         samples: Vec<f32>,
@@ -46,8 +46,9 @@ mod macos {
                 if duration < MIN_DURATION_SECS {
                     continue;
                 }
-                let samples =
+                let mut samples =
                     crate::services::audio::resample_to_16khz(audio.samples, audio.sample_rate);
+                crate::services::audio::normalize_audio(&mut samples);
                 let ratio = crate::services::vad::speech_ratio(&samples);
                 if ratio < MIN_SPEECH_RATIO {
                     continue;
@@ -80,7 +81,13 @@ mod macos {
 
         let prompts: Vec<Option<String>> = {
             let map = prev_texts.lock().unwrap_or_else(|e| e.into_inner());
-            items.iter().map(|i| map.get(&i.label).cloned()).collect()
+            items
+                .iter()
+                .map(|i| {
+                    map.get(&i.label)
+                        .map(|t| crate::services::transcription::truncate_prompt(t))
+                })
+                .collect()
         };
 
         let svc = Arc::clone(service);
@@ -90,7 +97,7 @@ mod macos {
 
         let results = tokio::task::spawn_blocking(move || {
             let buffers: Vec<&[f32]> = items.iter().map(|i| i.samples.as_slice()).collect();
-            let texts = svc.transcribe_batch(&path, &buffers, &prompts);
+            let texts = svc.transcribe_batch(&path, &buffers, &prompts, is_provisional);
             (items, texts, prompts)
         })
         .await;

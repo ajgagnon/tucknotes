@@ -1,9 +1,14 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 use crate::errors::AppError;
+
+/// Maximum characters to keep from the previous window's transcript when
+/// building the initial prompt for cross-window context continuity.
+const MAX_PROMPT_CHARS: usize = 800;
 
 /// Wraps a lazily-loaded whisper.cpp model and exposes a blocking
 /// `transcribe_batch()` method.  The model is loaded on the first call
@@ -45,13 +50,44 @@ impl TranscriptionService {
         Ok(())
     }
 
-    fn decode_params(initial_prompt: Option<&str>) -> FullParams<'static, 'static> {
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    /// Build Whisper decoding parameters.
+    ///
+    /// - Provisional segments use greedy sampling (best_of=3) for low latency.
+    /// - Finalized segments use beam search (beam_size=5) for higher accuracy.
+    /// - Temperature fallback (0.0 → 0.2 → … → 1.0) retries on garbled output.
+    fn decode_params(
+        initial_prompt: Option<&str>,
+        is_provisional: bool,
+    ) -> FullParams<'static, 'static> {
+        let strategy = if is_provisional {
+            SamplingStrategy::Greedy { best_of: 3 }
+        } else {
+            SamplingStrategy::BeamSearch {
+                beam_size: 5,
+                patience: -1.0,
+            }
+        };
+        let mut params = FullParams::new(strategy);
+
         params.set_language(Some("en"));
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
+
+        // Temperature fallback: re-decode with increasing temperature when
+        // output entropy or avg log-probability indicate a bad decode.
+        params.set_temperature(0.0);
+        params.set_temperature_inc(0.2);
+        params.set_entropy_thold(2.4);
+        params.set_logprob_thold(-1.0);
+
+        // Suppress blank tokens at the start of sampling.
+        // Note: suppress_nst is left at its default (false) — whisper.cpp
+        // explicitly disabled it because it caused hallucinations at the
+        // end of audio segments.
+        params.set_suppress_blank(true);
+
         if let Some(prompt) = initial_prompt {
             params.set_initial_prompt(prompt);
         }
@@ -82,12 +118,16 @@ impl TranscriptionService {
     /// of the previous transcription) to give Whisper linguistic context across
     /// window boundaries.
     ///
+    /// When `is_provisional` is true, uses greedy decoding for lower latency;
+    /// otherwise uses beam search for higher accuracy.
+    ///
     /// **Blocking** — call from `spawn_blocking`.
     pub fn transcribe_batch(
         &self,
         model_path: &Path,
         buffers: &[&[f32]],
         prompts: &[Option<String>],
+        is_provisional: bool,
     ) -> Result<Vec<String>, AppError> {
         self.ensure_loaded(model_path)?;
 
@@ -104,7 +144,7 @@ impl TranscriptionService {
         for (i, samples) in buffers.iter().enumerate() {
             let prompt = prompts.get(i).and_then(|p| p.as_deref());
             state
-                .full(Self::decode_params(prompt), samples)
+                .full(Self::decode_params(prompt, is_provisional), samples)
                 .map_err(|e| AppError::TranscriptionFailed(e.to_string()))?;
             results.push(Self::extract_text(&state));
         }
@@ -112,15 +152,55 @@ impl TranscriptionService {
     }
 }
 
-/// Returns true if the final transcription text is a structural marker
-/// rather than real speech (e.g. `[BLANK_AUDIO]`, `(buzzing)`).
+/// Returns true if the transcription text is a structural marker, known
+/// hallucination, or contains excessive repetition rather than real speech.
 pub fn is_low_quality_output(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.len() < 2 {
         return true;
     }
-    (trimmed.starts_with('[') && trimmed.ends_with(']'))
+    // Structural markers: [BLANK_AUDIO], (buzzing), etc.
+    if (trimmed.starts_with('[') && trimmed.ends_with(']'))
         || (trimmed.starts_with('(') && trimmed.ends_with(')'))
+    {
+        return true;
+    }
+    // Detect excessive repetition (language-agnostic hallucination pattern)
+    has_excessive_repetition(trimmed)
+}
+
+/// Returns true if any 2-4 word phrase repeats more than twice in the text.
+fn has_excessive_repetition(text: &str) -> bool {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.len() < 6 {
+        return false;
+    }
+    for window_size in 2..=4 {
+        let mut seen = HashMap::<String, u32>::new();
+        for window in words.windows(window_size) {
+            let phrase = window.join(" ").to_lowercase();
+            let count = seen.entry(phrase).or_insert(0);
+            *count += 1;
+            if *count > 2 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Truncate prompt text to the last `MAX_PROMPT_CHARS` characters, starting
+/// at a word boundary, so Whisper's limited prompt context isn't wasted.
+pub fn truncate_prompt(text: &str) -> String {
+    if text.len() <= MAX_PROMPT_CHARS {
+        return text.to_string();
+    }
+    let tail = &text[text.len() - MAX_PROMPT_CHARS..];
+    // Find first word boundary to avoid splitting a word
+    match tail.find(' ') {
+        Some(i) => tail[i + 1..].to_string(),
+        None => tail.to_string(),
+    }
 }
 
 /// Tauri managed-state wrapper.  The `Arc` allows cloning a handle into
