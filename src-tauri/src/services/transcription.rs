@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -148,41 +147,15 @@ impl TranscriptionService {
     }
 }
 
-/// Returns true if the transcription text is a structural marker, known
-/// hallucination, or contains excessive repetition rather than real speech.
+/// Returns true if the final transcription text is a structural marker
+/// rather than real speech (e.g. `[BLANK_AUDIO]`, `(buzzing)`).
 pub fn is_low_quality_output(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.len() < 2 {
         return true;
     }
-    // Structural markers: [BLANK_AUDIO], (buzzing), etc.
-    if (trimmed.starts_with('[') && trimmed.ends_with(']'))
+    (trimmed.starts_with('[') && trimmed.ends_with(']'))
         || (trimmed.starts_with('(') && trimmed.ends_with(')'))
-    {
-        return true;
-    }
-    // Detect excessive repetition (language-agnostic hallucination pattern)
-    has_excessive_repetition(trimmed)
-}
-
-/// Returns true if any 2-4 word phrase repeats more than twice in the text.
-fn has_excessive_repetition(text: &str) -> bool {
-    let words: Vec<&str> = text.split_whitespace().collect();
-    if words.len() < 6 {
-        return false;
-    }
-    for window_size in 2..=4 {
-        let mut seen = HashMap::<String, u32>::new();
-        for window in words.windows(window_size) {
-            let phrase = window.join(" ").to_lowercase();
-            let count = seen.entry(phrase).or_insert(0);
-            *count += 1;
-            if *count > 2 {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 /// Tauri managed-state wrapper.  The `Arc` allows cloning a handle into
