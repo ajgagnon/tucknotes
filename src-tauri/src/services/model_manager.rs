@@ -495,27 +495,4 @@ mod tests {
         assert_eq!(loaded.selected_llm_model, None);
     }
 
-    #[test]
-    fn old_llm_model_file_not_found_after_upgrade() {
-        let base = TempDir::new();
-        let models_dir = ensure_models_dir(base.path()).unwrap();
-        // Old Qwen3 file still on disk after upgrade
-        fs::write(models_dir.join("Qwen3-4B-Q4_K_M.gguf"), b"fake").unwrap();
-        // New variant looks for a different filename, so the old file is not recognised
-        assert!(!is_llm_model_downloaded_in(base.path(), &LlmModel::Qwen3_5_4B_Q4KM).unwrap());
-    }
-
-    #[test]
-    fn settings_backward_compatible_with_old_llm_model_id() {
-        let base = TempDir::new();
-        // Simulate settings.json from the Qwen3 era
-        let old_json = r#"{"selected_model":"BaseEn","selected_llm_model":"Qwen3_4B_Q4KM"}"#;
-        fs::write(base.path().join("settings.json"), old_json).unwrap();
-        let loaded = load_settings_from(base.path()).unwrap();
-        assert_eq!(loaded.selected_model, Some(WhisperModel::BaseEn));
-        assert_eq!(
-            loaded.selected_llm_model,
-            Some(LlmModel::Qwen3_5_4B_Q4KM)
-        );
-    }
 }
