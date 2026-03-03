@@ -24,9 +24,9 @@ mod macos {
     use crate::services::transcription::{TranscriptionService, TranscriptionState};
 
     const STEP_INTERVAL: Duration = Duration::from_secs(3);
-    const WINDOW_MAX_SECS: f64 = 10.0;
+    const WINDOW_MAX_SECS: f64 = 30.0;
     const MIN_DURATION_SECS: f64 = 2.0;
-    const MIN_SPEECH_RATIO: f32 = 0.01;
+    const MIN_SPEECH_RATIO: f32 = 0.05;
 
     struct BatchItem {
         samples: Vec<f32>,
@@ -46,8 +46,9 @@ mod macos {
                 if duration < MIN_DURATION_SECS {
                     continue;
                 }
-                let samples =
+                let mut samples =
                     crate::services::audio::resample_to_16khz(audio.samples, audio.sample_rate);
+                crate::services::audio::normalize_audio(&mut samples);
                 let ratio = crate::services::vad::speech_ratio(&samples);
                 if ratio < MIN_SPEECH_RATIO {
                     continue;
@@ -90,7 +91,7 @@ mod macos {
 
         let results = tokio::task::spawn_blocking(move || {
             let buffers: Vec<&[f32]> = items.iter().map(|i| i.samples.as_slice()).collect();
-            let texts = svc.transcribe_batch(&path, &buffers, &prompts);
+            let texts = svc.transcribe_batch(&path, &buffers, &prompts, is_provisional);
             (items, texts, prompts)
         })
         .await;
@@ -98,9 +99,7 @@ mod macos {
         match results {
             Ok((items, Ok(texts), prompts)) => {
                 for (i, (item, text)) in items.into_iter().zip(texts).enumerate() {
-                    if text.is_empty()
-                        || crate::services::transcription::is_low_quality_output(&text)
-                    {
+                    if text.is_empty() {
                         continue;
                     }
                     // Update context for next window (only on finalized results)

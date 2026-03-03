@@ -10,6 +10,24 @@ pub fn compute_rms(samples: &[f32]) -> f32 {
     (sum_sq / samples.len() as f32).sqrt()
 }
 
+/// Peak-normalize audio samples so the loudest sample reaches 0.9.
+/// Prevents quiet speakers from being lost in the mel spectrogram noise
+/// floor. Skips normalization if the peak is already above 0.9 or the
+/// buffer is silent.
+pub fn normalize_audio(samples: &mut [f32]) {
+    if samples.is_empty() {
+        return;
+    }
+    let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    if peak < 1e-6 || peak >= 0.9 {
+        return;
+    }
+    let gain = 0.9 / peak;
+    for s in samples.iter_mut() {
+        *s *= gain;
+    }
+}
+
 /// Resample mono f32 PCM audio to 16 kHz using sinc interpolation.
 /// Returns the input unchanged if already at 16 kHz.
 pub fn resample_to_16khz(samples: Vec<f32>, from_rate: u32) -> Vec<f32> {
@@ -79,5 +97,37 @@ mod tests {
         let rms = compute_rms(&[0.0, 0.4]);
         let expected = (0.08f32).sqrt();
         assert!((rms - expected).abs() < 1e-6);
+    }
+
+    #[test]
+    fn normalize_quiet_audio() {
+        let mut samples = vec![0.1, -0.2, 0.15, -0.05];
+        normalize_audio(&mut samples);
+        // Peak was 0.2, gain = 0.9/0.2 = 4.5
+        let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!((peak - 0.9).abs() < 1e-6);
+    }
+
+    #[test]
+    fn normalize_skips_loud_audio() {
+        let mut samples = vec![0.95, -0.8, 0.5];
+        let original = samples.clone();
+        normalize_audio(&mut samples);
+        // Peak >= 0.9, should be unchanged
+        assert_eq!(samples, original);
+    }
+
+    #[test]
+    fn normalize_skips_silence() {
+        let mut samples = vec![0.0, 0.0, 0.0];
+        normalize_audio(&mut samples);
+        assert_eq!(samples, vec![0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn normalize_empty_slice() {
+        let mut samples: Vec<f32> = vec![];
+        normalize_audio(&mut samples);
+        assert!(samples.is_empty());
     }
 }
