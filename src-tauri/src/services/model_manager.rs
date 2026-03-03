@@ -250,7 +250,7 @@ pub fn list_llm_models() -> Vec<LlmModelInfo> {
         id: LlmModel::Qwen3_5_4B_Q4KM,
         name: "Qwen3.5 4B (Q4_K_M)".into(),
         description: "Compact 4-bit quantized model for meeting summarization.".into(),
-        size_bytes: 2_500_000_000,
+        size_bytes: 2_740_000_000,
         filename: LlmModel::Qwen3_5_4B_Q4KM.filename().into(),
     }]
 }
@@ -494,5 +494,4 @@ mod tests {
         assert_eq!(loaded.selected_model, Some(WhisperModel::BaseEn));
         assert_eq!(loaded.selected_llm_model, None);
     }
-
 }

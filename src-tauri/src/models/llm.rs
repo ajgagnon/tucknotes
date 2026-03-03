@@ -76,5 +76,4 @@ mod tests {
             Some(LlmModel::Qwen3_5_4B_Q4KM)
         );
     }
-
 }
