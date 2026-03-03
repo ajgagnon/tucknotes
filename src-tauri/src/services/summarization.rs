@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use llama_cpp_2::context::params::LlamaContextParams;
@@ -8,7 +8,10 @@ use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 
-use crate::errors::AppError;
+use crate::errors::{lock_or_err, AppError};
+
+const THINK_OPEN: &str = "<think>";
+const THINK_CLOSE: &str = "</think>";
 
 const SYSTEM_PROMPT: &str = "\
 You are a professional, detail-oriented Meeting Analyst AI designed to review meeting transcripts \
@@ -56,10 +59,11 @@ const MAX_TOKENS: i32 = 2048;
 
 /// Wraps a lazily-loaded llama.cpp model and exposes a blocking
 /// `summarize()` method. The model is loaded on the first call
-/// and reused for every subsequent call.
+/// and reused for every subsequent call. If the model path changes
+/// (e.g. user selects a different model), it is reloaded automatically.
 pub struct SummarizationService {
     backend: LlamaBackend,
-    model: Mutex<Option<LlamaModel>>,
+    model: Mutex<Option<(PathBuf, LlamaModel)>>,
 }
 
 // SAFETY: LlamaModel is Send + Sync per llama-cpp-2 docs.
@@ -77,21 +81,25 @@ impl SummarizationService {
         })
     }
 
-    /// Load the LLM from disk if it hasn't been loaded yet.
+    /// Load the LLM from disk if it hasn't been loaded yet, or if the
+    /// model path has changed (e.g. user selected a different model).
     fn ensure_loaded(&self, model_path: &Path) -> Result<(), AppError> {
-        let mut guard = self
-            .model
-            .lock()
-            .map_err(|_| AppError::LockPoisoned("LLM model lock poisoned".into()))?;
-        if guard.is_some() {
-            return Ok(());
+        let mut guard = lock_or_err(&self.model)?;
+        if let Some((ref loaded_path, _)) = *guard {
+            if loaded_path == model_path {
+                return Ok(());
+            }
+            eprintln!(
+                "[summarization] Model path changed from {:?} to {:?}, reloading",
+                loaded_path, model_path
+            );
         }
 
         let params = LlamaModelParams::default();
         let model = LlamaModel::load_from_file(&self.backend, model_path, &params).map_err(
             |e| AppError::SummarizationFailed(format!("Failed to load LLM model: {e}")),
         )?;
-        *guard = Some(model);
+        *guard = Some((model_path.to_path_buf(), model));
         Ok(())
     }
 
@@ -123,11 +131,8 @@ impl SummarizationService {
     {
         self.ensure_loaded(model_path)?;
 
-        let guard = self
-            .model
-            .lock()
-            .map_err(|_| AppError::LockPoisoned("LLM model lock poisoned".into()))?;
-        let model = guard
+        let guard = lock_or_err(&self.model)?;
+        let (_, model) = guard
             .as_ref()
             .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
 
@@ -137,7 +142,7 @@ impl SummarizationService {
             .map_err(|e| AppError::SummarizationFailed(format!("Tokenization failed: {e}")))?;
 
         let n_input = tokens_list.len() as u32;
-        let n_ctx = (n_input + MAX_TOKENS as u32 + 256).next_power_of_two().max(4096);
+        let n_ctx = (n_input + MAX_TOKENS as u32 + 256).max(4096);
 
         let ctx_params = LlamaContextParams::default()
             .with_n_ctx(std::num::NonZeroU32::new(n_ctx))
@@ -205,13 +210,13 @@ impl SummarizationService {
             tag_buf.push_str(&piece);
             loop {
                 if inside_think {
-                    if let Some(end) = tag_buf.find("</think>") {
+                    if let Some(end) = tag_buf.find(THINK_CLOSE) {
                         // Emit thinking content before the closing tag
                         let thinking = &tag_buf[..end];
                         if !thinking.is_empty() {
                             on_token(thinking, true);
                         }
-                        tag_buf = tag_buf[(end + "</think>".len())..].to_string();
+                        tag_buf = tag_buf[(end + THINK_CLOSE.len())..].to_string();
                         inside_think = false;
                     } else if tag_buf.contains('<') {
                         // Might be a partial "</think>" — emit up to '<', keep rest
@@ -230,13 +235,13 @@ impl SummarizationService {
                         }
                         break;
                     }
-                } else if let Some(start) = tag_buf.find("<think>") {
+                } else if let Some(start) = tag_buf.find(THINK_OPEN) {
                     // Emit everything before <think> as answer content
                     let before = &tag_buf[..start];
                     if !before.is_empty() {
                         on_token(before, false);
                     }
-                    tag_buf = tag_buf[start + "<think>".len()..].to_string();
+                    tag_buf = tag_buf[start + THINK_OPEN.len()..].to_string();
                     inside_think = true;
                 } else if tag_buf.contains('<') {
                     // Might be a partial "<think>" tag starting; emit
@@ -291,11 +296,8 @@ impl SummarizationService {
     ) -> Result<String, AppError> {
         self.ensure_loaded(model_path)?;
 
-        let guard = self
-            .model
-            .lock()
-            .map_err(|_| AppError::LockPoisoned("LLM model lock poisoned".into()))?;
-        let model = guard
+        let guard = lock_or_err(&self.model)?;
+        let (_, model) = guard
             .as_ref()
             .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
 
@@ -314,9 +316,7 @@ impl SummarizationService {
 
         let n_input = tokens_list.len() as u32;
         let max_title_tokens: i32 = 256;
-        let n_ctx = (n_input + max_title_tokens as u32 + 64)
-            .next_power_of_two()
-            .max(512);
+        let n_ctx = (n_input + max_title_tokens as u32 + 64).max(512);
 
         let ctx_params = LlamaContextParams::default()
             .with_n_ctx(std::num::NonZeroU32::new(n_ctx))
@@ -349,7 +349,10 @@ impl SummarizationService {
         let mut decoder = encoding_rs::UTF_8.new_decoder();
         let mut sampler = LlamaSampler::greedy();
         let mut output = String::new();
+        // Track think blocks incrementally to avoid O(n^2) scans
         let mut inside_think = false;
+        // Accumulates only non-thinking content for newline detection
+        let mut title_text = String::new();
 
         while n_cur < n_prompt as i32 + max_title_tokens {
             let token = sampler.sample(&ctx, batch.n_tokens() - 1);
@@ -367,19 +370,18 @@ impl SummarizationService {
 
             output.push_str(&piece);
 
-            // Track <think> blocks so we skip newlines inside them
-            if !inside_think && output.contains("<think>") {
+            // Track <think> blocks incrementally
+            if !inside_think && piece.contains(THINK_OPEN) {
                 inside_think = true;
             }
-            if inside_think && output.contains("</think>") {
+            if inside_think && output.ends_with(THINK_CLOSE) {
                 inside_think = false;
             }
 
-            // Stop on newline only once we have actual title text
-            // (the model may emit whitespace/newlines right after </think>)
+            // Accumulate non-thinking content for newline detection
             if !inside_think {
-                let cleaned = strip_think_tags(&output);
-                let trimmed = cleaned.trim();
+                title_text.push_str(&piece);
+                let trimmed = title_text.trim();
                 if !trimmed.is_empty() && trimmed.contains('\n') {
                     break;
                 }
@@ -410,10 +412,10 @@ impl SummarizationService {
 fn strip_think_tags(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut remaining = s;
-    while let Some(start) = remaining.find("<think>") {
+    while let Some(start) = remaining.find(THINK_OPEN) {
         result.push_str(&remaining[..start]);
-        if let Some(end) = remaining[start..].find("</think>") {
-            remaining = &remaining[(start + end + "</think>".len())..];
+        if let Some(end) = remaining[start..].find(THINK_CLOSE) {
+            remaining = &remaining[(start + end + THINK_CLOSE.len())..];
         } else {
             // Unclosed tag — drop everything from <think> onward
             return result.trim().to_string();

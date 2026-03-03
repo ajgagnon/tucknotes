@@ -23,9 +23,7 @@ fn resolve_data_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
 /// Return `<base_dir>/models`, creating it on disk if it doesn't already exist.
 pub fn ensure_models_dir(base_dir: &Path) -> Result<PathBuf, AppError> {
     let dir = base_dir.join("models");
-    if !dir.exists() {
-        std::fs::create_dir_all(&dir)?;
-    }
+    std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }
 
@@ -105,6 +103,9 @@ pub async fn download_model(app: &AppHandle, model: &WhisperModel) -> Result<(),
     let base_dir = resolve_data_dir(app)?;
     let models_dir = ensure_models_dir(&base_dir)?;
     let file_path = models_dir.join(model.filename());
+    if file_path.exists() {
+        return Ok(());
+    }
     let partial_path = models_dir.join(format!("{}.partial", model.filename()));
 
     let response = reqwest::get(model.download_url()).await?;
@@ -204,6 +205,9 @@ pub async fn download_llm_model(app: &AppHandle, model: &LlmModel) -> Result<(),
     let base_dir = resolve_data_dir(app)?;
     let models_dir = ensure_models_dir(&base_dir)?;
     let file_path = models_dir.join(model.filename());
+    if file_path.exists() {
+        return Ok(());
+    }
     let partial_path = models_dir.join(format!("{}.partial", model.filename()));
 
     let response = reqwest::get(model.download_url()).await?;

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tauri::{Emitter, Manager};
 
-use crate::errors::AppError;
+use crate::errors::{lock_or_err, AppError};
 use crate::models::llm::{LlmModel, LlmModelInfo};
 use crate::services::database::{self, DatabaseState};
 use crate::services::model_manager;
@@ -48,10 +48,7 @@ pub async fn update_meeting_title(
     meeting_id: String,
     title: String,
 ) -> Result<(), AppError> {
-    let conn = db_state
-        .conn
-        .lock()
-        .map_err(|_| AppError::LockPoisoned("DB lock poisoned".into()))?;
+    let conn = lock_or_err(&db_state.conn)?;
     database::update_meeting_title(&conn, &meeting_id, &title)
 }
 
@@ -64,10 +61,7 @@ pub async fn summarize_meeting(
 ) -> Result<String, AppError> {
     // 1. Load meeting transcript from DB
     let transcript = {
-        let conn = db_state
-            .conn
-            .lock()
-            .map_err(|_| AppError::LockPoisoned("DB lock poisoned".into()))?;
+        let conn = lock_or_err(&db_state.conn)?;
         let (_, segments) = database::get_meeting_with_segments(&conn, &meeting_id)?;
         segments
             .iter()
@@ -101,7 +95,6 @@ pub async fn summarize_meeting(
     // 3. Run summarization with streaming
     let service = Arc::clone(&summ_state.service);
     let app_clone = app.clone();
-    let meeting_id_clone = meeting_id.clone();
     let model_path_clone = model_path.clone();
 
     let summary = tokio::task::spawn_blocking(move || {
@@ -118,15 +111,12 @@ pub async fn summarize_meeting(
 
     // 4. Persist summary to database
     {
-        let conn = db_state
-            .conn
-            .lock()
-            .map_err(|_| AppError::LockPoisoned("DB lock poisoned".into()))?;
+        let conn = lock_or_err(&db_state.conn)?;
         database::update_meeting_summary(&conn, &meeting_id, &summary)?;
     }
 
     // 5. Signal summary completion
-    let _ = app.emit("summary:complete", &meeting_id_clone);
+    let _ = app.emit("summary:complete", &meeting_id);
 
     // 6. Generate title from the summary (separate LLM call).
     //    Fire-and-forget — the invoke returns immediately with the summary
