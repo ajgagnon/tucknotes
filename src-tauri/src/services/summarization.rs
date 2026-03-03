@@ -406,7 +406,9 @@ impl SummarizationService {
 }
 
 /// Strip `<think>...</think>` blocks from model output.
-/// Qwen3.5 may emit empty or non-empty think blocks depending on mode.
+/// Retained as a defensive measure — Qwen3.5 Small has thinking disabled by
+/// default, but the model *can* still produce think blocks if thinking is
+/// enabled via chat template kwargs.
 fn strip_think_tags(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut remaining = s;

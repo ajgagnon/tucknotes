@@ -28,6 +28,9 @@ impl LlmModel {
         }
     }
 
+    /// Resolve a model ID string (e.g. from a Tauri command) to an enum variant.
+    /// Accepts the old `"Qwen3_4B_Q4KM"` ID as a defensive fallback;
+    /// settings.json migration is handled separately by `#[serde(alias)]`.
     pub fn from_id(id: &str) -> Option<LlmModel> {
         match id {
             "Qwen3_5_4B_Q4KM" | "Qwen3_4B_Q4KM" => Some(LlmModel::Qwen3_5_4B_Q4KM),
