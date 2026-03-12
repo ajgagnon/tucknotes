@@ -14,6 +14,7 @@ import {
   Trash2,
   MoreVertical,
   Sparkles,
+  Clock,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -53,6 +54,22 @@ interface MeetingDetail {
 interface MeetingsViewProps {
   activeMeetingId?: string | null;
   onClearActiveMeeting?: () => void;
+}
+
+// Event payload types matching the Rust structs
+interface TokenPayload {
+  meeting_id: string;
+  token: string;
+}
+
+interface TitlePayload {
+  meeting_id: string;
+  title: string;
+}
+
+interface SummarizationQueue {
+  active: string | null;
+  pending: string[];
 }
 
 function formatDate(ms: number): string {
@@ -212,6 +229,38 @@ function MeetingDetailView({
     detail.meeting.summary,
   );
 
+  // Refs for streaming listener cleanup on unmount
+  const unlistenTokenRef = useRef<(() => void) | null>(null);
+  const unlistenThinkingRef = useRef<(() => void) | null>(null);
+
+  // Register token + thinking streaming listeners filtered by meeting ID.
+  // Returns cleanup function. Stores listeners in refs for cross-effect cleanup.
+  async function registerStreamListeners() {
+    const tokenUn = await listen<TokenPayload>("summary:token", (event) => {
+      if (event.payload.meeting_id !== detail.meeting.id) return;
+      setStreamedSummary((prev) => prev + event.payload.token);
+    });
+    const thinkUn = await listen<TokenPayload>("summary:thinking", (event) => {
+      if (event.payload.meeting_id !== detail.meeting.id) return;
+      setThinkingText((prev) => prev + event.payload.token);
+    });
+    unlistenTokenRef.current = tokenUn;
+    unlistenThinkingRef.current = thinkUn;
+    return () => {
+      tokenUn();
+      thinkUn();
+      unlistenTokenRef.current = null;
+      unlistenThinkingRef.current = null;
+    };
+  }
+
+  function cleanupStreamListeners() {
+    unlistenTokenRef.current?.();
+    unlistenThinkingRef.current?.();
+    unlistenTokenRef.current = null;
+    unlistenThinkingRef.current = null;
+  }
+
   // Check if LLM model is available
   useEffect(() => {
     async function checkLlmModel() {
@@ -240,18 +289,109 @@ function MeetingDetailView({
     setCurrentTitle(detail.meeting.title);
   }, [detail.meeting.title]);
 
+  // On mount, check if our meeting is active or queued. If so, restore
+  // summarizing state and register streaming listeners (they filter by
+  // meeting_id, so they're safe to register even while queued — they'll
+  // just start receiving tokens when the meeting becomes active).
+  useEffect(() => {
+    let cancelled = false;
+    async function checkActive() {
+      try {
+        const queue = await invoke<SummarizationQueue>("get_summarization_queue");
+        if (cancelled) return;
+
+        const isActive = queue.active === detail.meeting.id;
+        const isQueued = queue.pending.includes(detail.meeting.id);
+
+        if (!isActive && !isQueued) return;
+
+        // If this meeting is active (not just queued), the backend may be
+        // in one of two phases: summarization or title-gen. The summary is
+        // persisted to DB before title gen starts, so a *new* summary in
+        // the DB (different from our prop snapshot) means summarization is
+        // done and only title gen is still running.
+        if (isActive) {
+          try {
+            const fresh = await invoke<MeetingDetail>("get_meeting", {
+              meetingId: detail.meeting.id,
+            });
+            if (cancelled) return;
+            if (fresh.meeting.summary && fresh.meeting.summary !== detail.meeting.summary) {
+              setCurrentSummary(fresh.meeting.summary);
+              setGeneratingTitle(true);
+              return;
+            }
+          } catch {
+            // Fall through to default behaviour
+          }
+        }
+
+        setSummarizing(true);
+        setGeneratingTitle(true);
+
+        // Register streaming listeners (filtered by meeting ID).
+        // Safe to register even when queued — no events arrive until active.
+        const cleanup = await registerStreamListeners();
+        if (cancelled) {
+          cleanup();
+          return;
+        }
+      } catch {
+        // Command not available or failed — ignore
+      }
+    }
+    checkActive();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail.meeting.id]);
+
+  // Listen for summary:complete to know when backend finishes summarization.
+  // This handles the case where the user navigated away and came back — the
+  // invoke promise is gone, so we rely on this event + DB reload instead.
+  useEffect(() => {
+    const unlisten = listen<string>("summary:complete", async (event) => {
+      if (event.payload !== detail.meeting.id) return;
+      // Reload meeting from DB to get the persisted summary
+      try {
+        const result = await invoke<MeetingDetail>("get_meeting", {
+          meetingId: detail.meeting.id,
+        });
+        setCurrentSummary(result.meeting.summary);
+      } catch {
+        // fall through — summary will appear on next navigation
+      }
+      cleanupStreamListeners();
+      setSummarizing(false);
+      setStreamedSummary("");
+      setThinkingText("");
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail.meeting.id]);
+
+  // Clean up streaming listeners on unmount (guards against listener leak
+  // when user navigates away during active summarization)
+  useEffect(() => {
+    return () => cleanupStreamListeners();
+  }, []);
+
   // Listen for AI-generated title (fires after summary, from background task)
   useEffect(() => {
-    const unlisten = listen<string>("summary:title", (event) => {
-      if (event.payload) {
-        setCurrentTitle(event.payload);
+    const unlisten = listen<TitlePayload>("summary:title", (event) => {
+      if (event.payload.meeting_id !== detail.meeting.id) return;
+      if (event.payload.title) {
+        setCurrentTitle(event.payload.title);
       }
       setGeneratingTitle(false);
     });
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, []);
+  }, [detail.meeting.id]);
 
   async function saveTitle(newTitle: string) {
     const trimmed = newTitle.trim();
@@ -284,30 +424,24 @@ function MeetingDetailView({
     setThinkingText("");
     setSummaryError(null);
 
-    const unlistenToken = await listen<string>("summary:token", (event) => {
-      setStreamedSummary((prev) => prev + event.payload);
-    });
-    const unlistenThinking = await listen<string>(
-      "summary:thinking",
-      (event) => {
-        setThinkingText((prev) => prev + event.payload);
-      },
-    );
+    // Register streaming listeners up front (filtered by meeting ID).
+    // Safe for both "started" and "queued" — no events arrive until active.
+    await registerStreamListeners();
+
     try {
-      const summary = await invoke<string>("summarize_meeting", {
+      await invoke<string>("summarize_meeting", {
         meetingId: detail.meeting.id,
       });
-      setCurrentSummary(summary);
     } catch (err) {
       const e = err as { message?: string };
       setSummaryError(e.message ?? "Summarization failed.");
-    } finally {
-      unlistenToken();
-      unlistenThinking();
+      cleanupStreamListeners();
       setSummarizing(false);
-      setStreamedSummary("");
-      setThinkingText("");
+      setGeneratingTitle(false);
     }
+    // Note: cleanup of streaming listeners happens in the summary:complete
+    // listener effect, not here. The invoke returns immediately while
+    // summarization continues in the background.
   }
 
   // Auto-scroll for live transcript
@@ -527,6 +661,7 @@ function MeetingsView({
   const [meetings, setMeetings] = useState<MeetingRow[]>([]);
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [summaryQueue, setSummaryQueue] = useState<SummarizationQueue>({ active: null, pending: [] });
 
   const {
     recording,
@@ -538,6 +673,30 @@ function MeetingsView({
 
   const isLiveRecording =
     recording && detail != null && recordingMeetingId === detail.meeting.id;
+
+  // Track summarization queue state (for indicators in the list view).
+  // Re-runs when `detail` becomes null (returning to list view from detail view).
+  useEffect(() => {
+    if (detail) return;
+
+    let cancelled = false;
+    async function check() {
+      try {
+        const queue = await invoke<SummarizationQueue>("get_summarization_queue");
+        if (!cancelled) setSummaryQueue(queue);
+      } catch { /* ignore */ }
+    }
+    check();
+
+    // Refresh queue state when any summarization completes (active moves to next)
+    const unlisten = listen<string>("summary:complete", () => {
+      if (!cancelled) check();
+    });
+    return () => {
+      cancelled = true;
+      unlisten.then((fn) => fn());
+    };
+  }, [detail]);
 
   const loadMeetings = useCallback(async () => {
     setLoading(true);
@@ -651,8 +810,14 @@ function MeetingsView({
             onClick={() => openMeeting(meeting.id)}
           >
             <div className="flex flex-col gap-0.5 min-w-0">
-              <span className="text-sm font-medium truncate">
+              <span className="text-sm font-medium truncate flex items-center gap-1.5">
                 {meeting.title || "Untitled"}
+                {summaryQueue.active === meeting.id && (
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
+                )}
+                {summaryQueue.pending.includes(meeting.id) && (
+                  <Clock className="w-3 h-3 text-muted-foreground shrink-0" />
+                )}
               </span>
               <span className="text-xs text-neutral-400">
                 {formatDate(meeting.created_at)}

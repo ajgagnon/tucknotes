@@ -429,6 +429,12 @@ fn strip_think_tags(s: &str) -> String {
 /// spawned Tokio tasks that outlive the command handler's borrow.
 pub struct SummarizationState {
     pub service: std::sync::Arc<SummarizationService>,
+    /// The meeting ID currently being summarized (including title generation),
+    /// or `None` if idle.
+    pub active_meeting_id: std::sync::Mutex<Option<String>>,
+    /// Meeting IDs waiting to be summarized. Processed sequentially after the
+    /// active summarization (including its title generation) completes.
+    pub pending_queue: std::sync::Mutex<std::collections::VecDeque<String>>,
 }
 
 #[cfg(test)]

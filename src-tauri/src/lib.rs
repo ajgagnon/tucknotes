@@ -3,6 +3,7 @@ pub mod errors;
 pub mod models;
 pub mod services;
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use tauri::{Manager, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
@@ -42,6 +43,8 @@ pub fn run() {
         service: Arc::new(
             SummarizationService::new().expect("failed to init summarization backend"),
         ),
+        active_meeting_id: Mutex::new(None),
+        pending_queue: Mutex::new(VecDeque::new()),
     };
 
     let mut builder = tauri::Builder::default()
@@ -117,6 +120,7 @@ pub fn run() {
             get_selected_llm_model,
             set_selected_llm_model,
             summarize_meeting,
+            get_summarization_queue,
             update_meeting_title,
         ])
         .run(tauri::generate_context!())

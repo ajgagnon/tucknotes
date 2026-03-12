@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncWriteExt;
 
 use crate::errors::AppError;
-use crate::models::{AppSettings, DownloadProgress, LlmModel, LlmModelInfo, ModelInfo, WhisperModel};
+use crate::models::{AppSettings, DownloadProgress, LlmModel, Model, ModelInfo, WhisperModel};
 
 /// Resolve the Tauri app data directory (e.g. ~/Library/Application Support/com.grain.app).
 /// This is the only place we depend on the Tauri runtime for path resolution.
@@ -53,21 +53,37 @@ pub fn save_settings_to(base_dir: &Path, settings: &AppSettings) -> Result<(), A
     Ok(())
 }
 
-/// Check whether the given model's .bin file exists on disk.
-/// Pure read-only — does not create any directories.
-pub fn is_model_downloaded_in(base_dir: &Path, model: &WhisperModel) -> Result<bool, AppError> {
+/// Check whether the given model's file exists on disk.
+/// Works for any model type (Whisper, LLM).
+pub fn is_downloaded_in<M: Model>(base_dir: &Path, model: &M) -> Result<bool, AppError> {
     Ok(base_dir.join("models").join(model.filename()).exists())
 }
 
-/// Resolve the active model's file path from settings + models dir.
+/// Resolve a model's file path from settings + models dir.
 /// Returns `None` if no model is selected or the file doesn't exist on disk.
-pub fn resolve_model_path(base_dir: &Path) -> Result<Option<PathBuf>, AppError> {
+///
+/// `getter` extracts the relevant model from `AppSettings` (e.g.
+/// `|s| s.selected_model.clone()` for Whisper).
+pub fn resolve_path<M: Model>(
+    base_dir: &Path,
+    getter: impl FnOnce(&AppSettings) -> Option<M>,
+) -> Result<Option<PathBuf>, AppError> {
     let settings = load_settings_from(base_dir)?;
-    let Some(model) = settings.selected_model else {
+    let Some(model) = getter(&settings) else {
         return Ok(None);
     };
     let path = ensure_models_dir(base_dir)?.join(model.filename());
     Ok(path.exists().then_some(path))
+}
+
+/// Convenience wrapper: resolve selected Whisper model path.
+pub fn resolve_whisper_path(base_dir: &Path) -> Result<Option<PathBuf>, AppError> {
+    resolve_path(base_dir, |s| s.selected_model.clone())
+}
+
+/// Convenience wrapper: resolve selected LLM model path.
+pub fn resolve_llm_path(base_dir: &Path) -> Result<Option<PathBuf>, AppError> {
+    resolve_path(base_dir, |s| s.selected_llm_model.clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -87,19 +103,17 @@ pub fn save_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), AppE
     save_settings_to(&resolve_data_dir(app)?, settings)
 }
 
-pub fn is_model_downloaded(app: &AppHandle, model: &WhisperModel) -> Result<bool, AppError> {
-    is_model_downloaded_in(&resolve_data_dir(app)?, model)
+pub fn is_downloaded<M: Model>(app: &AppHandle, model: &M) -> Result<bool, AppError> {
+    is_downloaded_in(&resolve_data_dir(app)?, model)
 }
 
-/// Download a Whisper model .bin file from Hugging Face.
+/// Download a model file from Hugging Face.
 ///
-/// The download streams to a `.partial` temp file first, then atomically
-/// renames it to the final filename once complete. This prevents a
-/// half-downloaded file from being mistaken for a valid model.
-///
-/// Emits `model:download-progress` events to the frontend on every chunk
-/// so the UI can show a progress bar.
-pub async fn download_model(app: &AppHandle, model: &WhisperModel) -> Result<(), AppError> {
+/// Works for any model type (Whisper, LLM). The download streams to a
+/// `.partial` temp file first, then atomically renames it to the final
+/// filename once complete. Emits `{prefix}:download-progress` events
+/// (where prefix comes from `M::event_prefix()`).
+pub async fn download<M: Model>(app: &AppHandle, model: &M) -> Result<(), AppError> {
     let base_dir = resolve_data_dir(app)?;
     let models_dir = ensure_models_dir(&base_dir)?;
     let file_path = models_dir.join(model.filename());
@@ -117,17 +131,14 @@ pub async fn download_model(app: &AppHandle, model: &WhisperModel) -> Result<(),
         )));
     }
 
-    // total_bytes is 0 when the server omits Content-Length (unlikely for HF static files)
     let total_bytes = response.content_length().unwrap_or(0);
     let mut downloaded_bytes: u64 = 0;
-
     let model_id = model.id().to_owned();
+    let event_name = format!("{}:download-progress", M::event_prefix());
 
     let mut file = tokio::fs::File::create(&partial_path).await?;
-
     let mut stream = response.bytes_stream();
 
-    // Stream body chunk-by-chunk to avoid buffering the entire file in memory
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
         file.write_all(&chunk).await?;
@@ -136,7 +147,7 @@ pub async fn download_model(app: &AppHandle, model: &WhisperModel) -> Result<(),
 
         // Fire-and-forget; if the frontend isn't listening, that's fine
         let _ = app.emit(
-            "model:download-progress",
+            &event_name,
             DownloadProgress {
                 model_id: model_id.clone(),
                 downloaded_bytes,
@@ -154,8 +165,7 @@ pub async fn download_model(app: &AppHandle, model: &WhisperModel) -> Result<(),
 }
 
 /// Return the catalog of all available Whisper models the user can download.
-/// This is a static list — no network or disk access required.
-pub fn list_models() -> Vec<ModelInfo> {
+pub fn list_whisper_models() -> Vec<ModelInfo<WhisperModel>> {
     vec![
         ModelInfo {
             id: WhisperModel::BaseEn,
@@ -163,7 +173,7 @@ pub fn list_models() -> Vec<ModelInfo> {
             description: "Fast and lightweight. Best for English-only meetings.".into(),
             size_bytes: 148_000_000,
             filename: WhisperModel::BaseEn.filename().into(),
-            recommended: false,
+            recommended: None,
         },
         ModelInfo {
             id: WhisperModel::LargeV3TurboQ5,
@@ -171,91 +181,20 @@ pub fn list_models() -> Vec<ModelInfo> {
             description: "Higher accuracy, multilingual support. Larger download.".into(),
             size_bytes: 547_000_000,
             filename: WhisperModel::LargeV3TurboQ5.filename().into(),
-            recommended: true,
+            recommended: Some(true),
         },
     ]
 }
 
-// ---------------------------------------------------------------------------
-// LLM model helpers — parallel to the Whisper model functions above.
-// ---------------------------------------------------------------------------
-
-pub fn is_llm_model_downloaded_in(base_dir: &Path, model: &LlmModel) -> Result<bool, AppError> {
-    Ok(base_dir.join("models").join(model.filename()).exists())
-}
-
-pub fn resolve_llm_model_path(base_dir: &Path) -> Result<Option<PathBuf>, AppError> {
-    let settings = load_settings_from(base_dir)?;
-    let Some(model) = settings.selected_llm_model else {
-        return Ok(None);
-    };
-    let path = ensure_models_dir(base_dir)?.join(model.filename());
-    Ok(path.exists().then_some(path))
-}
-
-pub fn is_llm_model_downloaded(app: &AppHandle, model: &LlmModel) -> Result<bool, AppError> {
-    is_llm_model_downloaded_in(&resolve_data_dir(app)?, model)
-}
-
-/// Download an LLM model GGUF file from Hugging Face.
-///
-/// Same atomic download pattern as `download_model` (stream to `.partial`,
-/// then rename). Emits `llm-model:download-progress` events.
-pub async fn download_llm_model(app: &AppHandle, model: &LlmModel) -> Result<(), AppError> {
-    let base_dir = resolve_data_dir(app)?;
-    let models_dir = ensure_models_dir(&base_dir)?;
-    let file_path = models_dir.join(model.filename());
-    if file_path.exists() {
-        return Ok(());
-    }
-    let partial_path = models_dir.join(format!("{}.partial", model.filename()));
-
-    let response = reqwest::get(model.download_url()).await?;
-
-    if !response.status().is_success() {
-        return Err(AppError::DownloadFailed(format!(
-            "HTTP {}",
-            response.status()
-        )));
-    }
-
-    let total_bytes = response.content_length().unwrap_or(0);
-    let mut downloaded_bytes: u64 = 0;
-    let model_id = model.id().to_owned();
-
-    let mut file = tokio::fs::File::create(&partial_path).await?;
-    let mut stream = response.bytes_stream();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        file.write_all(&chunk).await?;
-
-        downloaded_bytes += chunk.len() as u64;
-
-        let _ = app.emit(
-            "llm-model:download-progress",
-            DownloadProgress {
-                model_id: model_id.clone(),
-                downloaded_bytes,
-                total_bytes,
-            },
-        );
-    }
-
-    file.flush().await?;
-    tokio::fs::rename(&partial_path, &file_path).await?;
-
-    Ok(())
-}
-
 /// Return the catalog of available LLM models.
-pub fn list_llm_models() -> Vec<LlmModelInfo> {
-    vec![LlmModelInfo {
+pub fn list_llm_models() -> Vec<ModelInfo<LlmModel>> {
+    vec![ModelInfo {
         id: LlmModel::Qwen3_4B_Q4KM,
         name: "Qwen3 4B (Q4_K_M)".into(),
         description: "Compact 4-bit quantized model for meeting summarization.".into(),
         size_bytes: 2_500_000_000,
         filename: LlmModel::Qwen3_4B_Q4KM.filename().into(),
+        recommended: None,
     }]
 }
 
@@ -336,39 +275,39 @@ mod tests {
     }
 
     #[test]
-    fn is_model_downloaded_false_when_absent() {
+    fn is_downloaded_false_when_absent() {
         let base = TempDir::new();
-        assert!(!is_model_downloaded_in(base.path(), &WhisperModel::BaseEn).unwrap());
+        assert!(!is_downloaded_in(base.path(), &WhisperModel::BaseEn).unwrap());
     }
 
     #[test]
-    fn is_model_downloaded_true_when_present() {
+    fn is_downloaded_true_when_present() {
         let base = TempDir::new();
         let models_dir = ensure_models_dir(base.path()).unwrap();
         fs::write(models_dir.join(WhisperModel::BaseEn.filename()), b"fake").unwrap();
-        assert!(is_model_downloaded_in(base.path(), &WhisperModel::BaseEn).unwrap());
-        assert!(!is_model_downloaded_in(base.path(), &WhisperModel::LargeV3TurboQ5).unwrap());
+        assert!(is_downloaded_in(base.path(), &WhisperModel::BaseEn).unwrap());
+        assert!(!is_downloaded_in(base.path(), &WhisperModel::LargeV3TurboQ5).unwrap());
     }
 
     #[test]
-    fn resolve_model_path_none_when_no_settings() {
+    fn resolve_whisper_path_none_when_no_settings() {
         let base = TempDir::new();
-        assert!(resolve_model_path(base.path()).unwrap().is_none());
+        assert!(resolve_whisper_path(base.path()).unwrap().is_none());
     }
 
     #[test]
-    fn resolve_model_path_none_when_file_missing() {
+    fn resolve_whisper_path_none_when_file_missing() {
         let base = TempDir::new();
         let settings = AppSettings {
             selected_model: Some(WhisperModel::BaseEn),
             ..Default::default()
         };
         save_settings_to(base.path(), &settings).unwrap();
-        assert!(resolve_model_path(base.path()).unwrap().is_none());
+        assert!(resolve_whisper_path(base.path()).unwrap().is_none());
     }
 
     #[test]
-    fn resolve_model_path_returns_path_when_file_exists() {
+    fn resolve_whisper_path_returns_path_when_file_exists() {
         let base = TempDir::new();
         let settings = AppSettings {
             selected_model: Some(WhisperModel::LargeV3TurboQ5),
@@ -381,7 +320,7 @@ mod tests {
             b"fake",
         )
         .unwrap();
-        let path = resolve_model_path(base.path()).unwrap().unwrap();
+        let path = resolve_whisper_path(base.path()).unwrap().unwrap();
         assert_eq!(
             path,
             models_dir.join(WhisperModel::LargeV3TurboQ5.filename())
@@ -389,16 +328,16 @@ mod tests {
     }
 
     #[test]
-    fn list_models_returns_both_models() {
-        let models = list_models();
+    fn list_whisper_models_returns_both_models() {
+        let models = list_whisper_models();
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].id, WhisperModel::BaseEn);
         assert_eq!(models[1].id, WhisperModel::LargeV3TurboQ5);
     }
 
     #[test]
-    fn list_models_filenames_match_enum() {
-        for m in &list_models() {
+    fn list_whisper_models_filenames_match_enum() {
+        for m in &list_whisper_models() {
             assert_eq!(m.filename, m.id.filename());
         }
     }
@@ -414,13 +353,13 @@ mod tests {
     // LLM model tests
 
     #[test]
-    fn is_llm_model_downloaded_false_when_absent() {
+    fn is_llm_downloaded_false_when_absent() {
         let base = TempDir::new();
-        assert!(!is_llm_model_downloaded_in(base.path(), &LlmModel::Qwen3_4B_Q4KM).unwrap());
+        assert!(!is_downloaded_in(base.path(), &LlmModel::Qwen3_4B_Q4KM).unwrap());
     }
 
     #[test]
-    fn is_llm_model_downloaded_true_when_present() {
+    fn is_llm_downloaded_true_when_present() {
         let base = TempDir::new();
         let models_dir = ensure_models_dir(base.path()).unwrap();
         fs::write(
@@ -428,17 +367,17 @@ mod tests {
             b"fake",
         )
         .unwrap();
-        assert!(is_llm_model_downloaded_in(base.path(), &LlmModel::Qwen3_4B_Q4KM).unwrap());
+        assert!(is_downloaded_in(base.path(), &LlmModel::Qwen3_4B_Q4KM).unwrap());
     }
 
     #[test]
-    fn resolve_llm_model_path_none_when_no_settings() {
+    fn resolve_llm_path_none_when_no_settings() {
         let base = TempDir::new();
-        assert!(resolve_llm_model_path(base.path()).unwrap().is_none());
+        assert!(resolve_llm_path(base.path()).unwrap().is_none());
     }
 
     #[test]
-    fn resolve_llm_model_path_returns_path_when_file_exists() {
+    fn resolve_llm_path_returns_path_when_file_exists() {
         let base = TempDir::new();
         let settings = AppSettings {
             selected_llm_model: Some(LlmModel::Qwen3_4B_Q4KM),
@@ -451,7 +390,7 @@ mod tests {
             b"fake",
         )
         .unwrap();
-        let path = resolve_llm_model_path(base.path()).unwrap().unwrap();
+        let path = resolve_llm_path(base.path()).unwrap().unwrap();
         assert_eq!(
             path,
             models_dir.join(LlmModel::Qwen3_4B_Q4KM.filename())
