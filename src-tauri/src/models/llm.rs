@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::Model;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[allow(non_camel_case_types)]
 pub enum LlmModel {
@@ -7,20 +9,20 @@ pub enum LlmModel {
     Qwen3_4B_Q4KM,
 }
 
-impl LlmModel {
-    pub fn id(&self) -> &'static str {
+impl Model for LlmModel {
+    fn id(&self) -> &'static str {
         match self {
             LlmModel::Qwen3_4B_Q4KM => "Qwen3_4B_Q4KM",
         }
     }
 
-    pub fn filename(&self) -> &'static str {
+    fn filename(&self) -> &'static str {
         match self {
             LlmModel::Qwen3_4B_Q4KM => "Qwen3-4B-Q4_K_M.gguf",
         }
     }
 
-    pub fn download_url(&self) -> &'static str {
+    fn download_url(&self) -> &'static str {
         match self {
             LlmModel::Qwen3_4B_Q4KM => {
                 "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf"
@@ -28,21 +30,16 @@ impl LlmModel {
         }
     }
 
-    pub fn from_id(id: &str) -> Option<LlmModel> {
+    fn from_id(id: &str) -> Option<LlmModel> {
         match id {
             "Qwen3_4B_Q4KM" | "Qwen3_5_4B_Q4KM" => Some(LlmModel::Qwen3_4B_Q4KM),
             _ => None,
         }
     }
-}
 
-#[derive(Clone, Serialize)]
-pub struct LlmModelInfo {
-    pub id: LlmModel,
-    pub name: String,
-    pub description: String,
-    pub size_bytes: u64,
-    pub filename: String,
+    fn event_prefix() -> &'static str {
+        "llm-model"
+    }
 }
 
 #[cfg(test)]

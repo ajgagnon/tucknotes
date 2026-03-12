@@ -161,7 +161,7 @@ mod macos {
             return;
         }
 
-        let model_path = match crate::services::model_manager::resolve_model_path(base_dir) {
+        let model_path = match crate::services::model_manager::resolve_whisper_path(base_dir) {
             Ok(Some(path)) => path,
             _ => {
                 busy.store(false, Ordering::SeqCst);
@@ -205,7 +205,7 @@ mod macos {
         prev_texts: &Mutex<HashMap<String, String>>,
         meeting_id: &str,
     ) {
-        let model_path = match crate::services::model_manager::resolve_model_path(base_dir) {
+        let model_path = match crate::services::model_manager::resolve_whisper_path(base_dir) {
             Ok(Some(path)) => path,
             _ => return,
         };

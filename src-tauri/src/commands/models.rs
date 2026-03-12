@@ -1,24 +1,24 @@
 use crate::errors::AppError;
-use crate::models::{ModelInfo, WhisperModel};
+use crate::models::{Model, ModelInfo, WhisperModel};
 use crate::services::model_manager;
 
 #[tauri::command]
-pub fn list_available_models() -> Vec<ModelInfo> {
-    model_manager::list_models()
+pub fn list_available_models() -> Vec<ModelInfo<WhisperModel>> {
+    model_manager::list_whisper_models()
 }
 
 #[tauri::command]
 pub fn get_model_status(app: tauri::AppHandle, model_id: String) -> Result<bool, AppError> {
     let model =
         WhisperModel::from_id(&model_id).ok_or_else(|| AppError::InvalidModel(model_id))?;
-    model_manager::is_model_downloaded(&app, &model)
+    model_manager::is_downloaded(&app, &model)
 }
 
 #[tauri::command]
 pub async fn download_model(app: tauri::AppHandle, model_id: String) -> Result<(), AppError> {
     let model =
         WhisperModel::from_id(&model_id).ok_or_else(|| AppError::InvalidModel(model_id))?;
-    model_manager::download_model(&app, &model).await
+    model_manager::download(&app, &model).await
 }
 
 #[tauri::command]

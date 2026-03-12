@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::llm::LlmModel;
+use super::Model;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum WhisperModel {
@@ -8,22 +9,22 @@ pub enum WhisperModel {
     LargeV3TurboQ5,
 }
 
-impl WhisperModel {
-    pub fn id(&self) -> &'static str {
+impl Model for WhisperModel {
+    fn id(&self) -> &'static str {
         match self {
             WhisperModel::BaseEn => "BaseEn",
             WhisperModel::LargeV3TurboQ5 => "LargeV3TurboQ5",
         }
     }
 
-    pub fn filename(&self) -> &'static str {
+    fn filename(&self) -> &'static str {
         match self {
             WhisperModel::BaseEn => "ggml-base.en.bin",
             WhisperModel::LargeV3TurboQ5 => "ggml-large-v3-turbo-q5_0.bin",
         }
     }
 
-    pub fn download_url(&self) -> &'static str {
+    fn download_url(&self) -> &'static str {
         match self {
             WhisperModel::BaseEn => {
                 "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
@@ -34,23 +35,28 @@ impl WhisperModel {
         }
     }
 
-    pub fn from_id(id: &str) -> Option<WhisperModel> {
+    fn from_id(id: &str) -> Option<WhisperModel> {
         match id {
             "BaseEn" => Some(WhisperModel::BaseEn),
             "LargeV3TurboQ5" => Some(WhisperModel::LargeV3TurboQ5),
             _ => None,
         }
     }
+
+    fn event_prefix() -> &'static str {
+        "model"
+    }
 }
 
 #[derive(Clone, Serialize)]
-pub struct ModelInfo {
-    pub id: WhisperModel,
+pub struct ModelInfo<M: Model> {
+    pub id: M,
     pub name: String,
     pub description: String,
     pub size_bytes: u64,
     pub filename: String,
-    pub recommended: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recommended: Option<bool>,
 }
 
 #[derive(Clone, Serialize)]
