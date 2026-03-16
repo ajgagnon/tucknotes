@@ -189,11 +189,11 @@ pub fn list_whisper_models() -> Vec<ModelInfo<WhisperModel>> {
 /// Return the catalog of available LLM models.
 pub fn list_llm_models() -> Vec<ModelInfo<LlmModel>> {
     vec![ModelInfo {
-        id: LlmModel::Qwen3_4B_Q4KM,
-        name: "Qwen3 4B (Q4_K_M)".into(),
+        id: LlmModel::Qwen3_5_4B_Q4KM,
+        name: "Qwen3.5 4B (Q4_K_M)".into(),
         description: "Compact 4-bit quantized model for meeting summarization.".into(),
-        size_bytes: 2_500_000_000,
-        filename: LlmModel::Qwen3_4B_Q4KM.filename().into(),
+        size_bytes: 2_740_000_000,
+        filename: LlmModel::Qwen3_5_4B_Q4KM.filename().into(),
         recommended: None,
     }]
 }
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn is_llm_downloaded_false_when_absent() {
         let base = TempDir::new();
-        assert!(!is_downloaded_in(base.path(), &LlmModel::Qwen3_4B_Q4KM).unwrap());
+        assert!(!is_downloaded_in(base.path(), &LlmModel::Qwen3_5_4B_Q4KM).unwrap());
     }
 
     #[test]
@@ -363,11 +363,11 @@ mod tests {
         let base = TempDir::new();
         let models_dir = ensure_models_dir(base.path()).unwrap();
         fs::write(
-            models_dir.join(LlmModel::Qwen3_4B_Q4KM.filename()),
+            models_dir.join(LlmModel::Qwen3_5_4B_Q4KM.filename()),
             b"fake",
         )
         .unwrap();
-        assert!(is_downloaded_in(base.path(), &LlmModel::Qwen3_4B_Q4KM).unwrap());
+        assert!(is_downloaded_in(base.path(), &LlmModel::Qwen3_5_4B_Q4KM).unwrap());
     }
 
     #[test]
@@ -380,20 +380,20 @@ mod tests {
     fn resolve_llm_path_returns_path_when_file_exists() {
         let base = TempDir::new();
         let settings = AppSettings {
-            selected_llm_model: Some(LlmModel::Qwen3_4B_Q4KM),
+            selected_llm_model: Some(LlmModel::Qwen3_5_4B_Q4KM),
             ..Default::default()
         };
         save_settings_to(base.path(), &settings).unwrap();
         let models_dir = ensure_models_dir(base.path()).unwrap();
         fs::write(
-            models_dir.join(LlmModel::Qwen3_4B_Q4KM.filename()),
+            models_dir.join(LlmModel::Qwen3_5_4B_Q4KM.filename()),
             b"fake",
         )
         .unwrap();
         let path = resolve_llm_path(base.path()).unwrap().unwrap();
         assert_eq!(
             path,
-            models_dir.join(LlmModel::Qwen3_4B_Q4KM.filename())
+            models_dir.join(LlmModel::Qwen3_5_4B_Q4KM.filename())
         );
     }
 
@@ -401,7 +401,7 @@ mod tests {
     fn list_llm_models_returns_one_model() {
         let models = list_llm_models();
         assert_eq!(models.len(), 1);
-        assert_eq!(models[0].id, LlmModel::Qwen3_4B_Q4KM);
+        assert_eq!(models[0].id, LlmModel::Qwen3_5_4B_Q4KM);
     }
 
     #[test]
@@ -416,14 +416,14 @@ mod tests {
         let base = TempDir::new();
         let settings = AppSettings {
             selected_model: Some(WhisperModel::BaseEn),
-            selected_llm_model: Some(LlmModel::Qwen3_4B_Q4KM),
+            selected_llm_model: Some(LlmModel::Qwen3_5_4B_Q4KM),
         };
         save_settings_to(base.path(), &settings).unwrap();
         let loaded = load_settings_from(base.path()).unwrap();
         assert_eq!(loaded.selected_model, Some(WhisperModel::BaseEn));
         assert_eq!(
             loaded.selected_llm_model,
-            Some(LlmModel::Qwen3_4B_Q4KM)
+            Some(LlmModel::Qwen3_5_4B_Q4KM)
         );
     }
 
@@ -439,16 +439,16 @@ mod tests {
     }
 
     #[test]
-    fn settings_backward_compatible_with_qwen35_llm_model_id() {
+    fn settings_backward_compatible_with_qwen3_llm_model_id() {
         let base = TempDir::new();
-        // Simulate settings.json from the Qwen3.5 era
-        let old_json = r#"{"selected_model":"BaseEn","selected_llm_model":"Qwen3_5_4B_Q4KM"}"#;
+        // Simulate settings.json from the Qwen3 era
+        let old_json = r#"{"selected_model":"BaseEn","selected_llm_model":"Qwen3_4B_Q4KM"}"#;
         fs::write(base.path().join("settings.json"), old_json).unwrap();
         let loaded = load_settings_from(base.path()).unwrap();
         assert_eq!(loaded.selected_model, Some(WhisperModel::BaseEn));
         assert_eq!(
             loaded.selected_llm_model,
-            Some(LlmModel::Qwen3_4B_Q4KM)
+            Some(LlmModel::Qwen3_5_4B_Q4KM)
         );
     }
 }
