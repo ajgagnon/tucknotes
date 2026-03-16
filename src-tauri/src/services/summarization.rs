@@ -6,6 +6,7 @@ use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
+use llama_cpp_2::openai::OpenAIChatTemplateParams;
 use llama_cpp_2::sampling::LlamaSampler;
 
 use crate::errors::{lock_or_err, AppError};
@@ -18,44 +19,32 @@ You are a professional, detail-oriented Meeting Analyst AI designed to review me
 and provide comprehensive, clear summaries for effective follow-through. Your outputs must be concise, \
 organized, and actionable for busy professionals who require only the essential information to maximize \
 team productivity and accountability.\n\
-\n\
 You will be given a full transcript of a meeting, which may include a mix of speakers, topics, and \
 discussion threads. Participants may use informal language, go off-topic, or interleave multiple subjects. \
 Your job is to distill the transcript into a highly organized, digestible report.\n\
+Write abbreviated bullet points, not full sentences. Be terse and scannable.\n\
+Ideal line length is 6 words or less.\n\
 \n\
-Instructions:\n\
-1. Read the entire meeting transcript carefully.\n\
-2. Identify and list the main topics or agenda items discussed.\n\
-3. Summarize the essential discussions and decisions made for each main topic.\n\
-4. Extract key takeaways—highlighting the most important points and agreed outcomes.\n\
-5. Break down all tasks assigned, specifying the responsible individual(s) and any agreed deadlines.\n\
-6. Clearly list follow-up actions required, including any questions left unresolved and suggested next steps.\n\
-7. Optionally, create an \"Open Issues\" section for topics that need further discussion in future meetings.\n\
-8. Present the output in the organized format below. Ensure clarity, bulleting, and conciseness. \
-Omit unnecessary details or tangents. Use professional, neutral language.\n\
+Rules:\n\
+- Group bullets under short topic headings.\n\
+- Each bullet point should have nested sub-points.\n\
+- Use fragments, not complete sentences\n\
+- Use sub-bullets for details, numbered lists for sequences/steps\n\
+- Name people only when assigning work or decisions\n\
+- Skip filler, chit-chat, repeated points, and pleasantries\n\
+- No labels like \"Status:\", \"Action:\", \"Process:\"\n\
+- No editorializing or summarizing importance\n\
+- Do not give a title to the summary, this is generated separately. \n\
 \n\
-Constraints:\n\
-- Do not include irrelevant chit-chat, repeated information, or off-topic remarks.\n\
-- Remain neutral; do not editorialize, speculate, or add content not present in the transcript.\n\
-- Use bullet points or numbered lists for readability.\n\
-- Every task must specify both the responsible party and deadline, or note if missing.\n\
-- Summaries should be brief but comprehensive—avoid over-explaining.\n\
+Format:\n\
+## Topic Heading\n\
+* Key point or decision\n    - Detail or sub-point\n    - Another sub-point\n\
+* Next point\n\
 \n\
-Output Format:\n\
-1. Main Topics Discussed:\n\
-   - [List topics]\n\
-2. Essential Discussions and Decisions:\n\
-   - [Summarize per topic]\n\
-3. Key Takeaways:\n\
-   - [Concise list]\n\
-4. Open Issues / Topics for Future Discussion: (optional)\n\
-   - [Issue or question]\n\
-\n\
-Apply Theory of Mind to analyze the user's request, considering both logical intent and emotional \
-undertones. Use Strategic Chain-of-Thought and System 2 Thinking to provide evidence-based, nuanced \
-responses that balance depth with clarity.";
+Next Topic Heading\n\
+* ...";
 
-const MAX_TOKENS: i32 = 2048;
+const MAX_TOKENS: i32 = 4096;
 
 /// Wraps a lazily-loaded llama.cpp model and exposes a blocking
 /// `summarize()` method. The model is loaded on the first call
@@ -103,12 +92,56 @@ impl SummarizationService {
         Ok(())
     }
 
-    fn build_prompt(transcript: &str) -> String {
-        format!(
-            "<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n\
-             <|im_start|>user\n{transcript}<|im_end|>\n\
-             <|im_start|>assistant\n"
-        )
+    /// Apply the model's built-in Jinja chat template with the given
+    /// `enable_thinking` flag. This uses the template baked into the GGUF
+    /// rather than manually constructing prompt strings.
+    fn apply_template(
+        model: &LlamaModel,
+        system: &str,
+        user: &str,
+        enable_thinking: bool,
+    ) -> Result<String, AppError> {
+        let tmpl = model.chat_template(None).map_err(|e| {
+            AppError::SummarizationFailed(format!("Failed to get chat template: {e}"))
+        })?;
+
+        // Build OpenAI-compatible messages JSON
+        let messages_json = serde_json::json!([
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}
+        ])
+        .to_string();
+
+        let params = OpenAIChatTemplateParams {
+            messages_json: &messages_json,
+            tools_json: None,
+            tool_choice: None,
+            json_schema: None,
+            grammar: None,
+            reasoning_format: None,
+            chat_template_kwargs: None,
+            add_generation_prompt: true,
+            use_jinja: true,
+            parallel_tool_calls: false,
+            enable_thinking,
+            add_bos: false,
+            add_eos: false,
+            parse_tool_calls: false,
+        };
+
+        let result = model
+            .apply_chat_template_oaicompat(&tmpl, &params)
+            .map_err(|e| {
+                AppError::SummarizationFailed(format!("Failed to apply chat template: {e}"))
+            })?;
+
+        eprintln!(
+            "[summarization] Template applied (enable_thinking={enable_thinking}, \
+             thinking_forced_open={})",
+            result.thinking_forced_open
+        );
+
+        Ok(result.prompt)
     }
 
     /// Run summarization on the given transcript text.
@@ -136,7 +169,7 @@ impl SummarizationService {
             .as_ref()
             .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
 
-        let prompt = Self::build_prompt(transcript);
+        let prompt = Self::apply_template(model, SYSTEM_PROMPT, transcript, false)?;
         let tokens_list = model
             .str_to_token(&prompt, AddBos::Always)
             .map_err(|e| AppError::SummarizationFailed(format!("Tokenization failed: {e}")))?;
@@ -144,17 +177,18 @@ impl SummarizationService {
         let n_input = tokens_list.len() as u32;
         let n_ctx = (n_input + MAX_TOKENS as u32 + 256).max(4096);
 
-        let ctx_params = LlamaContextParams::default()
-            .with_n_ctx(std::num::NonZeroU32::new(n_ctx))
-            .with_flash_attention_policy(llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_DISABLED);
-        let mut ctx = model
-            .new_context(&self.backend, ctx_params)
-            .map_err(|e| AppError::SummarizationFailed(format!("Context creation failed: {e}")))?;
-
         // Use a batch size large enough for chunked prompt ingestion.
         // We process the prompt in chunks of BATCH_SIZE tokens to avoid
         // allocating one enormous batch for long transcripts.
         const BATCH_SIZE: usize = 2048;
+
+        let ctx_params = LlamaContextParams::default()
+            .with_n_ctx(std::num::NonZeroU32::new(n_ctx))
+            .with_flash_attention_policy(llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_AUTO);
+        let mut ctx = model
+            .new_context(&self.backend, ctx_params)
+            .map_err(|e| AppError::SummarizationFailed(format!("Context creation failed: {e}")))?;
+
         let mut batch = LlamaBatch::new(BATCH_SIZE, 1);
 
         // Feed prompt tokens in chunks
@@ -203,36 +237,26 @@ impl SummarizationService {
                 })?;
 
             output.push_str(&piece);
+            eprint!("{}", piece); // DEBUG: show raw model output
 
-            // Stream filtering: separate <think>...</think> from answer content.
-            // Tokens inside think blocks are emitted with is_thinking=true,
-            // answer tokens with is_thinking=false. The tags themselves are stripped.
+            // Stream filtering: strip <think>...</think> blocks, only emit
+            // answer content to the frontend. Thinking tokens are silently
+            // discarded (they're also stripped from the final DB output).
             tag_buf.push_str(&piece);
             loop {
                 if inside_think {
                     if let Some(end) = tag_buf.find(THINK_CLOSE) {
-                        // Emit thinking content before the closing tag
-                        let thinking = &tag_buf[..end];
-                        if !thinking.is_empty() {
-                            on_token(thinking, true);
-                        }
+                        // Discard thinking content, keep anything after the tag
                         tag_buf = tag_buf[(end + THINK_CLOSE.len())..].to_string();
                         inside_think = false;
                     } else if tag_buf.contains('<') {
-                        // Might be a partial "</think>" — emit up to '<', keep rest
+                        // Might be a partial "</think>" — discard up to '<', keep rest
                         let lt = tag_buf.rfind('<').unwrap();
-                        let before = &tag_buf[..lt];
-                        if !before.is_empty() {
-                            on_token(before, true);
-                        }
                         tag_buf = tag_buf[lt..].to_string();
                         break;
                     } else {
-                        // Still inside think block, no partial tag — emit and clear
-                        if !tag_buf.is_empty() {
-                            on_token(&tag_buf, true);
-                            tag_buf.clear();
-                        }
+                        // Still inside think block — discard everything
+                        tag_buf.clear();
                         break;
                     }
                 } else if let Some(start) = tag_buf.find(THINK_OPEN) {
@@ -274,9 +298,9 @@ impl SummarizationService {
                 .map_err(|e| AppError::SummarizationFailed(format!("Decode failed: {e}")))?;
         }
 
-        // Flush any remaining buffered text
-        if !tag_buf.is_empty() {
-            on_token(&tag_buf, inside_think);
+        // Flush any remaining buffered text (only if not inside a think block)
+        if !tag_buf.is_empty() && !inside_think {
+            on_token(&tag_buf, false);
         }
 
         // Also strip from the final output for DB storage
@@ -302,30 +326,25 @@ impl SummarizationService {
             .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
 
         let system = "Generate a short, descriptive title (max 8 words) for a meeting based on the summary below. Output ONLY the title text, nothing else. Do not use quotes.";
-        // Append /no_think to disable Qwen3's thinking mode — we want the
-        // title directly without <think> blocks eating up our token budget.
-        let prompt = format!(
-            "<|im_start|>system\n{system}<|im_end|>\n\
-             <|im_start|>user\n{summary}\n\n/no_think<|im_end|>\n\
-             <|im_start|>assistant\n"
-        );
+        let prompt = Self::apply_template(model, system, summary, false)?;
 
         let tokens_list = model
             .str_to_token(&prompt, AddBos::Always)
             .map_err(|e| AppError::SummarizationFailed(format!("Tokenization failed: {e}")))?;
 
         let n_input = tokens_list.len() as u32;
-        let max_title_tokens: i32 = 256;
+        let max_title_tokens: i32 = 512;
         let n_ctx = (n_input + max_title_tokens as u32 + 64).max(512);
+
+        const BATCH_SIZE: usize = 2048;
 
         let ctx_params = LlamaContextParams::default()
             .with_n_ctx(std::num::NonZeroU32::new(n_ctx))
-            .with_flash_attention_policy(llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_DISABLED);
+            .with_flash_attention_policy(llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_AUTO);
         let mut ctx = model
             .new_context(&self.backend, ctx_params)
             .map_err(|e| AppError::SummarizationFailed(format!("Context creation failed: {e}")))?;
 
-        const BATCH_SIZE: usize = 2048;
         let mut batch = LlamaBatch::new(BATCH_SIZE.min(tokens_list.len() + 64), 1);
 
         let n_prompt = tokens_list.len();
