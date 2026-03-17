@@ -11,6 +11,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { rmsToLevel, smoothLevel } from "../lib/audioLevel";
+import { useTimer } from "./useTimer";
 
 interface AudioChunkEvent {
   sample_count: number;
@@ -125,61 +126,90 @@ interface RecordingContextValue {
 
 const RecordingContext = createContext<RecordingContextValue | null>(null);
 
+interface RecordingStateEvent {
+  recording: boolean;
+  meeting_id: string | null;
+  elapsed_secs: number;
+}
+
 function RecordingProviderInner({ children }: { children: ReactNode }) {
   const [recording, setRecording] = useState(false);
   const [meetingId, setMeetingId] = useState<string | null>(null);
-  const [elapsed, setElapsed] = useState(0);
+  const { elapsed, startTimer, clearTimer } = useTimer();
   const [error, setError] = useState<AppError | null>(null);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [provisional, setProvisional] = useState<
     Record<string, TranscriptSegment>
   >({});
 
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const transcriptUnlistenRef = useRef<UnlistenFn | null>(null);
+  const recordingRef = useRef(false);
 
-  const clearTimer = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  }, []);
+  // Keep ref in sync with state so event handlers see latest value
+  useEffect(() => {
+    recordingRef.current = recording;
+  }, [recording]);
 
-  const startRecording = useCallback(async (): Promise<string> => {
-    setError(null);
-    try {
-      const id = await invoke<string>("start_recording");
-      setMeetingId(id);
-      setRecording(true);
-      setElapsed(0);
-      setSegments([]);
-      setProvisional({});
+  // Sync recording state from backend on mount (handles window opened mid-recording)
+  useEffect(() => {
+    (async () => {
+      try {
+        const state = await invoke<RecordingStateEvent>("get_recording_state");
+        if (state.recording) {
+          setRecording(true);
+          setMeetingId(state.meeting_id);
+          startTimer(state.elapsed_secs);
+        }
+      } catch (e) {
+        console.error("Failed to get recording state:", e);
+      }
+    })();
+    return clearTimer;
+  }, [clearTimer, startTimer]);
 
-      timerRef.current = setInterval(() => {
-        setElapsed((prev) => prev + 1);
-      }, 1000);
-      return id;
-    } catch (e: unknown) {
-      setError(toAppError(e));
-      throw e;
-    }
-  }, []);
+  // Listen for recording-state-changed events (cross-window + own window sync)
+  useEffect(() => {
+    let mounted = true;
+    let unlisten: UnlistenFn | null = null;
+    (async () => {
+      const fn_ = await listen<RecordingStateEvent>(
+        "recording-state-changed",
+        (event) => {
+          if (!mounted) return;
+          const {
+            recording: isRecording,
+            meeting_id,
+            elapsed_secs,
+          } = event.payload;
 
-  const stopRecording = useCallback(async () => {
-    try {
-      await invoke("stop_recording");
-      setRecording(false);
-      clearTimer();
-    } catch (e: unknown) {
-      setError(toAppError(e));
-    }
-  }, [clearTimer]);
+          if (isRecording && !recordingRef.current) {
+            // Transitioning to recording
+            setRecording(true);
+            setMeetingId(meeting_id);
+            setSegments([]);
+            setProvisional({});
+            startTimer(elapsed_secs);
+          } else if (!isRecording && recordingRef.current) {
+            // Transitioning to not recording
+            setRecording(false);
+            clearTimer();
+          }
+        },
+      );
+      if (mounted) unlisten = fn_;
+      else fn_();
+    })();
+    return () => {
+      mounted = false;
+      unlisten?.();
+    };
+  }, [clearTimer, startTimer]);
 
   // Transcript event listener
   useEffect(() => {
     let mounted = true;
+    let unlisten: UnlistenFn | null = null;
     (async () => {
-      const unlisten = await listen<TranscriptSegment>(
+      const fn_ = await listen<TranscriptSegment>(
         "transcript-segment",
         (event) => {
           if (!mounted) return;
@@ -196,19 +226,32 @@ function RecordingProviderInner({ children }: { children: ReactNode }) {
           }
         },
       );
-      if (mounted) transcriptUnlistenRef.current = unlisten;
-      else unlisten();
+      if (mounted) unlisten = fn_;
+      else fn_();
     })();
     return () => {
       mounted = false;
-      transcriptUnlistenRef.current?.();
+      unlisten?.();
     };
   }, []);
 
-  // Clean up timer on unmount
-  useEffect(() => {
-    return clearTimer;
-  }, [clearTimer]);
+  const startRecording = useCallback(async (): Promise<string> => {
+    setError(null);
+    try {
+      return await invoke<string>("start_recording");
+    } catch (e: unknown) {
+      setError(toAppError(e));
+      throw e;
+    }
+  }, []);
+
+  const stopRecording = useCallback(async () => {
+    try {
+      await invoke("stop_recording");
+    } catch (e: unknown) {
+      setError(toAppError(e));
+    }
+  }, []);
 
   const value = useMemo(
     () => ({

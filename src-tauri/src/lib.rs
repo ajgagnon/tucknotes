@@ -130,6 +130,7 @@ pub fn run() {
             open_accessibility_settings,
             start_recording,
             stop_recording,
+            get_recording_state,
             list_meetings,
             get_meeting,
             delete_meeting,

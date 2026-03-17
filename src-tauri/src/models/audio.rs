@@ -22,6 +22,13 @@ pub struct TranscriptEvent {
     pub is_provisional: bool,
 }
 
+#[derive(Clone, serde::Serialize)]
+pub struct RecordingStateEvent {
+    pub recording: bool,
+    pub meeting_id: Option<String>,
+    pub elapsed_secs: u64,
+}
+
 pub struct AccumulatedAudio {
     pub samples: Vec<f32>,
     pub sample_rate: u32,

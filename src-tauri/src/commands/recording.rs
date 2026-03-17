@@ -1,5 +1,7 @@
+use tauri::Emitter;
+
 use crate::errors::AppError;
-use crate::models::RecordingState;
+use crate::models::{RecordingState, RecordingStateEvent};
 
 // ---------------------------------------------------------------------------
 // macOS-specific implementation
@@ -458,7 +460,16 @@ pub async fn start_recording(
 ) -> Result<String, AppError> {
     #[cfg(target_os = "macos")]
     {
-        macos::do_start_recording(state, app).await
+        let id = macos::do_start_recording(state, app.clone()).await?;
+        let _ = app.emit(
+            "recording-state-changed",
+            RecordingStateEvent {
+                recording: true,
+                meeting_id: Some(id.clone()),
+                elapsed_secs: 0,
+            },
+        );
+        Ok(id)
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -477,7 +488,16 @@ pub async fn stop_recording(
 ) -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     {
-        macos::do_stop_recording(state, app).await
+        macos::do_stop_recording(state, app.clone()).await?;
+        let _ = app.emit(
+            "recording-state-changed",
+            RecordingStateEvent {
+                recording: false,
+                meeting_id: None,
+                elapsed_secs: 0,
+            },
+        );
+        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -486,5 +506,37 @@ pub async fn stop_recording(
         Err(AppError::NotSupported(
             "Not supported on this platform".into(),
         ))
+    }
+}
+
+#[tauri::command]
+pub async fn get_recording_state(
+    state: tauri::State<'_, RecordingState>,
+) -> Result<RecordingStateEvent, AppError> {
+    #[cfg(target_os = "macos")]
+    {
+        use crate::errors::lock_or_err;
+
+        let recording = lock_or_err(&state.capture)?.is_some();
+        let meeting_id = lock_or_err(&state.session_id)?.clone();
+        let elapsed_secs = lock_or_err(&state.started_at)?
+            .map(|s| s.elapsed().as_secs())
+            .unwrap_or(0);
+
+        Ok(RecordingStateEvent {
+            recording,
+            meeting_id,
+            elapsed_secs,
+        })
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = &state;
+        Ok(RecordingStateEvent {
+            recording: false,
+            meeting_id: None,
+            elapsed_secs: 0,
+        })
     }
 }
