@@ -468,7 +468,7 @@ impl DetectorStateMachine {
 // Overlay window helpers
 // ---------------------------------------------------------------------------
 
-fn show_overlay(app: &tauri::AppHandle, app_name: &str) {
+pub fn show_overlay(app: &tauri::AppHandle, app_name: &str) {
     // Don't create a second overlay
     if app.get_webview_window("meeting-overlay").is_some() {
         return;
@@ -493,6 +493,7 @@ fn show_overlay(app: &tauri::AppHandle, app_name: &str) {
         .always_on_top(true)
         .decorations(false)
         .transparent(true)
+        .shadow(false)
         .resizable(false)
         .skip_taskbar(true)
         .focused(false);

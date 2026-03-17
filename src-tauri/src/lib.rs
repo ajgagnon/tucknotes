@@ -132,6 +132,7 @@ pub fn run() {
             start_recording,
             stop_recording,
             get_recording_state,
+            debug_show_overlay,
             list_meetings,
             get_meeting,
             delete_meeting,

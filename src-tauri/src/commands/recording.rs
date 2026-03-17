@@ -552,3 +552,14 @@ pub async fn get_recording_state(
         })
     }
 }
+
+/// Debug command to show the meeting overlay without a real meeting.
+/// Call from the browser console: `window.__TAURI__.core.invoke("debug_show_overlay", { appName: "Zoom" })`
+#[tauri::command]
+pub fn debug_show_overlay(app: tauri::AppHandle, app_name: String) {
+    #[cfg(target_os = "macos")]
+    crate::services::meeting_detector::show_overlay(&app, &app_name);
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = (&app, &app_name);
+}
