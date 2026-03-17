@@ -11,11 +11,13 @@ function App() {
 
   useEffect(() => {
     async function checkOnboarding() {
-      const [screen, mic] = await Promise.all([
+      const [screen, mic, accessibility] = await Promise.all([
         invoke<boolean>("check_screen_recording_permission"),
         invoke<string>("check_microphone_permission"),
+        invoke<boolean>("check_accessibility_permission"),
       ]);
-      const permissionsGranted = screen && mic === "authorized";
+      const permissionsGranted =
+        screen && mic === "authorized" && accessibility;
       if (!permissionsGranted) {
         setStep("permissions");
         return;

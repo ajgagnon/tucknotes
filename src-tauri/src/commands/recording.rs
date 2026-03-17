@@ -1,5 +1,7 @@
+use tauri::Emitter;
+
 use crate::errors::AppError;
-use crate::models::RecordingState;
+use crate::models::{RecordingState, RecordingStateEvent};
 
 // ---------------------------------------------------------------------------
 // macOS-specific implementation
@@ -16,6 +18,7 @@ mod macos {
     use tokio_util::sync::CancellationToken;
 
     use crate::errors::{lock_or_err, AppError};
+    use crate::models::meeting_detection::MeetingDetectorState;
     use crate::models::{
         AccumulatedAudio, AudioChunkEvent, AudioSource, PcmAccumulator, RecordingState,
         TranscriptEvent,
@@ -342,7 +345,7 @@ mod macos {
 
         let app_for_transcribe = app.clone();
         let meeting_id_for_return = meeting_id.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let busy = Arc::new(AtomicBool::new(false));
             let prev_texts = Mutex::new(HashMap::<String, String>::new());
             let mut interval = tokio::time::interval(STEP_INTERVAL);
@@ -375,6 +378,16 @@ mod macos {
                 }
             }
         });
+        *lock_or_err(&state.transcribe_task)? = Some(handle);
+
+        // Suppress meeting detection overlay while recording
+        {
+            let det: tauri::State<'_, MeetingDetectorState> = app.state();
+            det.recording_active.store(true, Ordering::SeqCst);
+        }
+        if let Some(w) = app.get_webview_window("meeting-overlay") {
+            let _ = w.close();
+        }
 
         Ok(meeting_id_for_return)
     }
@@ -393,13 +406,24 @@ mod macos {
             Err(e) => eprintln!("[stop_recording] cancel_token lock poisoned: {e}"),
         }
 
-        let mut guard = lock_or_err(&state.capture)?;
-        if let Some(mut capture) = guard.take() {
-            capture
-                .stop()
-                .map_err(|e| AppError::CaptureFailed(e.to_string()))?;
+        {
+            let mut guard = lock_or_err(&state.capture)?;
+            if let Some(mut capture) = guard.take() {
+                capture
+                    .stop()
+                    .map_err(|e| AppError::CaptureFailed(e.to_string()))?;
+            }
         }
 
+        // Await the transcribe task so final_flush completes with accumulator data intact
+        let handle = lock_or_err(&state.transcribe_task)?.take();
+        if let Some(handle) = handle {
+            if let Err(e) = handle.await {
+                eprintln!("[stop_recording] transcribe task panicked: {e}");
+            }
+        }
+
+        // Clear accumulator after final_flush has consumed remaining audio
         match state.accumulator.lock() {
             Ok(mut acc) => {
                 *acc = PcmAccumulator::new();
@@ -427,6 +451,12 @@ mod macos {
             }
         }
 
+        // Re-enable meeting detection
+        {
+            let det: tauri::State<'_, MeetingDetectorState> = app.state();
+            det.recording_active.store(false, Ordering::SeqCst);
+        }
+
         Ok(())
     }
 }
@@ -442,7 +472,16 @@ pub async fn start_recording(
 ) -> Result<String, AppError> {
     #[cfg(target_os = "macos")]
     {
-        macos::do_start_recording(state, app).await
+        let id = macos::do_start_recording(state, app.clone()).await?;
+        let _ = app.emit(
+            "recording-state-changed",
+            RecordingStateEvent {
+                recording: true,
+                meeting_id: Some(id.clone()),
+                elapsed_secs: 0,
+            },
+        );
+        Ok(id)
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -461,7 +500,16 @@ pub async fn stop_recording(
 ) -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     {
-        macos::do_stop_recording(state, app).await
+        macos::do_stop_recording(state, app.clone()).await?;
+        let _ = app.emit(
+            "recording-state-changed",
+            RecordingStateEvent {
+                recording: false,
+                meeting_id: None,
+                elapsed_secs: 0,
+            },
+        );
+        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -471,4 +519,47 @@ pub async fn stop_recording(
             "Not supported on this platform".into(),
         ))
     }
+}
+
+#[tauri::command]
+pub async fn get_recording_state(
+    state: tauri::State<'_, RecordingState>,
+) -> Result<RecordingStateEvent, AppError> {
+    #[cfg(target_os = "macos")]
+    {
+        use crate::errors::lock_or_err;
+
+        let recording = lock_or_err(&state.capture)?.is_some();
+        let meeting_id = lock_or_err(&state.session_id)?.clone();
+        let elapsed_secs = lock_or_err(&state.started_at)?
+            .map(|s| s.elapsed().as_secs())
+            .unwrap_or(0);
+
+        Ok(RecordingStateEvent {
+            recording,
+            meeting_id,
+            elapsed_secs,
+        })
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = &state;
+        Ok(RecordingStateEvent {
+            recording: false,
+            meeting_id: None,
+            elapsed_secs: 0,
+        })
+    }
+}
+
+/// Debug command to show the meeting overlay without a real meeting.
+/// Call from the browser console: `window.__TAURI__.core.invoke("debug_show_overlay", { appName: "Zoom" })`
+#[tauri::command]
+pub fn debug_show_overlay(app: tauri::AppHandle, app_name: String) {
+    #[cfg(target_os = "macos")]
+    crate::services::meeting_detector::show_overlay(&app, &app_name);
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = (&app, &app_name);
 }

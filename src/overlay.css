@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body {
+    margin: 0;
+    background: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
+}

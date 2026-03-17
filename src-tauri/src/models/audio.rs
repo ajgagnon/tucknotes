@@ -22,6 +22,13 @@ pub struct TranscriptEvent {
     pub is_provisional: bool,
 }
 
+#[derive(Clone, serde::Serialize)]
+pub struct RecordingStateEvent {
+    pub recording: bool,
+    pub meeting_id: Option<String>,
+    pub elapsed_secs: u64,
+}
+
 pub struct AccumulatedAudio {
     pub samples: Vec<f32>,
     pub sample_rate: u32,
@@ -129,6 +136,7 @@ pub struct RecordingState {
     pub cancel_token: Mutex<Option<tokio_util::sync::CancellationToken>>,
     pub session_id: Mutex<Option<String>>,
     pub started_at: Mutex<Option<std::time::Instant>>,
+    pub transcribe_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 #[cfg(not(target_os = "macos"))]
