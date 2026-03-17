@@ -11,4 +11,6 @@ pub mod echo_cancel;
 #[cfg(target_os = "macos")]
 pub mod permissions;
 #[cfg(target_os = "macos")]
+pub mod meeting_detector;
+#[cfg(target_os = "macos")]
 pub mod transcription;

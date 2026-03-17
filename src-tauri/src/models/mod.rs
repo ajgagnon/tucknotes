@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod llm;
+pub mod meeting_detection;
 pub mod settings;
 
 pub use audio::{

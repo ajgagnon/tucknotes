@@ -43,3 +43,39 @@ pub fn request_microphone_access() -> bool {
     rx.recv_timeout(std::time::Duration::from_secs(60))
         .unwrap_or(false)
 }
+
+// ---------------------------------------------------------------------------
+// Accessibility permission (required for meeting detection AX tree scanning)
+// ---------------------------------------------------------------------------
+
+use core_foundation::base::TCFType;
+use core_foundation::string::CFString;
+
+extern "C" {
+    fn AXIsProcessTrustedWithOptions(options: *const std::ffi::c_void) -> bool;
+}
+
+/// Check whether Accessibility permission is granted (without prompting).
+pub fn check_accessibility() -> bool {
+    unsafe { AXIsProcessTrustedWithOptions(std::ptr::null()) }
+}
+
+/// Check Accessibility permission and show the system prompt if not yet granted.
+pub fn request_accessibility() -> bool {
+    unsafe {
+        let key = CFString::new("AXTrustedCheckOptionPrompt");
+        let keys = [key.as_concrete_TypeRef() as *const std::ffi::c_void];
+        let values = [core_foundation_sys::number::kCFBooleanTrue as *const std::ffi::c_void];
+        let options = core_foundation_sys::dictionary::CFDictionaryCreate(
+            std::ptr::null(),
+            keys.as_ptr(),
+            values.as_ptr(),
+            1,
+            &core_foundation_sys::dictionary::kCFTypeDictionaryKeyCallBacks,
+            &core_foundation_sys::dictionary::kCFTypeDictionaryValueCallBacks,
+        );
+        let result = AXIsProcessTrustedWithOptions(options as *const _);
+        core_foundation_sys::base::CFRelease(options as *const _);
+        result
+    }
+}

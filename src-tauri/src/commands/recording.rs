@@ -16,6 +16,7 @@ mod macos {
     use tokio_util::sync::CancellationToken;
 
     use crate::errors::{lock_or_err, AppError};
+    use crate::models::meeting_detection::MeetingDetectorState;
     use crate::models::{
         AccumulatedAudio, AudioChunkEvent, AudioSource, PcmAccumulator, RecordingState,
         TranscriptEvent,
@@ -376,6 +377,15 @@ mod macos {
             }
         });
 
+        // Suppress meeting detection overlay while recording
+        {
+            let det: tauri::State<'_, MeetingDetectorState> = app.state();
+            det.recording_active.store(true, Ordering::SeqCst);
+        }
+        if let Some(w) = app.get_webview_window("meeting-overlay") {
+            let _ = w.close();
+        }
+
         Ok(meeting_id_for_return)
     }
 
@@ -425,6 +435,12 @@ mod macos {
                 }
                 Err(e) => eprintln!("[stop_recording] db lock poisoned: {e}"),
             }
+        }
+
+        // Re-enable meeting detection
+        {
+            let det: tauri::State<'_, MeetingDetectorState> = app.state();
+            det.recording_active.store(false, Ordering::SeqCst);
         }
 
         Ok(())

@@ -4,6 +4,7 @@ pub mod models;
 pub mod services;
 
 use std::collections::VecDeque;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use tauri::{Manager, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
@@ -14,6 +15,7 @@ use commands::models::*;
 use commands::permissions::*;
 use commands::recording::*;
 use commands::summarization::*;
+use models::meeting_detection::MeetingDetectorState;
 use models::{PcmAccumulator, RecordingState};
 use services::database::DatabaseState;
 use services::summarization::{SummarizationService, SummarizationState};
@@ -37,6 +39,13 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let transcription_state = TranscriptionState {
         service: Arc::new(TranscriptionService::new()),
+    };
+
+    let recording_active = Arc::new(AtomicBool::new(false));
+
+    let detector_state = MeetingDetectorState {
+        cancel_token: Mutex::new(None),
+        recording_active: Arc::clone(&recording_active),
     };
 
     let summarization_state = SummarizationState {
@@ -85,9 +94,21 @@ pub fn run() {
                     .expect("Failed to apply vibrancy");
             }
 
+            // Start meeting detection background loop
+            #[cfg(target_os = "macos")]
+            {
+                let det: tauri::State<'_, MeetingDetectorState> = app.state();
+                let recording_flag = Arc::clone(&det.recording_active);
+                services::meeting_detector::start_detection_loop(
+                    app.handle().clone(),
+                    recording_flag,
+                );
+            }
+
             Ok(())
         })
         .manage(recording_state)
+        .manage(detector_state)
         .manage(summarization_state);
 
     #[cfg(target_os = "macos")]
@@ -104,6 +125,9 @@ pub fn run() {
             check_microphone_permission,
             request_microphone_permission,
             open_microphone_settings,
+            check_accessibility_permission,
+            request_accessibility_permission,
+            open_accessibility_settings,
             start_recording,
             stop_recording,
             list_meetings,
