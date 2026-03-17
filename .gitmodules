@@ -1,0 +1,4 @@
+[submodule "vendor/llama-cpp-rs"]
+	path = vendor/llama-cpp-rs
+	url = https://github.com/ajgagnon/llama-cpp-rs.git
+	branch = grain/ggml-symbol-fix
