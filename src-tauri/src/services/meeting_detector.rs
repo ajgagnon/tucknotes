@@ -496,7 +496,8 @@ pub fn show_overlay(app: &tauri::AppHandle, app_name: &str) {
         .shadow(false)
         .resizable(false)
         .skip_taskbar(true)
-        .focused(false);
+        .focused(false)
+        .accept_first_mouse(true);
 
     if let Err(e) = builder.build() {
         eprintln!("[meeting_detector] failed to create overlay window: {e}");
