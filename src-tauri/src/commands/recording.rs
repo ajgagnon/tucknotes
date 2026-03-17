@@ -345,7 +345,7 @@ mod macos {
 
         let app_for_transcribe = app.clone();
         let meeting_id_for_return = meeting_id.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let busy = Arc::new(AtomicBool::new(false));
             let prev_texts = Mutex::new(HashMap::<String, String>::new());
             let mut interval = tokio::time::interval(STEP_INTERVAL);
@@ -378,6 +378,7 @@ mod macos {
                 }
             }
         });
+        *lock_or_err(&state.transcribe_task)? = Some(handle);
 
         // Suppress meeting detection overlay while recording
         {
@@ -405,13 +406,24 @@ mod macos {
             Err(e) => eprintln!("[stop_recording] cancel_token lock poisoned: {e}"),
         }
 
-        let mut guard = lock_or_err(&state.capture)?;
-        if let Some(mut capture) = guard.take() {
-            capture
-                .stop()
-                .map_err(|e| AppError::CaptureFailed(e.to_string()))?;
+        {
+            let mut guard = lock_or_err(&state.capture)?;
+            if let Some(mut capture) = guard.take() {
+                capture
+                    .stop()
+                    .map_err(|e| AppError::CaptureFailed(e.to_string()))?;
+            }
         }
 
+        // Await the transcribe task so final_flush completes with accumulator data intact
+        let handle = lock_or_err(&state.transcribe_task)?.take();
+        if let Some(handle) = handle {
+            if let Err(e) = handle.await {
+                eprintln!("[stop_recording] transcribe task panicked: {e}");
+            }
+        }
+
+        // Clear accumulator after final_flush has consumed remaining audio
         match state.accumulator.lock() {
             Ok(mut acc) => {
                 *acc = PcmAccumulator::new();

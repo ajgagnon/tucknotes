@@ -31,6 +31,7 @@ pub fn run() {
         cancel_token: Mutex::new(None),
         session_id: Mutex::new(None),
         started_at: Mutex::new(None),
+        transcribe_task: Mutex::new(None),
     };
 
     #[cfg(not(target_os = "macos"))]
