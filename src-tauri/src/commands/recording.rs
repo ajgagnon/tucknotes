@@ -66,7 +66,16 @@ mod macos {
         items
     }
 
-    /// Run batch transcription and emit events for each result.
+    /// A segment with its source label and absolute timestamp for interleaving.
+    struct TaggedSegment {
+        text: String,
+        source: String,
+        /// Absolute timestamp in ms (buffer start + Whisper offset).
+        timestamp_ms: u64,
+    }
+
+    /// Run batch transcription, interleave segments from all sources by
+    /// timestamp, then emit events in chronological order.
     /// Updates `prev_texts` with the latest transcript per source for cross-window context.
     /// Saves finalized (non-provisional) segments to the database.
     async fn transcribe_and_emit(
@@ -94,44 +103,88 @@ mod macos {
 
         let results = tokio::task::spawn_blocking(move || {
             let buffers: Vec<&[f32]> = items.iter().map(|i| i.samples.as_slice()).collect();
-            let texts = svc.transcribe_batch(&path, &buffers, &prompts, is_provisional);
-            (items, texts, prompts)
+            let segment_lists = svc.transcribe_batch(&path, &buffers, &prompts, is_provisional);
+            (items, segment_lists)
         })
         .await;
 
         match results {
-            Ok((items, Ok(texts), prompts)) => {
-                for (i, (item, text)) in items.into_iter().zip(texts).enumerate() {
-                    if text.is_empty() {
-                        continue;
+            Ok((items, Ok(segment_lists))) => {
+                if is_provisional {
+                    // Provisional: emit one combined event per source so the
+                    // frontend can display the full in-progress text (it stores
+                    // provisional as Record<source, segment>, so per-segment
+                    // emission would lose all but the last segment).
+                    for (item, segments) in items.iter().zip(segment_lists.iter()) {
+                        if segments.is_empty() {
+                            continue;
+                        }
+                        let full_text: String = segments
+                            .iter()
+                            .map(|s| s.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        let _ = app.emit(
+                            "transcript-segment",
+                            TranscriptEvent {
+                                text: full_text,
+                                source: item.label.clone(),
+                                timestamp_ms: item.timestamp_ms,
+                                is_provisional: true,
+                            },
+                        );
                     }
-                    // Update context for next window (only on finalized results)
-                    if !is_provisional {
-                        let mut map = prev_texts.lock().unwrap_or_else(|e| e.into_inner());
-                        map.insert(item.label.clone(), text.clone());
+                } else {
+                    // Finalized: emit per-segment events interleaved by
+                    // timestamp so the conversation is in chronological order.
+                    let mut all_segments: Vec<TaggedSegment> = Vec::new();
+
+                    for (item, segments) in items.iter().zip(segment_lists.iter()) {
+                        for seg in segments {
+                            let abs_ms = item.timestamp_ms + (seg.start_cs as u64 * 10);
+                            all_segments.push(TaggedSegment {
+                                text: seg.text.clone(),
+                                source: item.label.clone(),
+                                timestamp_ms: abs_ms,
+                            });
+                        }
+
+                        // Update cross-window context per source
+                        if !segments.is_empty() {
+                            let full_text: String = segments
+                                .iter()
+                                .map(|s| s.text.as_str())
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            let mut map =
+                                prev_texts.lock().unwrap_or_else(|e| e.into_inner());
+                            map.insert(item.label.clone(), full_text);
+                        }
                     }
-                    let _ = app.emit(
-                        "transcript-segment",
-                        TranscriptEvent {
-                            text: text.clone(),
-                            source: item.label.clone(),
-                            timestamp_ms: item.timestamp_ms,
-                            is_provisional,
-                        },
-                    );
-                    // Persist finalized segments to SQLite
-                    if !is_provisional {
+
+                    all_segments.sort_by_key(|s| s.timestamp_ms);
+
+                    for seg in &all_segments {
+                        let _ = app.emit(
+                            "transcript-segment",
+                            TranscriptEvent {
+                                text: seg.text.clone(),
+                                source: seg.source.clone(),
+                                timestamp_ms: seg.timestamp_ms,
+                                is_provisional: false,
+                            },
+                        );
+
                         let db: &DatabaseState = app.state::<DatabaseState>().inner();
                         match db.conn.lock() {
                             Ok(conn) => {
-                                let prompt = prompts.get(i).and_then(|p| p.as_deref());
                                 if let Err(e) = database::insert_segment(
                                     &conn,
                                     &meeting_id,
-                                    &text,
-                                    &item.label,
-                                    item.timestamp_ms as i64,
-                                    prompt,
+                                    &seg.text,
+                                    &seg.source,
+                                    seg.timestamp_ms as i64,
+                                    None,
                                     database::now_unix_ms(),
                                 ) {
                                     eprintln!("[transcribe] failed to insert segment: {e}");
@@ -142,7 +195,7 @@ mod macos {
                     }
                 }
             }
-            Ok((_, Err(e), _)) => eprintln!("[transcribe] error: {e}"),
+            Ok((_, Err(e))) => eprintln!("[transcribe] error: {e}"),
             Err(e) => eprintln!("[transcribe] task panicked: {e}"),
         }
     }
@@ -240,10 +293,32 @@ mod macos {
             return Err(AppError::CaptureFailed("Already recording".into()));
         }
 
-        let (capture, mut rx) = crate::services::audio_capture::AudioCapture::start()
+        // Shared channel that receives audio from both sources.
+        let (shared_tx, mut shared_rx) = tokio::sync::mpsc::channel(1024);
+
+        // 1. System audio via ScreenCaptureKit
+        let (capture, mut sys_rx) = crate::services::audio_capture::AudioCapture::start()
             .map_err(|e| AppError::CaptureFailed(e.to_string()))?;
         *guard = Some(capture);
         drop(guard);
+
+        // Forward SCK system audio chunks into the shared channel
+        let sys_tx = shared_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            while let Some(chunk) = sys_rx.blocking_recv() {
+                let _ = sys_tx.try_send(chunk);
+            }
+        });
+
+        // 2. Microphone via AVAudioEngine with VoiceProcessingIO.
+        //    Provides hardware-tuned AEC, noise suppression, AGC, and
+        //    enables the system mic mode picker (Voice Isolation / Wide Spectrum).
+        let voice_cap = crate::services::voice_capture::VoiceCapture::start(shared_tx)
+            .map_err(|e| AppError::CaptureFailed(format!("VoiceCapture: {e}")))?;
+        {
+            let mut vc_guard = lock_or_err(&state.voice_capture)?;
+            *vc_guard = Some(voice_cap);
+        }
 
         {
             let mut acc = lock_or_err(&state.accumulator)?;
@@ -279,12 +354,15 @@ mod macos {
             .app_data_dir()
             .map_err(|e| AppError::IoError(e.to_string()))?;
 
-        // Task 1: Forward audio chunks as events and accumulate for transcription
+        // Task 1: Forward audio chunks as events and accumulate for transcription.
+        // Normalize timestamps to wall-clock seconds since recording start so
+        // system audio (CMSampleBuffer time) and mic (AVAudioTime sample count)
+        // share a common time base for proper interleaving.
         let app_for_chunks = app.clone();
+        let recording_epoch = std::time::Instant::now();
         tokio::task::spawn_blocking(move || {
-            let mut aec = crate::services::echo_cancel::EchoCanceller::new().ok();
-
-            while let Some(chunk) = rx.blocking_recv() {
+            while let Some(chunk) = shared_rx.blocking_recv() {
+                let wall_ts = recording_epoch.elapsed().as_secs_f64();
                 let source_str = match chunk.source {
                     AudioSource::SystemAudio => "system",
                     AudioSource::Microphone => "microphone",
@@ -296,42 +374,16 @@ mod macos {
                         sample_count: chunk.pcm_data.len(),
                         rms,
                         source: source_str.to_string(),
-                        timestamp: chunk.timestamp,
+                        timestamp: wall_ts,
                     },
                 );
                 if let Ok(mut acc) = accumulator.lock() {
-                    match chunk.source {
-                        AudioSource::SystemAudio => {
-                            if let Some(aec) = aec.as_mut() {
-                                aec.feed_system(&chunk.pcm_data);
-                            }
-                            acc.append(
-                                &chunk.source,
-                                &chunk.pcm_data,
-                                chunk.timestamp,
-                                chunk.sample_rate,
-                            );
-                        }
-                        AudioSource::Microphone => {
-                            match aec
-                                .as_mut()
-                                .map(|aec| aec.feed_mic(&chunk.pcm_data, chunk.sample_rate))
-                            {
-                                Some(samples) if !samples.is_empty() => {
-                                    acc.append(&chunk.source, &samples, chunk.timestamp, 16000);
-                                }
-                                Some(_) => { /* AEC returned empty, skip this chunk */ }
-                                None => {
-                                    acc.append(
-                                        &chunk.source,
-                                        &chunk.pcm_data,
-                                        chunk.timestamp,
-                                        chunk.sample_rate,
-                                    );
-                                }
-                            }
-                        }
-                    }
+                    acc.append(
+                        &chunk.source,
+                        &chunk.pcm_data,
+                        wall_ts,
+                        chunk.sample_rate,
+                    );
                 }
             }
         });
@@ -413,6 +465,13 @@ mod macos {
                     .stop()
                     .map_err(|e| AppError::CaptureFailed(e.to_string()))?;
             }
+        }
+
+        // Stop voice capture (AVAudioEngine + VoiceProcessingIO)
+        {
+            let mut vc_guard = lock_or_err(&state.voice_capture)?;
+            // Dropping VoiceCapture calls voice_capture_stop() via Drop
+            vc_guard.take();
         }
 
         // Await the transcribe task so final_flush completes with accumulator data intact

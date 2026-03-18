@@ -27,6 +27,7 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let recording_state = RecordingState {
         capture: Mutex::new(None),
+        voice_capture: Mutex::new(None),
         accumulator: Arc::new(Mutex::new(PcmAccumulator::new())),
         cancel_token: Mutex::new(None),
         session_id: Mutex::new(None),

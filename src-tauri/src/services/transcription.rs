@@ -5,6 +5,16 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 use crate::errors::AppError;
 
+/// A single Whisper segment with its start/end timestamps (centiseconds
+/// relative to the beginning of the audio buffer).
+pub struct TimestampedSegment {
+    pub text: String,
+    /// Start time in centiseconds (10 ms units) relative to buffer start.
+    pub start_cs: i64,
+    /// End time in centiseconds (10 ms units) relative to buffer start.
+    pub end_cs: i64,
+}
+
 /// Wraps a lazily-loaded whisper.cpp model and exposes a blocking
 /// `transcribe_batch()` method.  The model is loaded on the first call
 /// and reused for every subsequent call (loading takes ~1-2 s, so we
@@ -90,24 +100,51 @@ impl TranscriptionService {
     }
 
     const NO_SPEECH_THRESHOLD: f32 = 0.6;
+    /// Segments with average token log-probability below this are likely
+    /// hallucinations ("Thank you", "Thanks for watching", etc.) and are
+    /// discarded. This is the same threshold OpenAI uses in their Whisper
+    /// pipeline.
+    const AVG_LOGPROB_THRESHOLD: f32 = -1.0;
 
-    fn extract_text(state: &whisper_rs::WhisperState) -> String {
-        let mut text = String::new();
+    fn extract_segments(state: &whisper_rs::WhisperState) -> Vec<TimestampedSegment> {
+        let mut segments = Vec::new();
         for i in 0..state.full_n_segments() {
             if let Some(segment) = state.get_segment(i) {
                 if segment.no_speech_probability() > Self::NO_SPEECH_THRESHOLD {
                     continue;
                 }
+                // Reject low-confidence segments (likely hallucinations).
+                let n = segment.n_tokens();
+                if n > 0 {
+                    let sum_logprob: f32 = (0..n)
+                        .filter_map(|t| segment.get_token(t).map(|tok| tok.token_data().plog))
+                        .sum();
+                    let avg_logprob = sum_logprob / n as f32;
+                    if avg_logprob < Self::AVG_LOGPROB_THRESHOLD {
+                        continue;
+                    }
+                }
                 if let Ok(s) = segment.to_str() {
-                    text.push_str(s);
+                    let text = s.trim().to_string();
+                    if text.is_empty() {
+                        continue;
+                    }
+                    segments.push(TimestampedSegment {
+                        text,
+                        start_cs: segment.start_timestamp(),
+                        end_cs: segment.end_timestamp(),
+                    });
                 }
             }
         }
-        text.trim().to_string()
+        segments
     }
 
     /// Run Whisper inference on multiple 16 kHz mono f32 PCM buffers using a
     /// single GPU state allocation to avoid repeated Metal init/free cycles.
+    ///
+    /// Returns per-segment results with Whisper timestamps for each buffer,
+    /// enabling proper interleaving of segments from different sources.
     ///
     /// `prompts` provides an optional initial prompt per buffer (e.g. the tail
     /// of the previous transcription) to give Whisper linguistic context across
@@ -123,7 +160,7 @@ impl TranscriptionService {
         buffers: &[&[f32]],
         prompts: &[Option<String>],
         is_provisional: bool,
-    ) -> Result<Vec<String>, AppError> {
+    ) -> Result<Vec<Vec<TimestampedSegment>>, AppError> {
         self.ensure_loaded(model_path)?;
 
         let guard = self.context.lock().map_err(|_| AppError::LockPoisoned("Whisper context lock poisoned".into()))?;
@@ -141,7 +178,7 @@ impl TranscriptionService {
             state
                 .full(Self::decode_params(prompt, is_provisional), samples)
                 .map_err(|e| AppError::TranscriptionFailed(e.to_string()))?;
-            results.push(Self::extract_text(&state));
+            results.push(Self::extract_segments(&state));
         }
         Ok(results)
     }
