@@ -19,8 +19,7 @@ pub struct AudioCapture {
 
 struct CaptureHandler {
     tx: mpsc::Sender<AudioChunk>,
-    logged_system: AtomicBool,
-    logged_mic: AtomicBool,
+    logged: AtomicBool,
 }
 
 impl SCStreamOutputTrait for CaptureHandler {
@@ -29,11 +28,11 @@ impl SCStreamOutputTrait for CaptureHandler {
         sample_buffer: CMSampleBuffer,
         of_type: SCStreamOutputType,
     ) {
-        let source = match of_type {
-            SCStreamOutputType::Audio => AudioSource::SystemAudio,
-            SCStreamOutputType::Microphone => AudioSource::Microphone,
-            SCStreamOutputType::Screen => return,
-        };
+        // We only capture system audio now; mic is handled by VoiceCapture.
+        match of_type {
+            SCStreamOutputType::Audio => {}
+            _ => return,
+        }
 
         // Read the actual audio format from the buffer's format description.
         let fmt = sample_buffer.format_description();
@@ -73,18 +72,10 @@ impl SCStreamOutputTrait for CaptureHandler {
                 .collect()
         };
 
-        // Log the actual audio format once per source for diagnostics.
-        let logged = match source {
-            AudioSource::SystemAudio => &self.logged_system,
-            AudioSource::Microphone => &self.logged_mic,
-        };
-        if !logged.swap(true, Ordering::Relaxed) {
-            let source_name = match source {
-                AudioSource::SystemAudio => "system",
-                AudioSource::Microphone => "mic",
-            };
+        // Log the actual audio format once for diagnostics.
+        if !self.logged.swap(true, Ordering::Relaxed) {
             eprintln!(
-                "[audio_capture] {source_name}: rate={sample_rate}Hz, fmt_ch={fmt_channels}, buf_ch={buf_channels}, n_buffers={n_buffers}, frames={num_frames}, raw_f32={}, mono={}",
+                "[audio_capture] system: rate={sample_rate}Hz, fmt_ch={fmt_channels}, buf_ch={buf_channels}, n_buffers={n_buffers}, frames={num_frames}, raw_f32={}, mono={}",
                 raw.len(), pcm.len()
             );
         }
@@ -92,7 +83,7 @@ impl SCStreamOutputTrait for CaptureHandler {
         let chunk = AudioChunk {
             pcm_data: pcm,
             sample_rate: sample_rate as u32,
-            source,
+            source: AudioSource::SystemAudio,
             timestamp: sample_buffer
                 .presentation_timestamp()
                 .as_seconds()
@@ -124,26 +115,19 @@ impl AudioCapture {
             .with_minimum_frame_interval(&CMTime::new(1, 1))
             .with_captures_audio(true)
             .with_sample_rate(16000)
-            .with_channel_count(1)
-            .with_captures_microphone(true); // macOS 15+ — single stream with mic + system audio
+            .with_channel_count(1);
+        // Microphone is now captured separately via VoiceCapture (AVAudioEngine
+        // with VoiceProcessingIO) for hardware-tuned echo cancellation.
 
         let (tx, rx) = mpsc::channel(1024);
 
         let handler = CaptureHandler {
             tx: tx.clone(),
-            logged_system: AtomicBool::new(false),
-            logged_mic: AtomicBool::new(false),
+            logged: AtomicBool::new(false),
         };
 
         let mut stream = SCStream::new(&filter, &config);
         stream.add_output_handler(handler, SCStreamOutputType::Audio);
-        // Mic handler needs its own instance
-        let mic_handler = CaptureHandler {
-            tx: tx.clone(),
-            logged_system: AtomicBool::new(false),
-            logged_mic: AtomicBool::new(false),
-        };
-        stream.add_output_handler(mic_handler, SCStreamOutputType::Microphone);
         stream.start_capture()?;
 
         Ok((

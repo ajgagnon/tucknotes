@@ -116,7 +116,7 @@ function SegmentBubble({
           source === "system" ? "text-primary" : "text-success"
         }`}
       >
-        {source === "system" ? "Speaker" : "You"}
+        {source === "system" ? "Them" : "You"}
       </span>
       <p
         className={`text-sm text-neutral-700 dark:text-neutral-300 m-0 leading-snug ${provisional ? "italic" : ""}`}

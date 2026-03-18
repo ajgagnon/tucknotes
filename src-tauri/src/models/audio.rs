@@ -132,6 +132,7 @@ impl PcmAccumulator {
 #[cfg(target_os = "macos")]
 pub struct RecordingState {
     pub capture: Mutex<Option<crate::services::audio_capture::AudioCapture>>,
+    pub voice_capture: Mutex<Option<crate::services::voice_capture::VoiceCapture>>,
     pub accumulator: Arc<Mutex<PcmAccumulator>>,
     pub cancel_token: Mutex<Option<tokio_util::sync::CancellationToken>>,
     pub session_id: Mutex<Option<String>>,

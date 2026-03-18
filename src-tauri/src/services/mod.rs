@@ -7,7 +7,7 @@ pub mod vad;
 #[cfg(target_os = "macos")]
 pub mod audio_capture;
 #[cfg(target_os = "macos")]
-pub mod echo_cancel;
+pub mod voice_capture;
 #[cfg(target_os = "macos")]
 pub mod permissions;
 #[cfg(target_os = "macos")]
