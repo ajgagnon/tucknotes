@@ -8,17 +8,9 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
-import {
-  FileText,
-  ArrowLeft,
-  Trash2,
-  MoreVertical,
-  Sparkles,
-  Clock,
-} from "lucide-react";
+import { Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatTime } from "@/lib/formatTime";
 import {
   useRecording,
   type TranscriptSegment,
@@ -27,7 +19,7 @@ import {
 import { AnimatedShinyText } from "@/components/ui/animated-shiny-text";
 import { Button } from "./ui/button";
 
-interface MeetingRow {
+export interface MeetingRow {
   id: string;
   title: string | null;
   created_at: number;
@@ -46,14 +38,21 @@ interface SegmentRow {
   created_at: number;
 }
 
-interface MeetingDetail {
+export interface MeetingDetail {
   meeting: MeetingRow;
   segments: SegmentRow[];
 }
 
+export interface MeetingTitleInfo {
+  title: string | null;
+  generatingTitle: boolean;
+  createdAt: number;
+  durationMs: number | null;
+}
+
 interface MeetingsViewProps {
-  activeMeetingId?: string | null;
-  onClearActiveMeeting?: () => void;
+  meetingId: string;
+  onTitleChange?: (info: MeetingTitleInfo) => void;
 }
 
 // Event payload types matching the Rust structs
@@ -67,19 +66,9 @@ interface TitlePayload {
   title: string;
 }
 
-interface SummarizationQueue {
+export interface SummarizationQueue {
   active: string | null;
   pending: string[];
-}
-
-function formatDate(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -196,8 +185,7 @@ interface MeetingDetailProps {
   liveSegments: TranscriptSegment[];
   provisional: Record<string, TranscriptSegment>;
   error: AppError | null;
-  onBack: () => void;
-  onDelete: () => void;
+  onTitleChange?: (info: MeetingTitleInfo) => void;
 }
 
 function MeetingDetailView({
@@ -206,18 +194,13 @@ function MeetingDetailView({
   liveSegments,
   provisional,
   error,
-  onBack,
-  onDelete,
+  onTitleChange,
 }: MeetingDetailProps) {
   const transcriptEndRef = useRef<HTMLDivElement>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
 
-  // Title state
+  // Title state (kept here for summarization context, reported up via callback)
   const [currentTitle, setCurrentTitle] = useState(detail.meeting.title);
-  const [editingTitle, setEditingTitle] = useState(false);
   const [generatingTitle, setGeneratingTitle] = useState(false);
-  const titleInputRef = useRef<HTMLInputElement>(null);
 
   // Summarization state
   const [summarizing, setSummarizing] = useState(false);
@@ -288,6 +271,16 @@ function MeetingDetailView({
   useEffect(() => {
     setCurrentTitle(detail.meeting.title);
   }, [detail.meeting.title]);
+
+  // Report title info to parent whenever it changes
+  useEffect(() => {
+    onTitleChange?.({
+      title: currentTitle,
+      generatingTitle,
+      createdAt: detail.meeting.created_at,
+      durationMs: detail.meeting.duration_ms,
+    });
+  }, [currentTitle, generatingTitle, detail.meeting.created_at, detail.meeting.duration_ms, onTitleChange]);
 
   // On mount, check if our meeting is active or queued. If so, restore
   // summarizing state and register streaming listeners (they filter by
@@ -393,22 +386,6 @@ function MeetingDetailView({
     };
   }, [detail.meeting.id]);
 
-  async function saveTitle(newTitle: string) {
-    const trimmed = newTitle.trim();
-    setEditingTitle(false);
-    if (trimmed && trimmed !== (currentTitle ?? "")) {
-      setCurrentTitle(trimmed);
-      try {
-        await invoke("update_meeting_title", {
-          meetingId: detail.meeting.id,
-          title: trimmed,
-        });
-      } catch (e) {
-        console.error("Failed to update title:", e);
-      }
-    }
-  }
-
   async function handleSummarize() {
     if (currentSummary) {
       const confirmed = await ask("This will replace the existing summary.", {
@@ -451,94 +428,8 @@ function MeetingDetailView({
     }
   }, [liveSegments, provisional, isLiveRecording]);
 
-  // Close menu on outside click
-  useEffect(() => {
-    if (!menuOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [menuOpen]);
-
   return (
-    <div className="flex flex-col h-full p-6">
-      <div className="flex items-center justify-between w-full mb-6">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onBack}
-            className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <div className="min-w-0">
-            {editingTitle ? (
-              <input
-                ref={titleInputRef}
-                className="text-lg font-semibold bg-transparent border-b border-primary outline-none w-full"
-                defaultValue={currentTitle || ""}
-                placeholder="Untitled"
-                autoFocus
-                onBlur={(e) => saveTitle(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.currentTarget.blur();
-                  } else if (e.key === "Escape") {
-                    setEditingTitle(false);
-                  }
-                }}
-              />
-            ) : (
-              <h2
-                className="text-lg font-semibold truncate cursor-text"
-                onClick={() => {
-                  if (!generatingTitle) setEditingTitle(true);
-                }}
-                title="Click to rename"
-              >
-                {generatingTitle ? (
-                  <span className="flex items-center gap-2">
-                    <span className="text-muted-foreground italic">Generating title…</span>
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-muted-foreground animate-pulse" />
-                  </span>
-                ) : (
-                  currentTitle || "Untitled"
-                )}
-              </h2>
-            )}
-            <p className="text-xs text-neutral-400">
-              {formatDate(detail.meeting.created_at)}
-              {detail.meeting.duration_ms != null &&
-                ` · ${formatTime(Math.floor(detail.meeting.duration_ms / 1000))}`}
-            </p>
-          </div>
-        </div>
-        <div className="relative" ref={menuRef}>
-          <button
-            onClick={() => setMenuOpen((prev) => !prev)}
-            className="p-1.5 rounded-md text-neutral-400 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
-          >
-            <MoreVertical className="w-4 h-4" />
-          </button>
-          {menuOpen && (
-            <div className="absolute right-0 top-full mt-1 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg shadow-lg py-1 z-10 min-w-[140px]">
-              <button
-                onClick={() => {
-                  setMenuOpen(false);
-                  onDelete();
-                }}
-                className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Delete
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
+    <div className="flex flex-col h-full p-5">
       {/* Error display */}
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg py-3 px-4 text-sm mb-4 text-center dark:bg-danger/10 dark:border-danger/25 dark:text-red-300">
@@ -565,7 +456,7 @@ function MeetingDetailView({
 
       {isLiveRecording ? (
         /* During live recording, show transcript directly (no tabs) */
-        <div className="flex-1 overflow-y-auto flex flex-col gap-3">
+        <div className="flex-1 overflow-y-auto flex flex-col gap-3 ">
           <LiveTranscript
             segments={liveSegments}
             provisional={provisional}
@@ -655,13 +546,11 @@ function MeetingDetailView({
 // ---------------------------------------------------------------------------
 
 function MeetingsView({
-  activeMeetingId,
-  onClearActiveMeeting,
+  meetingId,
+  onTitleChange,
 }: MeetingsViewProps) {
-  const [meetings, setMeetings] = useState<MeetingRow[]>([]);
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [summaryQueue, setSummaryQueue] = useState<SummarizationQueue>({ active: null, pending: [] });
 
   const {
     recording,
@@ -674,64 +563,23 @@ function MeetingsView({
   const isLiveRecording =
     recording && detail != null && recordingMeetingId === detail.meeting.id;
 
-  // Track summarization queue state (for indicators in the list view).
-  // Re-runs when `detail` becomes null (returning to list view from detail view).
-  useEffect(() => {
-    if (detail) return;
-
-    let cancelled = false;
-    async function check() {
-      try {
-        const queue = await invoke<SummarizationQueue>("get_summarization_queue");
-        if (!cancelled) setSummaryQueue(queue);
-      } catch { /* ignore */ }
-    }
-    check();
-
-    // Refresh queue state when any summarization completes (active moves to next)
-    const unlisten = listen<string>("summary:complete", () => {
-      if (!cancelled) check();
-    });
-    return () => {
-      cancelled = true;
-      unlisten.then((fn) => fn());
-    };
-  }, [detail]);
-
-  const loadMeetings = useCallback(async () => {
+  const openMeeting = useCallback(async (id: string) => {
     setLoading(true);
     try {
-      const result = await invoke<MeetingRow[]>("list_meetings");
-      setMeetings(result);
-    } catch (e) {
-      console.error("Failed to load meetings:", e);
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    loadMeetings();
-  }, [loadMeetings]);
-
-  const openMeeting = useCallback(async (meetingId: string) => {
-    try {
       const result = await invoke<MeetingDetail>("get_meeting", {
-        meetingId,
+        meetingId: id,
       });
       setDetail(result);
     } catch (e) {
       console.error("Failed to load meeting:", e);
     }
+    setLoading(false);
   }, []);
 
-  // When activeMeetingId is set (recording just started), open that meeting
+  // Load meeting when meetingId changes
   useEffect(() => {
-    if (activeMeetingId) {
-      openMeeting(activeMeetingId);
-      onClearActiveMeeting?.();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeMeetingId]);
+    openMeeting(meetingId);
+  }, [meetingId, openMeeting]);
 
   // When recording stops, reload meeting to get persisted segments from DB
   const wasLiveRef = useRef(false);
@@ -743,45 +591,7 @@ function MeetingsView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLiveRecording]);
 
-  const deleteMeeting = useCallback(
-    async (meetingId: string) => {
-      const confirmed = await ask("This action cannot be undone.", {
-        title: "Delete meeting?",
-        kind: "warning",
-      });
-      if (!confirmed) return;
-      try {
-        await invoke("delete_meeting", { meetingId });
-        setMeetings((prev) => prev.filter((m) => m.id !== meetingId));
-        if (detail?.meeting.id === meetingId) {
-          setDetail(null);
-        }
-      } catch (e) {
-        console.error("Failed to delete meeting:", e);
-      }
-    },
-    [detail],
-  );
-
-  // Detail view
-  if (detail) {
-    return (
-      <MeetingDetailView
-        detail={detail}
-        isLiveRecording={isLiveRecording}
-        liveSegments={liveSegments}
-        provisional={provisional}
-        error={error}
-        onBack={() => {
-          setDetail(null);
-          loadMeetings();
-        }}
-        onDelete={() => deleteMeeting(detail.meeting.id)}
-      />
-    );
-  }
-
-  if (loading) {
+  if (loading || !detail) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-8">
         <p className="text-sm text-muted-foreground">Loading...</p>
@@ -789,56 +599,15 @@ function MeetingsView({
     );
   }
 
-  if (meetings.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-        <FileText className="w-12 h-12 text-muted-foreground mb-4" />
-        <p className="text-sm text-muted-foreground">
-          No meetings yet. Start a recording to create your first meeting.
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col h-full p-5">
-      <div className="flex flex-col gap-2">
-        {meetings.map((meeting) => (
-          <div
-            key={meeting.id}
-            className="flex items-center justify-between p-3 rounded-lg bg-black/4 dark:bg-white/4 hover:bg-black/6 dark:hover:bg-white/6 transition-colors cursor-pointer"
-            onClick={() => openMeeting(meeting.id)}
-          >
-            <div className="flex flex-col gap-0.5 min-w-0">
-              <span className="text-sm font-medium truncate flex items-center gap-1.5">
-                {meeting.title || "Untitled"}
-                {summaryQueue.active === meeting.id && (
-                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
-                )}
-                {summaryQueue.pending.includes(meeting.id) && (
-                  <Clock className="w-3 h-3 text-muted-foreground shrink-0" />
-                )}
-              </span>
-              <span className="text-xs text-neutral-400">
-                {formatDate(meeting.created_at)}
-                {meeting.duration_ms != null &&
-                  ` · ${formatTime(Math.floor(meeting.duration_ms / 1000))}`}
-              </span>
-            </div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                deleteMeeting(meeting.id);
-              }}
-              className="p-1.5 rounded-md text-neutral-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors shrink-0 cursor-pointer"
-              title="Delete meeting"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
+    <MeetingDetailView
+      detail={detail}
+      isLiveRecording={isLiveRecording}
+      liveSegments={liveSegments}
+      provisional={provisional}
+      error={error}
+      onTitleChange={onTitleChange}
+    />
   );
 }
 

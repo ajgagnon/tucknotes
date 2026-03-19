@@ -85,7 +85,7 @@ pub fn run() {
             let win_builder = win_builder
                 .title_bar_style(TitleBarStyle::Overlay)
                 .hidden_title(true)
-                .traffic_light_position(tauri::LogicalPosition::new(32.0, 38.0));
+                .traffic_light_position(tauri::LogicalPosition::new(28.0, 34.0));
 
             let window = win_builder.build().unwrap();
 

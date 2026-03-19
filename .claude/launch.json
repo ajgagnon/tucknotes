@@ -9,8 +9,9 @@
     },
     {
       "name": "vite-dev",
-      "runtimeExecutable": "npx",
+      "runtimeExecutable": "/opt/homebrew/bin/npx",
       "runtimeArgs": ["vite", "--port", "1421"],
+      "env": { "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" },
       "port": 1421
     }
   ]
