@@ -32,7 +32,7 @@ import MeetingsView, {
   type MeetingRow,
   type MeetingTitleInfo,
   type SummarizationQueue,
-} from "./MeetingsView";
+} from "./MeetingView";
 import SettingsView from "./SettingsView";
 import AudioVisualizer from "./AudioVisualizer";
 import { Button } from "./ui/button";
@@ -48,9 +48,10 @@ const appWindow = getCurrentWindow();
 // Date grouping helpers
 // ---------------------------------------------------------------------------
 
-type DateGroup = "Today" | "Yesterday" | "Older" | "Recents";
+type DateBucket = "Today" | "Yesterday" | "Older";
+type SidebarGroupLabel = DateBucket | "Recents";
 
-function getDateGroup(ms: number): DateGroup {
+function getDateGroup(ms: number): DateBucket {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const yesterday = new Date(today.getTime() - 86400000);
@@ -62,8 +63,8 @@ function getDateGroup(ms: number): DateGroup {
 
 function groupMeetings(
   meetings: MeetingRow[],
-): { label: DateGroup; meetings: MeetingRow[] }[] {
-  const groups: Record<DateGroup, MeetingRow[]> = {
+): { label: SidebarGroupLabel; meetings: MeetingRow[] }[] {
+  const groups: Record<DateBucket, MeetingRow[]> = {
     Today: [],
     Yesterday: [],
     Older: [],
@@ -71,25 +72,15 @@ function groupMeetings(
   for (const m of meetings) {
     groups[getDateGroup(m.created_at)].push(m);
   }
-  const order: DateGroup[] = ["Today", "Yesterday", "Older"];
-  const result = order
+  const order: DateBucket[] = ["Today", "Yesterday", "Older"];
+  const result: { label: SidebarGroupLabel; meetings: MeetingRow[] }[] = order
     .filter((label) => groups[label].length > 0)
     .map((label) => ({ label, meetings: groups[label] }));
   // When "Older" is the only section, display it as "Recents"
   if (result.length === 1 && result[0].label === "Older") {
-    result[0] = { ...result[0], label: "Recents" as DateGroup };
+    result[0] = { ...result[0], label: "Recents" };
   }
   return result;
-}
-
-function formatDate(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -179,9 +170,13 @@ function PageHeader({
 function MeetingHeaderTitle({
   info,
   onSave,
+  meetingId,
+  onDeleteMeeting,
 }: {
   info: MeetingTitleInfo | null;
   onSave: (title: string) => void;
+  meetingId: string;
+  onDeleteMeeting: (meetingId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
 
@@ -244,7 +239,7 @@ function MeetingHeaderTitle({
           {info.durationMs != null &&
             ` · ${formatTime(Math.floor(info.durationMs / 1000))}`}
         </span> */}
-        <MeetingMenu onDelete={() => onSave(info.title || "")} />
+        <MeetingMenu onDelete={() => onDeleteMeeting(meetingId)} />
       </div>
     </div>
   );
@@ -324,7 +319,12 @@ function LayoutContent({
   // Build header left content based on active view
   const headerLeft =
     activeView?.type === "meeting" ? (
-      <MeetingHeaderTitle info={meetingInfo} onSave={onSaveTitle} />
+      <MeetingHeaderTitle
+        info={meetingInfo}
+        onSave={onSaveTitle}
+        meetingId={activeView.id}
+        onDeleteMeeting={onDeleteMeeting}
+      />
     ) : activeView?.type === "settings" ? (
       <h1 className="text-sm font-semibold px-2 m-0">Settings</h1>
     ) : null;

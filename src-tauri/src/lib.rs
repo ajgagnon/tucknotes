@@ -33,6 +33,7 @@ pub fn run() {
         session_id: Mutex::new(None),
         started_at: Mutex::new(None),
         transcribe_task: Mutex::new(None),
+        finalize_in_progress: Arc::new(AtomicBool::new(false)),
     };
 
     #[cfg(not(target_os = "macos"))]

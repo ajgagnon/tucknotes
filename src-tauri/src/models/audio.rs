@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -27,6 +28,11 @@ pub struct RecordingStateEvent {
     pub recording: bool,
     pub meeting_id: Option<String>,
     pub elapsed_secs: u64,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct RecordingFinalizedEvent {
+    pub meeting_id: String,
 }
 
 pub struct AccumulatedAudio {
@@ -138,6 +144,7 @@ pub struct RecordingState {
     pub session_id: Mutex<Option<String>>,
     pub started_at: Mutex<Option<std::time::Instant>>,
     pub transcribe_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    pub finalize_in_progress: Arc<AtomicBool>,
 }
 
 #[cfg(not(target_os = "macos"))]

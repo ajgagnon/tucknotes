@@ -116,6 +116,8 @@ function AudioLevelProvider({ children }: { children: ReactNode }) {
 interface RecordingContextValue {
   recording: boolean;
   meetingId: string | null;
+  /** While set, persisted transcript for this meeting may still be catching up after stop. */
+  transcriptFinalizingMeetingId: string | null;
   elapsed: number;
   error: AppError | null;
   segments: TranscriptSegment[];
@@ -132,9 +134,15 @@ interface RecordingStateEvent {
   elapsed_secs: number;
 }
 
+interface RecordingFinalizedEvent {
+  meeting_id: string;
+}
+
 function RecordingProviderInner({ children }: { children: ReactNode }) {
   const [recording, setRecording] = useState(false);
   const [meetingId, setMeetingId] = useState<string | null>(null);
+  const [transcriptFinalizingMeetingId, setTranscriptFinalizingMeetingId] =
+    useState<string | null>(null);
   const { elapsed, startTimer, clearTimer } = useTimer();
   const [error, setError] = useState<AppError | null>(null);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
@@ -204,6 +212,29 @@ function RecordingProviderInner({ children }: { children: ReactNode }) {
     };
   }, [clearTimer, startTimer]);
 
+  useEffect(() => {
+    let mounted = true;
+    let unlisten: UnlistenFn | null = null;
+    (async () => {
+      const fn_ = await listen<RecordingFinalizedEvent>(
+        "recording-finalized",
+        (event) => {
+          if (!mounted) return;
+          const id = event.payload.meeting_id;
+          setTranscriptFinalizingMeetingId((cur) =>
+            cur === id ? null : cur,
+          );
+        },
+      );
+      if (mounted) unlisten = fn_;
+      else fn_();
+    })();
+    return () => {
+      mounted = false;
+      unlisten?.();
+    };
+  }, []);
+
   // Transcript event listener
   useEffect(() => {
     let mounted = true;
@@ -247,7 +278,10 @@ function RecordingProviderInner({ children }: { children: ReactNode }) {
 
   const stopRecording = useCallback(async () => {
     try {
-      await invoke("stop_recording");
+      const pending = await invoke<string | null>("stop_recording");
+      if (pending) {
+        setTranscriptFinalizingMeetingId(pending);
+      }
     } catch (e: unknown) {
       setError(toAppError(e));
     }
@@ -257,6 +291,7 @@ function RecordingProviderInner({ children }: { children: ReactNode }) {
     () => ({
       recording,
       meetingId,
+      transcriptFinalizingMeetingId,
       elapsed,
       error,
       segments,
@@ -267,6 +302,7 @@ function RecordingProviderInner({ children }: { children: ReactNode }) {
     [
       recording,
       meetingId,
+      transcriptFinalizingMeetingId,
       elapsed,
       error,
       segments,

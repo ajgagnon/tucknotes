@@ -15,6 +15,7 @@ mod macos {
     use std::time::Duration;
 
     use tauri::{Emitter, Manager};
+    use crate::models::RecordingFinalizedEvent;
     use tokio_util::sync::CancellationToken;
 
     use crate::errors::{lock_or_err, AppError};
@@ -288,6 +289,15 @@ mod macos {
             ));
         }
 
+        if state
+            .finalize_in_progress
+            .load(Ordering::SeqCst)
+        {
+            return Err(AppError::CaptureFailed(
+                "Still saving the previous recording. Try again in a moment.".into(),
+            ));
+        }
+
         let mut guard = lock_or_err(&state.capture)?;
         if guard.is_some() {
             return Err(AppError::CaptureFailed("Already recording".into()));
@@ -444,11 +454,60 @@ mod macos {
         Ok(meeting_id_for_return)
     }
 
+    /// Clears the PCM accumulator, ends the meeting in the database, re-enables meeting detection.
+    /// Returns the meeting id taken from `session_id` (if any).
+    fn finalize_session_after_transcribe(
+        recording_state: &RecordingState,
+        app: &tauri::AppHandle,
+    ) -> Result<Option<String>, AppError> {
+        match recording_state.accumulator.lock() {
+            Ok(mut acc) => *acc = PcmAccumulator::new(),
+            Err(e) => eprintln!("[stop_recording] accumulator lock poisoned: {e}"),
+        }
+
+        let meeting_id = lock_or_err(&recording_state.session_id)?.take();
+        let started_at = lock_or_err(&recording_state.started_at)?.take();
+
+        if let Some(ref mid) = meeting_id {
+            let duration_ms = started_at
+                .as_ref()
+                .map(|s| s.elapsed().as_millis() as i64)
+                .unwrap_or(0);
+            let db: &DatabaseState = app.state::<DatabaseState>().inner();
+            match db.conn.lock() {
+                Ok(conn) => {
+                    if let Err(e) = database::end_meeting(
+                        &conn,
+                        mid,
+                        database::now_unix_ms(),
+                        duration_ms,
+                    ) {
+                        eprintln!("[stop_recording] failed to end meeting {mid}: {e}");
+                    }
+                }
+                Err(e) => eprintln!("[stop_recording] db lock poisoned: {e}"),
+            }
+        }
+
+        {
+            let det: tauri::State<'_, MeetingDetectorState> = app.state();
+            det.recording_active.store(false, Ordering::SeqCst);
+        }
+
+        Ok(meeting_id)
+    }
+
     /// Core implementation of stop_recording for macOS.
+    ///
+    /// Returns `Some(meeting_id)` when transcript persistence continues in the background.
     pub(super) async fn do_stop_recording(
         state: tauri::State<'_, RecordingState>,
         app: tauri::AppHandle,
-    ) -> Result<(), AppError> {
+    ) -> Result<Option<String>, AppError> {
+        if state.finalize_in_progress.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+
         match state.cancel_token.lock() {
             Ok(mut token) => {
                 if let Some(token) = token.take() {
@@ -474,49 +533,52 @@ mod macos {
             vc_guard.take();
         }
 
-        // Await the transcribe task so final_flush completes with accumulator data intact
+        let pending_meeting_id = lock_or_err(&state.session_id)?.clone();
         let handle = lock_or_err(&state.transcribe_task)?.take();
+
         if let Some(handle) = handle {
-            if let Err(e) = handle.await {
-                eprintln!("[stop_recording] transcribe task panicked: {e}");
-            }
-        }
+            state.finalize_in_progress.store(true, Ordering::SeqCst);
+            let finalize_flag = Arc::clone(&state.finalize_in_progress);
+            let app_bg = app.clone();
+            let notify_meeting_id = pending_meeting_id.clone();
 
-        // Clear accumulator after final_flush has consumed remaining audio
-        match state.accumulator.lock() {
-            Ok(mut acc) => {
-                *acc = PcmAccumulator::new();
-            }
-            Err(e) => eprintln!("[stop_recording] accumulator lock poisoned: {e}"),
-        }
-
-        // End the meeting in the database
-        let meeting_id = lock_or_err(&state.session_id)?.take();
-        let started_at = lock_or_err(&state.started_at)?.take();
-        if let Some(mid) = meeting_id {
-            let duration_ms = started_at
-                .map(|s| s.elapsed().as_millis() as i64)
-                .unwrap_or(0);
-            let db: &DatabaseState = app.state::<DatabaseState>().inner();
-            match db.conn.lock() {
-                Ok(conn) => {
-                    if let Err(e) =
-                        database::end_meeting(&conn, &mid, database::now_unix_ms(), duration_ms)
-                    {
-                        eprintln!("[stop_recording] failed to end meeting {mid}: {e}");
+            tokio::spawn(async move {
+                struct ClearFinalizeFlag(Arc<AtomicBool>);
+                impl Drop for ClearFinalizeFlag {
+                    fn drop(&mut self) {
+                        self.0.store(false, Ordering::SeqCst);
                     }
                 }
-                Err(e) => eprintln!("[stop_recording] db lock poisoned: {e}"),
-            }
-        }
+                let _clear = ClearFinalizeFlag(Arc::clone(&finalize_flag));
 
-        // Re-enable meeting detection
-        {
-            let det: tauri::State<'_, MeetingDetectorState> = app.state();
-            det.recording_active.store(false, Ordering::SeqCst);
-        }
+                if let Err(e) = handle.await {
+                    eprintln!("[stop_recording] transcribe task panicked: {e}");
+                }
 
-        Ok(())
+                let recording_state: tauri::State<'_, RecordingState> = app_bg.state();
+
+                let meeting_id = match finalize_session_after_transcribe(&recording_state, &app_bg) {
+                    Ok(mid) => mid,
+                    Err(e) => {
+                        eprintln!("[stop_recording] finalize session after transcribe: {e}");
+                        None
+                    }
+                };
+
+                let finalized_id = meeting_id.or(notify_meeting_id);
+                if let Some(mid) = finalized_id {
+                    let _ = app_bg.emit(
+                        "recording-finalized",
+                        RecordingFinalizedEvent { meeting_id: mid },
+                    );
+                }
+            });
+
+            Ok(pending_meeting_id)
+        } else {
+            finalize_session_after_transcribe(&state, &app)?;
+            Ok(None)
+        }
     }
 }
 
@@ -556,10 +618,10 @@ pub async fn start_recording(
 pub async fn stop_recording(
     state: tauri::State<'_, RecordingState>,
     app: tauri::AppHandle,
-) -> Result<(), AppError> {
+) -> Result<Option<String>, AppError> {
     #[cfg(target_os = "macos")]
     {
-        macos::do_stop_recording(state, app.clone()).await?;
+        let pending = macos::do_stop_recording(state, app.clone()).await?;
         let _ = app.emit(
             "recording-state-changed",
             RecordingStateEvent {
@@ -568,7 +630,7 @@ pub async fn stop_recording(
                 elapsed_secs: 0,
             },
         );
-        Ok(())
+        Ok(pending)
     }
 
     #[cfg(not(target_os = "macos"))]

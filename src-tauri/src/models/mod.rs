@@ -4,8 +4,8 @@ pub mod meeting_detection;
 pub mod settings;
 
 pub use audio::{
-    AccumulatedAudio, AudioChunkEvent, AudioSource, PcmAccumulator, RecordingState,
-    RecordingStateEvent, TranscriptEvent,
+    AccumulatedAudio, AudioChunkEvent, AudioSource, PcmAccumulator, RecordingFinalizedEvent,
+    RecordingState, RecordingStateEvent, TranscriptEvent,
 };
 pub use llm::LlmModel;
 pub use settings::{AppSettings, DownloadProgress, ModelInfo, WhisperModel};
