@@ -74,6 +74,16 @@ pub fn open_microphone_settings() {
 }
 
 #[tauri::command]
+pub fn open_sound_settings() {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.sound")
+            .spawn();
+    }
+}
+
+#[tauri::command]
 pub fn check_accessibility_permission() -> bool {
     #[cfg(target_os = "macos")]
     {

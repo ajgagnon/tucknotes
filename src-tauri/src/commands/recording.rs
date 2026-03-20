@@ -22,7 +22,7 @@ mod macos {
     use crate::models::meeting_detection::MeetingDetectorState;
     use crate::models::{
         AccumulatedAudio, AudioChunkEvent, AudioSource, PcmAccumulator, RecordingState,
-        TranscriptEvent,
+        RecordingStateEvent, TranscriptEvent,
     };
     use crate::services::database::{self, DatabaseState};
     use crate::services::transcription::{TranscriptionService, TranscriptionState};
@@ -278,41 +278,49 @@ mod macos {
         transcribe_and_emit(items, false, service, app, &model_path, prev_texts, meeting_id).await;
     }
 
-    /// Core implementation of start_recording for macOS.
-    pub(super) async fn do_start_recording(
-        state: tauri::State<'_, RecordingState>,
-        app: tauri::AppHandle,
-    ) -> Result<String, AppError> {
-        if !unsafe { crate::services::permissions::CGPreflightScreenCaptureAccess() } {
-            return Err(AppError::PermissionDenied(
-                "Screen recording permission is required to capture audio.".into(),
-            ));
-        }
+    pub(super) fn snapshot_recording_state(
+        state: &RecordingState,
+    ) -> Result<RecordingStateEvent, AppError> {
+        let recording = lock_or_err(&state.capture)?.is_some();
+        let meeting_id = lock_or_err(&state.session_id)?.clone();
+        let paused = meeting_id.is_some()
+            && !recording
+            && !state.finalize_in_progress.load(Ordering::SeqCst);
+        let elapsed_secs = lock_or_err(&state.started_at)?
+            .map(|s| s.elapsed().as_secs())
+            .unwrap_or(0);
+        Ok(RecordingStateEvent {
+            recording,
+            paused,
+            meeting_id,
+            elapsed_secs,
+            reset_live_transcript: false,
+        })
+    }
 
-        if state
-            .finalize_in_progress
-            .load(Ordering::SeqCst)
-        {
-            return Err(AppError::CaptureFailed(
-                "Still saving the previous recording. Try again in a moment.".into(),
-            ));
-        }
-
+    /// Starts SCK + mic capture and the transcription loop. Caller must set `session_id` and
+    /// `started_at` before calling (and create the DB meeting row for new sessions).
+    async fn begin_capture_for_session(
+        state: &RecordingState,
+        app: &tauri::AppHandle,
+        meeting_id: &str,
+    ) -> Result<(), AppError> {
         let mut guard = lock_or_err(&state.capture)?;
         if guard.is_some() {
             return Err(AppError::CaptureFailed("Already recording".into()));
         }
 
-        // Shared channel that receives audio from both sources.
+        let wall_origin = lock_or_err(&state.started_at)?
+            .ok_or_else(|| AppError::CaptureFailed("Missing session clock".into()))?;
+        let wall_offset_secs = *lock_or_err(&state.wall_time_offset_secs)?;
+
         let (shared_tx, mut shared_rx) = tokio::sync::mpsc::channel(1024);
 
-        // 1. System audio via ScreenCaptureKit
         let (capture, mut sys_rx) = crate::services::audio_capture::AudioCapture::start()
             .map_err(|e| AppError::CaptureFailed(e.to_string()))?;
         *guard = Some(capture);
         drop(guard);
 
-        // Forward SCK system audio chunks into the shared channel
         let sys_tx = shared_tx.clone();
         tokio::task::spawn_blocking(move || {
             while let Some(chunk) = sys_rx.blocking_recv() {
@@ -320,9 +328,6 @@ mod macos {
             }
         });
 
-        // 2. Microphone via AVAudioEngine with VoiceProcessingIO.
-        //    Provides hardware-tuned AEC, noise suppression, AGC, and
-        //    enables the system mic mode picker (Voice Isolation / Wide Spectrum).
         let voice_cap = crate::services::voice_capture::VoiceCapture::start(shared_tx)
             .map_err(|e| AppError::CaptureFailed(format!("VoiceCapture: {e}")))?;
         {
@@ -333,23 +338,6 @@ mod macos {
         {
             let mut acc = lock_or_err(&state.accumulator)?;
             *acc = PcmAccumulator::new();
-        }
-
-        // Create a new meeting in the database
-        let meeting_id = uuid::Uuid::new_v4().to_string();
-        let now = database::now_unix_ms();
-        {
-            let db_state: tauri::State<'_, DatabaseState> = app.state::<DatabaseState>();
-            let conn = lock_or_err(&db_state.conn)?;
-            database::create_meeting(&conn, &meeting_id, "Recording", now)?;
-        }
-        {
-            let mut sid = lock_or_err(&state.session_id)?;
-            *sid = Some(meeting_id.clone());
-        }
-        {
-            let mut started = lock_or_err(&state.started_at)?;
-            *started = Some(std::time::Instant::now());
         }
 
         let accumulator = Arc::clone(&state.accumulator);
@@ -364,15 +352,10 @@ mod macos {
             .app_data_dir()
             .map_err(|e| AppError::IoError(e.to_string()))?;
 
-        // Task 1: Forward audio chunks as events and accumulate for transcription.
-        // Normalize timestamps to wall-clock seconds since recording start so
-        // system audio (CMSampleBuffer time) and mic (AVAudioTime sample count)
-        // share a common time base for proper interleaving.
         let app_for_chunks = app.clone();
-        let recording_epoch = std::time::Instant::now();
         tokio::task::spawn_blocking(move || {
             while let Some(chunk) = shared_rx.blocking_recv() {
-                let wall_ts = recording_epoch.elapsed().as_secs_f64();
+                let wall_ts = wall_offset_secs + wall_origin.elapsed().as_secs_f64();
                 let source_str = match chunk.source {
                     AudioSource::SystemAudio => "system",
                     AudioSource::Microphone => "microphone",
@@ -398,7 +381,6 @@ mod macos {
             }
         });
 
-        // Task 2: Sliding-window transcription loop
         let cancel = CancellationToken::new();
         {
             let mut token_guard = lock_or_err(&state.cancel_token)?;
@@ -406,12 +388,12 @@ mod macos {
         }
 
         let app_for_transcribe = app.clone();
-        let meeting_id_for_return = meeting_id.clone();
+        let meeting_id_owned = meeting_id.to_string();
         let handle = tokio::spawn(async move {
             let busy = Arc::new(AtomicBool::new(false));
             let prev_texts = Mutex::new(HashMap::<String, String>::new());
             let mut interval = tokio::time::interval(STEP_INTERVAL);
-            interval.tick().await; // skip immediate first tick
+            interval.tick().await;
 
             loop {
                 tokio::select! {
@@ -423,7 +405,7 @@ mod macos {
                             &base_dir,
                             &busy,
                             &prev_texts,
-                            &meeting_id,
+                            &meeting_id_owned,
                         ).await;
                     }
                     _ = cancel.cancelled() => {
@@ -433,7 +415,7 @@ mod macos {
                             &app_for_transcribe,
                             &base_dir,
                             &prev_texts,
-                            &meeting_id,
+                            &meeting_id_owned,
                         ).await;
                         break;
                     }
@@ -442,7 +424,89 @@ mod macos {
         });
         *lock_or_err(&state.transcribe_task)? = Some(handle);
 
-        // Suppress meeting detection overlay while recording
+        Ok(())
+    }
+
+    /// Core implementation of start_recording for macOS.
+    /// When `resume_meeting_id` is set, continues an existing meeting (reopens it in the DB).
+    pub(super) async fn do_start_recording(
+        state: &RecordingState,
+        app: tauri::AppHandle,
+        resume_meeting_id: Option<String>,
+    ) -> Result<String, AppError> {
+        if !unsafe { crate::services::permissions::CGPreflightScreenCaptureAccess() } {
+            return Err(AppError::PermissionDenied(
+                "Screen recording permission is required to capture audio.".into(),
+            ));
+        }
+
+        if state
+            .finalize_in_progress
+            .load(Ordering::SeqCst)
+        {
+            return Err(AppError::CaptureFailed(
+                "Still saving the previous recording. Try again in a moment.".into(),
+            ));
+        }
+
+        {
+            let guard = lock_or_err(&state.capture)?;
+            if guard.is_some() {
+                return Err(AppError::CaptureFailed("Already recording".into()));
+            }
+        }
+
+        let meeting_id = if let Some(existing_id) =
+            resume_meeting_id.filter(|s| !s.is_empty())
+        {
+            let db_state: tauri::State<'_, DatabaseState> = app.state::<DatabaseState>();
+            let conn = lock_or_err(&db_state.conn)?;
+            if !database::meeting_exists(&conn, &existing_id)? {
+                return Err(AppError::DatabaseError(format!(
+                    "Meeting not found: {existing_id}"
+                )));
+            }
+            database::reopen_meeting(&conn, &existing_id)?;
+            let max_ms = database::max_segment_timestamp_ms(&conn, &existing_id)?;
+            let offset_secs = (max_ms as f64) / 1000.0 + 0.001;
+            {
+                let mut w = lock_or_err(&state.wall_time_offset_secs)?;
+                *w = offset_secs;
+            }
+            {
+                let mut sid = lock_or_err(&state.session_id)?;
+                *sid = Some(existing_id.clone());
+            }
+            {
+                let mut started = lock_or_err(&state.started_at)?;
+                *started = Some(std::time::Instant::now());
+            }
+            existing_id
+        } else {
+            {
+                let mut w = lock_or_err(&state.wall_time_offset_secs)?;
+                *w = 0.0;
+            }
+            let new_id = uuid::Uuid::new_v4().to_string();
+            let now = database::now_unix_ms();
+            {
+                let db_state: tauri::State<'_, DatabaseState> = app.state::<DatabaseState>();
+                let conn = lock_or_err(&db_state.conn)?;
+                database::create_meeting(&conn, &new_id, "Recording", now)?;
+            }
+            {
+                let mut sid = lock_or_err(&state.session_id)?;
+                *sid = Some(new_id.clone());
+            }
+            {
+                let mut started = lock_or_err(&state.started_at)?;
+                *started = Some(std::time::Instant::now());
+            }
+            new_id
+        };
+
+        begin_capture_for_session(&state, &app, &meeting_id).await?;
+
         {
             let det: tauri::State<'_, MeetingDetectorState> = app.state();
             det.recording_active.store(true, Ordering::SeqCst);
@@ -451,7 +515,84 @@ mod macos {
             let _ = w.close();
         }
 
-        Ok(meeting_id_for_return)
+        Ok(meeting_id)
+    }
+
+    /// Pause capture and transcription without ending the meeting (for transcript UI).
+    pub(super) async fn do_pause_recording(state: &RecordingState) -> Result<(), AppError> {
+        if state.finalize_in_progress.load(Ordering::SeqCst) {
+            return Err(AppError::CaptureFailed(
+                "Cannot pause while saving recording.".into(),
+            ));
+        }
+
+        {
+            let guard = lock_or_err(&state.capture)?;
+            if guard.is_none() {
+                return Ok(());
+            }
+        }
+
+        match state.cancel_token.lock() {
+            Ok(mut token) => {
+                if let Some(token) = token.take() {
+                    token.cancel();
+                }
+            }
+            Err(e) => eprintln!("[pause_recording] cancel_token lock poisoned: {e}"),
+        }
+
+        {
+            let mut cap_guard = lock_or_err(&state.capture)?;
+            if let Some(mut capture) = cap_guard.take() {
+                capture
+                    .stop()
+                    .map_err(|e| AppError::CaptureFailed(e.to_string()))?;
+            }
+        }
+
+        {
+            let mut vc_guard = lock_or_err(&state.voice_capture)?;
+            vc_guard.take();
+        }
+
+        let handle = lock_or_err(&state.transcribe_task)?.take();
+        if let Some(handle) = handle {
+            if let Err(e) = handle.await {
+                eprintln!("[pause_recording] transcribe task panicked: {e}");
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(super) async fn do_resume_recording(
+        state: &RecordingState,
+        app: tauri::AppHandle,
+    ) -> Result<(), AppError> {
+        if state.finalize_in_progress.load(Ordering::SeqCst) {
+            return Err(AppError::CaptureFailed(
+                "Still saving the previous recording. Try again in a moment.".into(),
+            ));
+        }
+
+        {
+            let guard = lock_or_err(&state.capture)?;
+            if guard.is_some() {
+                return Ok(());
+            }
+        }
+
+        let meeting_id = lock_or_err(&state.session_id)?
+            .clone()
+            .ok_or_else(|| AppError::CaptureFailed("No meeting to resume".into()))?;
+
+        lock_or_err(&state.started_at)?
+            .ok_or_else(|| AppError::CaptureFailed("Missing session clock".into()))?;
+
+        begin_capture_for_session(&state, &app, &meeting_id).await?;
+
+        Ok(())
     }
 
     /// Clears the PCM accumulator, ends the meeting in the database, re-enables meeting detection.
@@ -469,18 +610,21 @@ mod macos {
         let started_at = lock_or_err(&recording_state.started_at)?.take();
 
         if let Some(ref mid) = meeting_id {
-            let duration_ms = started_at
+            let session_ms = started_at
                 .as_ref()
                 .map(|s| s.elapsed().as_millis() as i64)
                 .unwrap_or(0);
             let db: &DatabaseState = app.state::<DatabaseState>().inner();
             match db.conn.lock() {
                 Ok(conn) => {
+                    let prev_ms = database::meeting_recording_duration_ms(&conn, mid)
+                        .unwrap_or(0);
+                    let total_ms = prev_ms.saturating_add(session_ms);
                     if let Err(e) = database::end_meeting(
                         &conn,
                         mid,
                         database::now_unix_ms(),
-                        duration_ms,
+                        total_ms,
                     ) {
                         eprintln!("[stop_recording] failed to end meeting {mid}: {e}");
                     }
@@ -590,24 +734,21 @@ mod macos {
 pub async fn start_recording(
     state: tauri::State<'_, RecordingState>,
     app: tauri::AppHandle,
+    resume_meeting_id: Option<String>,
 ) -> Result<String, AppError> {
     #[cfg(target_os = "macos")]
     {
-        let id = macos::do_start_recording(state, app.clone()).await?;
-        let _ = app.emit(
-            "recording-state-changed",
-            RecordingStateEvent {
-                recording: true,
-                meeting_id: Some(id.clone()),
-                elapsed_secs: 0,
-            },
-        );
+        let reset_live_transcript = resume_meeting_id.as_ref().map_or(true, |s| s.is_empty());
+        let id = macos::do_start_recording(&state, app.clone(), resume_meeting_id).await?;
+        let mut snap = macos::snapshot_recording_state(&state)?;
+        snap.reset_live_transcript = reset_live_transcript;
+        let _ = app.emit("recording-state-changed", snap);
         Ok(id)
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (&state, &app);
+        let _ = (&state, &app, resume_meeting_id);
         Err(AppError::NotSupported(
             "Not supported on this platform".into(),
         ))
@@ -626,8 +767,10 @@ pub async fn stop_recording(
             "recording-state-changed",
             RecordingStateEvent {
                 recording: false,
+                paused: false,
                 meeting_id: None,
                 elapsed_secs: 0,
+                reset_live_transcript: false,
             },
         );
         Ok(pending)
@@ -648,19 +791,7 @@ pub async fn get_recording_state(
 ) -> Result<RecordingStateEvent, AppError> {
     #[cfg(target_os = "macos")]
     {
-        use crate::errors::lock_or_err;
-
-        let recording = lock_or_err(&state.capture)?.is_some();
-        let meeting_id = lock_or_err(&state.session_id)?.clone();
-        let elapsed_secs = lock_or_err(&state.started_at)?
-            .map(|s| s.elapsed().as_secs())
-            .unwrap_or(0);
-
-        Ok(RecordingStateEvent {
-            recording,
-            meeting_id,
-            elapsed_secs,
-        })
+        macos::snapshot_recording_state(&state)
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -668,9 +799,55 @@ pub async fn get_recording_state(
         let _ = &state;
         Ok(RecordingStateEvent {
             recording: false,
+            paused: false,
             meeting_id: None,
             elapsed_secs: 0,
+            reset_live_transcript: false,
         })
+    }
+}
+
+#[tauri::command]
+pub async fn pause_recording(
+    state: tauri::State<'_, RecordingState>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::do_pause_recording(&state).await?;
+        let snap = macos::snapshot_recording_state(&state)?;
+        let _ = app.emit("recording-state-changed", snap);
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (&state, &app);
+        Err(AppError::NotSupported(
+            "Not supported on this platform".into(),
+        ))
+    }
+}
+
+#[tauri::command]
+pub async fn resume_recording(
+    state: tauri::State<'_, RecordingState>,
+    app: tauri::AppHandle,
+) -> Result<(), AppError> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::do_resume_recording(&state, app.clone()).await?;
+        let snap = macos::snapshot_recording_state(&state)?;
+        let _ = app.emit("recording-state-changed", snap);
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (&state, &app);
+        Err(AppError::NotSupported(
+            "Not supported on this platform".into(),
+        ))
     }
 }
 

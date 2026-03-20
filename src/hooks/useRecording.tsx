@@ -51,28 +51,29 @@ interface AudioLevelContextValue {
 const AudioLevelContext = createContext<AudioLevelContextValue | null>(null);
 
 function AudioLevelProvider({ children }: { children: ReactNode }) {
-  const { recording } = useRecording();
+  const { recording, paused } = useRecording();
+  const levelsActive = recording && !paused;
   const [systemLevel, setSystemLevel] = useState(0);
   const [micLevel, setMicLevel] = useState(0);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
   // Reset levels when recording stops
   useEffect(() => {
-    if (!recording) {
+    if (!levelsActive) {
       setSystemLevel(0);
       setMicLevel(0);
     }
-  }, [recording]);
+  }, [levelsActive]);
 
   // Time-based decay so levels drop consistently regardless of event frequency
   useEffect(() => {
-    if (!recording) return;
+    if (!levelsActive) return;
     const decay = setInterval(() => {
       setSystemLevel((l) => l * 0.85);
       setMicLevel((l) => l * 0.85);
     }, 150);
     return () => clearInterval(decay);
-  }, [recording]);
+  }, [levelsActive]);
 
   // Audio-chunk event listener
   useEffect(() => {
@@ -114,7 +115,10 @@ function AudioLevelProvider({ children }: { children: ReactNode }) {
 // ---------------------------------------------------------------------------
 
 interface RecordingContextValue {
+  /** True while audio capture is running (not paused). */
   recording: boolean;
+  /** True when a meeting session is open but capture is paused (e.g. transcript sheet). */
+  paused: boolean;
   meetingId: string | null;
   /** While set, persisted transcript for this meeting may still be catching up after stop. */
   transcriptFinalizingMeetingId: string | null;
@@ -122,16 +126,23 @@ interface RecordingContextValue {
   error: AppError | null;
   segments: TranscriptSegment[];
   provisional: Record<string, TranscriptSegment>;
-  startRecording: () => Promise<string>;
+  startRecording: (resumeMeetingId?: string | null) => Promise<string>;
   stopRecording: () => Promise<void>;
+  pauseRecording: () => Promise<void>;
+  resumeRecording: () => Promise<void>;
+  /** Replace live transcript (e.g. hydrate from a resumed meeting's saved segments). */
+  seedLiveTranscript: (segments: TranscriptSegment[]) => void;
 }
 
 const RecordingContext = createContext<RecordingContextValue | null>(null);
 
 interface RecordingStateEvent {
   recording: boolean;
+  paused: boolean;
   meeting_id: string | null;
   elapsed_secs: number;
+  /** When false, keep existing live segments (resumed meeting). */
+  reset_live_transcript?: boolean;
 }
 
 interface RecordingFinalizedEvent {
@@ -140,6 +151,7 @@ interface RecordingFinalizedEvent {
 
 function RecordingProviderInner({ children }: { children: ReactNode }) {
   const [recording, setRecording] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [meetingId, setMeetingId] = useState<string | null>(null);
   const [transcriptFinalizingMeetingId, setTranscriptFinalizingMeetingId] =
     useState<string | null>(null);
@@ -150,20 +162,20 @@ function RecordingProviderInner({ children }: { children: ReactNode }) {
     Record<string, TranscriptSegment>
   >({});
 
-  const recordingRef = useRef(false);
+  const sessionActiveRef = useRef(false);
 
-  // Keep ref in sync with state so event handlers see latest value
   useEffect(() => {
-    recordingRef.current = recording;
-  }, [recording]);
+    sessionActiveRef.current = recording || paused;
+  }, [recording, paused]);
 
   // Sync recording state from backend on mount (handles window opened mid-recording)
   useEffect(() => {
     (async () => {
       try {
         const state = await invoke<RecordingStateEvent>("get_recording_state");
-        if (state.recording) {
-          setRecording(true);
+        if (state.recording || state.paused) {
+          setRecording(state.recording);
+          setPaused(state.paused);
           setMeetingId(state.meeting_id);
           startTimer(state.elapsed_secs);
         }
@@ -184,23 +196,35 @@ function RecordingProviderInner({ children }: { children: ReactNode }) {
         (event) => {
           if (!mounted) return;
           const {
-            recording: isRecording,
+            recording: isCapturing,
+            paused: isPaused,
             meeting_id,
             elapsed_secs,
+            reset_live_transcript: resetTranscript,
           } = event.payload;
 
-          if (isRecording && !recordingRef.current) {
-            // Transitioning to recording
-            setRecording(true);
-            setMeetingId(meeting_id);
-            setSegments([]);
-            setProvisional({});
+          const wasSession = sessionActiveRef.current;
+          const nowSession = isCapturing || isPaused;
+
+          setRecording(isCapturing);
+          setPaused(isPaused);
+
+          if (nowSession) {
+            if (meeting_id != null) setMeetingId(meeting_id);
             startTimer(elapsed_secs);
-          } else if (!isRecording && recordingRef.current) {
-            // Transitioning to not recording
-            setRecording(false);
+            if (
+              !wasSession &&
+              (resetTranscript === undefined || resetTranscript === true)
+            ) {
+              setSegments([]);
+              setProvisional({});
+            }
+          } else {
+            setMeetingId(null);
             clearTimer();
           }
+
+          sessionActiveRef.current = nowSession;
         },
       );
       if (mounted) unlisten = fn_;
@@ -266,15 +290,22 @@ function RecordingProviderInner({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const startRecording = useCallback(async (): Promise<string> => {
-    setError(null);
-    try {
-      return await invoke<string>("start_recording");
-    } catch (e: unknown) {
-      setError(toAppError(e));
-      throw e;
-    }
-  }, []);
+  const startRecording = useCallback(
+    async (resumeMeetingId?: string | null): Promise<string> => {
+      setError(null);
+      try {
+        const args =
+          resumeMeetingId != null && resumeMeetingId !== ""
+            ? { resumeMeetingId }
+            : {};
+        return await invoke<string>("start_recording", args);
+      } catch (e: unknown) {
+        setError(toAppError(e));
+        throw e;
+      }
+    },
+    [],
+  );
 
   const stopRecording = useCallback(async () => {
     try {
@@ -287,9 +318,33 @@ function RecordingProviderInner({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const pauseRecording = useCallback(async () => {
+    setError(null);
+    try {
+      await invoke("pause_recording");
+    } catch (e: unknown) {
+      setError(toAppError(e));
+    }
+  }, []);
+
+  const resumeRecording = useCallback(async () => {
+    setError(null);
+    try {
+      await invoke("resume_recording");
+    } catch (e: unknown) {
+      setError(toAppError(e));
+    }
+  }, []);
+
+  const seedLiveTranscript = useCallback((next: TranscriptSegment[]) => {
+    setSegments(next);
+    setProvisional({});
+  }, []);
+
   const value = useMemo(
     () => ({
       recording,
+      paused,
       meetingId,
       transcriptFinalizingMeetingId,
       elapsed,
@@ -298,9 +353,13 @@ function RecordingProviderInner({ children }: { children: ReactNode }) {
       provisional,
       startRecording,
       stopRecording,
+      pauseRecording,
+      resumeRecording,
+      seedLiveTranscript,
     }),
     [
       recording,
+      paused,
       meetingId,
       transcriptFinalizingMeetingId,
       elapsed,
@@ -309,6 +368,9 @@ function RecordingProviderInner({ children }: { children: ReactNode }) {
       provisional,
       startRecording,
       stopRecording,
+      pauseRecording,
+      resumeRecording,
+      seedLiveTranscript,
     ],
   );
 

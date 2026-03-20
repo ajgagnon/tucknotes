@@ -8,17 +8,20 @@ import { MeetingDetailView } from "./MeetingDetailView";
 interface MeetingsViewProps {
   meetingId: string;
   onTitleChange?: (info: MeetingTitleInfo) => void;
+  onRecordingStarted?: (meetingId: string) => void;
 }
 
 export default function MeetingsView({
   meetingId,
   onTitleChange,
+  onRecordingStarted,
 }: MeetingsViewProps) {
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [loading, setLoading] = useState(true);
 
   const {
     recording,
+    paused,
     meetingId: recordingMeetingId,
     segments: liveSegments,
     provisional,
@@ -26,7 +29,9 @@ export default function MeetingsView({
   } = useRecording();
 
   const isLiveRecording =
-    recording && detail != null && recordingMeetingId === detail.meeting.id;
+    (recording || paused) &&
+    detail != null &&
+    recordingMeetingId === detail.meeting.id;
 
   const openMeeting = useCallback(async (id: string) => {
     setLoading(true);
@@ -85,6 +90,7 @@ export default function MeetingsView({
       provisional={provisional}
       error={error}
       onTitleChange={onTitleChange}
+      onRecordingStarted={onRecordingStarted}
     />
   );
 }

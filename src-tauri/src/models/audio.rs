@@ -25,9 +25,14 @@ pub struct TranscriptEvent {
 
 #[derive(Clone, serde::Serialize)]
 pub struct RecordingStateEvent {
+    /// True while system + mic capture is running (audio flowing).
     pub recording: bool,
+    /// True when a meeting session exists but capture is stopped (e.g. transcript sheet pause).
+    pub paused: bool,
     pub meeting_id: Option<String>,
     pub elapsed_secs: u64,
+    /// When false, UI should keep existing live transcript segments (resumed meeting).
+    pub reset_live_transcript: bool,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -143,6 +148,8 @@ pub struct RecordingState {
     pub cancel_token: Mutex<Option<tokio_util::sync::CancellationToken>>,
     pub session_id: Mutex<Option<String>>,
     pub started_at: Mutex<Option<std::time::Instant>>,
+    /// Added to capture timestamps when resuming a meeting so new audio sorts after existing segments.
+    pub wall_time_offset_secs: Mutex<f64>,
     pub transcribe_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub finalize_in_progress: Arc<AtomicBool>,
 }

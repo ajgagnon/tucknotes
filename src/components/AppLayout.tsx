@@ -92,11 +92,13 @@ function HeaderControls({
 }: {
   onStartRecording: (meetingId: string) => void;
 }) {
-  const { recording, startRecording, stopRecording, elapsed } = useRecording();
+  const { recording, paused, startRecording, stopRecording, elapsed } =
+    useRecording();
   const { systemLevel, micLevel } = useAudioLevels();
+  const sessionActive = recording || paused;
 
   const handleClick = async () => {
-    if (recording) {
+    if (sessionActive) {
       await stopRecording();
     } else {
       try {
@@ -110,21 +112,23 @@ function HeaderControls({
 
   return (
     <div className="flex items-center gap-2">
-      {recording && (
+      {sessionActive && (
         <>
-          <AudioVisualizer systemLevel={systemLevel} micLevel={micLevel} />
+          {recording && (
+            <AudioVisualizer systemLevel={systemLevel} micLevel={micLevel} />
+          )}
           <span className="text-xs tabular-nums text-danger font-medium">
             {formatTime(elapsed)}
           </span>
         </>
       )}
       <Button
-        variant={recording ? "destructive" : "default"}
+        variant={sessionActive ? "destructive" : "default"}
         className="rounded-full"
         onClick={handleClick}
       >
         <Mic className="size-3.5" />
-        {recording ? "Stop Recording" : "Start Recording"}
+        {sessionActive ? "Stop Recording" : "Start Recording"}
       </Button>
     </div>
   );
@@ -344,6 +348,7 @@ function LayoutContent({
           <MeetingsView
             meetingId={activeView.id}
             onTitleChange={onTitleChange}
+            onRecordingStarted={onStartRecording}
           />
         )}
         {activeView?.type === "settings" && <SettingsView />}
