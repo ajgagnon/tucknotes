@@ -27,7 +27,6 @@ import {
   useRecording,
   useAudioLevels,
 } from "@/hooks/useRecording";
-import { formatTime } from "@/lib/formatTime";
 import MeetingsView, {
   type MeetingRow,
   type MeetingTitleInfo,
@@ -84,53 +83,64 @@ function groupMeetings(
 }
 
 // ---------------------------------------------------------------------------
-// Header controls (recording button + audio visualizer)
+// Header controls (global start / navigate-to-active-recording)
 // ---------------------------------------------------------------------------
 
 function HeaderControls({
+  meetings,
   onStartRecording,
+  onNavigateToActiveRecording,
 }: {
+  meetings: MeetingRow[];
   onStartRecording: (meetingId: string) => void;
+  onNavigateToActiveRecording: (meetingId: string) => void;
 }) {
-  const { recording, paused, startRecording, stopRecording, elapsed } =
-    useRecording();
+  const { recording, paused, startRecording, meetingId } = useRecording();
   const { systemLevel, micLevel } = useAudioLevels();
   const sessionActive = recording || paused;
+  const levelsInButton = recording && !paused;
+
+  const activeTitle =
+    meetingId != null
+      ? (meetings.find((m) => m.id === meetingId)?.title?.trim() ||
+          "Untitled")
+      : "Untitled";
 
   const handleClick = async () => {
     if (sessionActive) {
-      await stopRecording();
-    } else {
-      try {
-        const meetingId = await startRecording();
-        onStartRecording(meetingId);
-      } catch {
-        // Error is already set in context by startRecording
+      if (meetingId != null) {
+        onNavigateToActiveRecording(meetingId);
       }
+      return;
+    }
+    try {
+      const id = await startRecording();
+      onStartRecording(id);
+    } catch {
+      // Error is already set in context by startRecording
     }
   };
 
   return (
-    <div className="flex items-center gap-2">
-      {sessionActive && (
-        <>
-          {recording && (
-            <AudioVisualizer systemLevel={systemLevel} micLevel={micLevel} />
-          )}
-          <span className="text-xs tabular-nums text-danger font-medium">
-            {formatTime(elapsed)}
-          </span>
-        </>
+    <Button
+      variant={sessionActive ? "outline" : "default"}
+      className="max-w-[min(100%,14rem)] rounded-full gap-2"
+      title={sessionActive ? activeTitle : undefined}
+      onClick={() => void handleClick()}
+    >
+      {levelsInButton ? (
+        <AudioVisualizer
+          systemLevel={systemLevel}
+          micLevel={micLevel}
+          barClassName="bg-danger"
+        />
+      ) : (
+        <Mic className="size-3.5 shrink-0" />
       )}
-      <Button
-        variant={sessionActive ? "destructive" : "default"}
-        className="rounded-full"
-        onClick={handleClick}
-      >
-        <Mic className="size-3.5" />
-        {sessionActive ? "Stop Recording" : "Start Recording"}
-      </Button>
-    </div>
+      <span className="truncate">
+        {sessionActive ? activeTitle : "New Meeting"}
+      </span>
+    </Button>
   );
 }
 
@@ -306,7 +316,9 @@ function MeetingMenu({ onDelete }: { onDelete: () => void }) {
 function LayoutContent({
   activeView,
   onDrag,
+  meetings,
   onStartRecording,
+  onNavigateToActiveRecording,
   onDeleteMeeting,
   onTitleChange,
   meetingInfo,
@@ -314,7 +326,9 @@ function LayoutContent({
 }: {
   activeView: ActiveView;
   onDrag: (e: React.MouseEvent) => void;
+  meetings: MeetingRow[];
   onStartRecording: (meetingId: string) => void;
+  onNavigateToActiveRecording: (meetingId: string) => void;
   onDeleteMeeting: (meetingId: string) => void;
   onTitleChange: (info: MeetingTitleInfo) => void;
   meetingInfo: MeetingTitleInfo | null;
@@ -336,7 +350,11 @@ function LayoutContent({
   // Build header right content
   const headerRight = (
     <>
-      <HeaderControls onStartRecording={onStartRecording} />
+      <HeaderControls
+        meetings={meetings}
+        onStartRecording={onStartRecording}
+        onNavigateToActiveRecording={onNavigateToActiveRecording}
+      />
     </>
   );
 
@@ -443,6 +461,10 @@ function AppLayout() {
     },
     [loadMeetings],
   );
+
+  const handleNavigateToActiveRecording = useCallback((meetingId: string) => {
+    setActiveView({ type: "meeting", id: meetingId });
+  }, []);
 
   const handleDeleteMeeting = useCallback(
     async (meetingId: string) => {
@@ -565,7 +587,9 @@ function AppLayout() {
           <LayoutContent
             activeView={activeView}
             onDrag={onDrag}
+            meetings={meetings}
             onStartRecording={handleStartRecording}
+            onNavigateToActiveRecording={handleNavigateToActiveRecording}
             onDeleteMeeting={handleDeleteMeeting}
             onTitleChange={handleTitleChange}
             meetingInfo={meetingInfo}

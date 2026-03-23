@@ -49,7 +49,6 @@ export function MeetingDetailView({
     recording,
     paused,
     transcriptFinalizingMeetingId,
-    pauseRecording,
     resumeRecording,
     stopRecording,
     startRecording,
@@ -57,6 +56,9 @@ export function MeetingDetailView({
   } = useRecording();
   const transcriptFinalizing =
     transcriptFinalizingMeetingId === detail.meeting.id;
+
+  const capturingThisMeeting =
+    isLiveRecording && recording && !paused;
 
   const {
     summarizing,
@@ -74,42 +76,35 @@ export function MeetingDetailView({
     }
   }, [liveSegments, provisional, isLiveRecording, transcriptOpen]);
 
-  useEffect(() => {
-    if (!transcriptOpen || !isLiveRecording || !recording || paused) return;
-    void pauseRecording();
-  }, [transcriptOpen, isLiveRecording, recording, paused, pauseRecording]);
-
-  const handleTranscriptOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open && isLiveRecording) {
-        void resumeRecording();
-      }
-      setTranscriptOpen(open);
-    },
-    [isLiveRecording, resumeRecording],
-  );
+  const handleTranscriptOpenChange = useCallback((open: boolean) => {
+    setTranscriptOpen(open);
+  }, []);
 
   const handleFooterPrimaryAction = useCallback(async () => {
     try {
-      if (recording) {
+      if (isLiveRecording && recording) {
         await stopRecording();
         setTranscriptOpen(false);
         return;
       }
-      if (isLiveRecording) {
+      if (isLiveRecording && paused) {
         await resumeRecording();
-      } else {
-        const id = await startRecording(detail.meeting.id);
-        onRecordingStarted?.(id);
-        seedLiveTranscript(
-          detail.segments.map((s) => ({
-            text: s.text,
-            source: s.source,
-            timestamp_ms: s.timestamp_ms,
-            is_provisional: false,
-          })),
-        );
+        setTranscriptOpen(false);
+        return;
       }
+      if (!isLiveRecording && (recording || paused)) {
+        return;
+      }
+      const id = await startRecording(detail.meeting.id);
+      onRecordingStarted?.(id);
+      seedLiveTranscript(
+        detail.segments.map((s) => ({
+          text: s.text,
+          source: s.source,
+          timestamp_ms: s.timestamp_ms,
+          is_provisional: false,
+        })),
+      );
       setTranscriptOpen(false);
     } catch {
       /* error surfaced via context */
@@ -119,12 +114,21 @@ export function MeetingDetailView({
     detail.segments,
     isLiveRecording,
     onRecordingStarted,
+    paused,
     recording,
     resumeRecording,
     seedLiveTranscript,
     startRecording,
     stopRecording,
   ]);
+
+  const handleFabStopRecording = useCallback(async () => {
+    try {
+      await stopRecording();
+    } catch {
+      /* error surfaced via context */
+    }
+  }, [stopRecording]);
 
   const summaryBody = summarizing ? (
     <div className="text-sm leading-relaxed">
@@ -190,7 +194,7 @@ export function MeetingDetailView({
           <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
             <p className="text-sm text-muted-foreground">
               {paused
-                ? "Recording is paused while the transcript is open. Tap Resume below to continue."
+                ? "Recording is paused. Tap Resume to continue."
                 : "Tap the button below to open the live transcript."}
             </p>
           </div>
@@ -209,7 +213,10 @@ export function MeetingDetailView({
           className="absolute bottom-1 right-0 z-10"
           open={transcriptOpen}
           onOpenChange={handleTranscriptOpenChange}
-          capturing={recording}
+          capturing={capturingThisMeeting}
+          onStopRecording={
+            isLiveRecording ? handleFabStopRecording : undefined
+          }
         />
       </div>
 
@@ -238,17 +245,40 @@ export function MeetingDetailView({
             )}
           </div>
           <SheetFooter className="mt-0 shrink-0 flex-row items-center justify-between gap-3 border-t px-4 py-3 sm:flex-row">
-            <button
-              type="button"
-              onClick={() => void handleFooterPrimaryAction()}
-              className={
-                recording
-                  ? "text-sm font-medium text-danger hover:underline"
-                  : "text-sm font-medium text-success hover:underline"
-              }
-            >
-              {recording ? "Stop recording" : "Resume"}
-            </button>
+            <div className="min-w-0 flex-1">
+              {isLiveRecording && recording && (
+                <button
+                  type="button"
+                  onClick={() => void handleFooterPrimaryAction()}
+                  className="text-sm font-medium text-danger hover:underline"
+                >
+                  Stop recording
+                </button>
+              )}
+              {isLiveRecording && paused && (
+                <button
+                  type="button"
+                  onClick={() => void handleFooterPrimaryAction()}
+                  className="text-sm font-medium text-success hover:underline"
+                >
+                  Resume
+                </button>
+              )}
+              {!isLiveRecording && !(recording || paused) && (
+                <button
+                  type="button"
+                  onClick={() => void handleFooterPrimaryAction()}
+                  className="text-sm font-medium text-success hover:underline"
+                >
+                  Resume
+                </button>
+              )}
+              {!isLiveRecording && (recording || paused) && (
+                <p className="text-xs text-muted-foreground">
+                  Another meeting is being recorded.
+                </p>
+              )}
+            </div>
             <Button
               type="button"
               variant="ghost"
