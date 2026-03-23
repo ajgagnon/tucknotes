@@ -107,6 +107,47 @@ pub fn end_meeting(
     Ok(())
 }
 
+/// Clears `ended_at` so a stopped meeting can receive more recording (resume).
+pub fn reopen_meeting(conn: &Connection, id: &str) -> Result<(), AppError> {
+    let n = conn.execute(
+        "UPDATE meetings SET ended_at = NULL WHERE id = ?1",
+        rusqlite::params![id],
+    )?;
+    if n == 0 {
+        return Err(AppError::DatabaseError(format!("Meeting not found: {id}")));
+    }
+    Ok(())
+}
+
+pub fn meeting_exists(conn: &Connection, id: &str) -> Result<bool, AppError> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM meetings WHERE id = ?1",
+        [id],
+        |row| row.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+/// Largest `timestamp_ms` among transcript segments (0 if none).
+pub fn max_segment_timestamp_ms(conn: &Connection, meeting_id: &str) -> Result<i64, AppError> {
+    conn.query_row(
+        "SELECT COALESCE(MAX(timestamp_ms), 0) FROM transcript_segments WHERE meeting_id = ?1",
+        [meeting_id],
+        |row| row.get(0),
+    )
+    .map_err(Into::into)
+}
+
+/// Stored cumulative recording duration (0 when NULL).
+pub fn meeting_recording_duration_ms(conn: &Connection, id: &str) -> Result<i64, AppError> {
+    conn.query_row(
+        "SELECT COALESCE(duration_ms, 0) FROM meetings WHERE id = ?1",
+        [id],
+        |row| row.get(0),
+    )
+    .map_err(Into::into)
+}
+
 pub fn update_meeting_summary(
     conn: &Connection,
     id: &str,
@@ -289,6 +330,22 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn reopen_meeting_and_duration_queries() {
+        let conn = open_db_memory().unwrap();
+        create_meeting(&conn, "m", "M", 1).unwrap();
+        insert_segment(&conn, "m", "a", "system", 5000, None, 2).unwrap();
+        assert_eq!(max_segment_timestamp_ms(&conn, "m").unwrap(), 5000);
+        assert_eq!(meeting_recording_duration_ms(&conn, "m").unwrap(), 0);
+        end_meeting(&conn, "m", 10, 3000).unwrap();
+        assert_eq!(meeting_recording_duration_ms(&conn, "m").unwrap(), 3000);
+        reopen_meeting(&conn, "m").unwrap();
+        let (meeting, _) = get_meeting_with_segments(&conn, "m").unwrap();
+        assert_eq!(meeting.ended_at, None);
+        assert!(meeting_exists(&conn, "m").unwrap());
+        assert!(!meeting_exists(&conn, "missing").unwrap());
     }
 
     #[test]

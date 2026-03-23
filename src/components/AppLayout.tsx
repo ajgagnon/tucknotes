@@ -3,7 +3,15 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { FileText, Mic, Settings, Clock, Trash2, MoreVertical } from "lucide-react";
+import {
+  FileText,
+  Mic,
+  Settings,
+  Clock,
+  Trash2,
+  MoreVertical,
+  Search,
+} from "lucide-react";
 import {
   SidebarProvider,
   Sidebar,
@@ -27,15 +35,22 @@ import {
   useRecording,
   useAudioLevels,
 } from "@/hooks/useRecording";
-import { formatTime } from "@/lib/formatTime";
 import MeetingsView, {
   type MeetingRow,
   type MeetingTitleInfo,
   type SummarizationQueue,
-} from "./MeetingsView";
+} from "./MeetingView";
 import SettingsView from "./SettingsView";
 import AudioVisualizer from "./AudioVisualizer";
 import { Button } from "./ui/button";
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "./ui/command";
 
 type ActiveView =
   | { type: "meeting"; id: string }
@@ -48,9 +63,10 @@ const appWindow = getCurrentWindow();
 // Date grouping helpers
 // ---------------------------------------------------------------------------
 
-type DateGroup = "Today" | "Yesterday" | "Older" | "Recents";
+type DateBucket = "Today" | "Yesterday" | "Older";
+type SidebarGroupLabel = DateBucket | "Recents";
 
-function getDateGroup(ms: number): DateGroup {
+function getDateGroup(ms: number): DateBucket {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const yesterday = new Date(today.getTime() - 86400000);
@@ -62,8 +78,8 @@ function getDateGroup(ms: number): DateGroup {
 
 function groupMeetings(
   meetings: MeetingRow[],
-): { label: DateGroup; meetings: MeetingRow[] }[] {
-  const groups: Record<DateGroup, MeetingRow[]> = {
+): { label: SidebarGroupLabel; meetings: MeetingRow[] }[] {
+  const groups: Record<DateBucket, MeetingRow[]> = {
     Today: [],
     Yesterday: [],
     Older: [],
@@ -71,71 +87,76 @@ function groupMeetings(
   for (const m of meetings) {
     groups[getDateGroup(m.created_at)].push(m);
   }
-  const order: DateGroup[] = ["Today", "Yesterday", "Older"];
-  const result = order
+  const order: DateBucket[] = ["Today", "Yesterday", "Older"];
+  const result: { label: SidebarGroupLabel; meetings: MeetingRow[] }[] = order
     .filter((label) => groups[label].length > 0)
     .map((label) => ({ label, meetings: groups[label] }));
   // When "Older" is the only section, display it as "Recents"
   if (result.length === 1 && result[0].label === "Older") {
-    result[0] = { ...result[0], label: "Recents" as DateGroup };
+    result[0] = { ...result[0], label: "Recents" };
   }
   return result;
 }
 
-function formatDate(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
 // ---------------------------------------------------------------------------
-// Header controls (recording button + audio visualizer)
+// Header controls (global start / navigate-to-active-recording)
 // ---------------------------------------------------------------------------
 
 function HeaderControls({
+  meetings,
   onStartRecording,
+  onNavigateToActiveRecording,
 }: {
+  meetings: MeetingRow[];
   onStartRecording: (meetingId: string) => void;
+  onNavigateToActiveRecording: (meetingId: string) => void;
 }) {
-  const { recording, startRecording, stopRecording, elapsed } = useRecording();
+  const { recording, paused, startRecording, meetingId } = useRecording();
   const { systemLevel, micLevel } = useAudioLevels();
+  const sessionActive = recording || paused;
+  const levelsInButton = recording && !paused;
+
+  const activeTitle =
+    meetingId != null
+      ? (meetings.find((m) => m.id === meetingId)?.title?.trim() ||
+          "Untitled")
+      : "Untitled";
 
   const handleClick = async () => {
-    if (recording) {
-      await stopRecording();
-    } else {
-      try {
-        const meetingId = await startRecording();
-        onStartRecording(meetingId);
-      } catch {
-        // Error is already set in context by startRecording
+    if (sessionActive) {
+      if (meetingId != null) {
+        onNavigateToActiveRecording(meetingId);
       }
+      return;
+    }
+    try {
+      const id = await startRecording();
+      onStartRecording(id);
+    } catch {
+      // Error is already set in context by startRecording
     }
   };
 
   return (
-    <div className="flex items-center gap-2">
-      {recording && (
-        <>
-          <AudioVisualizer systemLevel={systemLevel} micLevel={micLevel} />
-          <span className="text-xs tabular-nums text-danger font-medium">
-            {formatTime(elapsed)}
-          </span>
-        </>
+    <Button
+      variant={sessionActive ? "outline" : "default"}
+      className="w-full justify-start gap-2 rounded-full"
+      title={sessionActive ? activeTitle : undefined}
+      onClick={() => void handleClick()}
+    >
+      {levelsInButton ? (
+        <AudioVisualizer
+          systemLevel={systemLevel}
+          micLevel={micLevel}
+          barClassName="bg-danger"
+        />
+      ) : (
+        <Mic className="size-3.5 shrink-0" />
       )}
-      <Button
-        variant={recording ? "destructive" : "default"}
-        className="rounded-full"
-        onClick={handleClick}
-      >
-        <Mic className="size-3.5" />
-        {recording ? "Stop Recording" : "Start Recording"}
-      </Button>
-    </div>
+      <span className="truncate">
+        {sessionActive ? activeTitle : "New Meeting"}
+      </span>
+    </Button>
   );
 }
 
@@ -179,9 +200,13 @@ function PageHeader({
 function MeetingHeaderTitle({
   info,
   onSave,
+  meetingId,
+  onDeleteMeeting,
 }: {
   info: MeetingTitleInfo | null;
   onSave: (title: string) => void;
+  meetingId: string;
+  onDeleteMeeting: (meetingId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
 
@@ -218,13 +243,11 @@ function MeetingHeaderTitle({
   }
 
   return (
-    <div
-      className="min-w-0 flex-1"
-      onMouseDown={(e) => e.stopPropagation()}
-    >
+    <div className="min-w-0 flex-1">
       <div className="flex items-center gap-2 min-w-0">
         <h1
           className="text-md font-semibold truncate cursor-text m-0"
+          onMouseDown={(e) => e.stopPropagation()}
           onClick={() => {
             if (!info.generatingTitle) setEditing(true);
           }}
@@ -244,7 +267,7 @@ function MeetingHeaderTitle({
           {info.durationMs != null &&
             ` · ${formatTime(Math.floor(info.durationMs / 1000))}`}
         </span> */}
-        <MeetingMenu onDelete={() => onSave(info.title || "")} />
+        <MeetingMenu onDelete={() => onDeleteMeeting(meetingId)} />
       </div>
     </div>
   );
@@ -324,37 +347,38 @@ function LayoutContent({
   // Build header left content based on active view
   const headerLeft =
     activeView?.type === "meeting" ? (
-      <MeetingHeaderTitle info={meetingInfo} onSave={onSaveTitle} />
+      <MeetingHeaderTitle
+        info={meetingInfo}
+        onSave={onSaveTitle}
+        meetingId={activeView.id}
+        onDeleteMeeting={onDeleteMeeting}
+      />
     ) : activeView?.type === "settings" ? (
       <h1 className="text-sm font-semibold px-2 m-0">Settings</h1>
     ) : null;
 
-  // Build header right content
-  const headerRight = (
-    <>
-      <HeaderControls onStartRecording={onStartRecording} />
-    </>
-  );
-
   return (
-    <SidebarInset className="overflow-hidden">
-      <PageHeader left={headerLeft} right={headerRight} onDrag={onDrag} />
-      <div className="flex-1 overflow-auto">
-        {activeView?.type === "meeting" && (
-          <MeetingsView
-            meetingId={activeView.id}
-            onTitleChange={onTitleChange}
-          />
-        )}
-        {activeView?.type === "settings" && <SettingsView />}
-        {activeView === null && (
-          <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-            <FileText className="w-12 h-12 text-muted-foreground mb-4" />
-            <p className="text-sm text-muted-foreground">
-              No meetings yet. Start a recording to create your first meeting.
-            </p>
-          </div>
-        )}
+    <SidebarInset className="min-h-0 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background md:rounded-2xl">
+        <PageHeader left={headerLeft} onDrag={onDrag} />
+        <div className="min-h-0 flex-1 overflow-auto">
+          {activeView?.type === "meeting" && (
+            <MeetingsView
+              meetingId={activeView.id}
+              onTitleChange={onTitleChange}
+              onRecordingStarted={onStartRecording}
+            />
+          )}
+          {activeView?.type === "settings" && <SettingsView />}
+          {activeView === null && (
+            <div className="flex h-full flex-col items-center justify-center p-8 text-center">
+              <FileText className="mb-4 h-12 w-12 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">
+                No meetings yet. Start a recording to create your first meeting.
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </SidebarInset>
   );
@@ -439,6 +463,10 @@ function AppLayout() {
     [loadMeetings],
   );
 
+  const handleNavigateToActiveRecording = useCallback((meetingId: string) => {
+    setActiveView({ type: "meeting", id: meetingId });
+  }, []);
+
   const handleDeleteMeeting = useCallback(
     async (meetingId: string) => {
       const confirmed = await ask("This action cannot be undone.", {
@@ -491,6 +519,31 @@ function AppLayout() {
     }
   }, [activeView]);
 
+  const [searchOpen, setSearchOpen] = useState(false);
+  const isMac =
+    typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return;
+      e.preventDefault();
+      setSearchOpen((open) => {
+        if (open) return false;
+        const t = e.target as HTMLElement;
+        if (
+          t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable
+        ) {
+          return false;
+        }
+        return true;
+      });
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <TooltipProvider>
       <RecordingProvider>
@@ -498,9 +551,73 @@ function AppLayout() {
           <Sidebar variant="inset">
             <SidebarTrigger className="fixed left-[95px] top-[18px] text-muted-foreground/60 hover:text-muted-foreground" />
             <SidebarHeader
-              className="pt-[50px] flex items-end px-3 pb-2"
+              className="flex flex-col gap-2 px-3 pb-3 pt-[50px]"
               onMouseDown={onDrag}
             >
+              <div className="flex flex-col gap-2">
+                <div onMouseDown={(e) => e.stopPropagation()}>
+                  <HeaderControls
+                    meetings={meetings}
+                    onStartRecording={handleStartRecording}
+                    onNavigateToActiveRecording={handleNavigateToActiveRecording}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSearchOpen(true)}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  className={cn(
+                    "flex h-8 w-full min-w-0 items-center gap-2 px-2 text-left text-sm text-muted-foreground hover:text-foreground transition-colors",
+                  )}
+                  aria-label="Search meetings"
+                  aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"}
+                >
+                  <Search className="size-3 shrink-0 opacity-70" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate">
+                    Search...
+                  </span>
+                  <span className="pointer-events-none hidden shrink-0 items-center gap-0.5 sm:inline-flex">
+                    <kbd className="bg-muted text-muted-foreground rounded font-sans text-xs font-medium">
+                    {isMac ? "⌘" : "Ctrl"}
+                      K
+                    </kbd>
+                  </span>
+                </button>
+                <CommandDialog
+                  open={searchOpen}
+                  onOpenChange={setSearchOpen}
+                  label="Search meetings"
+                >
+                  <div className="flex items-center gap-2 border-b border-border px-3">
+                    <Search
+                      className="size-4 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
+                    <CommandInput
+                      placeholder="Search meetings…"
+                      className="h-11 flex-1 border-0 focus-visible:ring-0"
+                    />
+                  </div>
+                  <CommandList>
+                    <CommandEmpty>No meetings found.</CommandEmpty>
+                    <CommandGroup heading="Meetings">
+                      {meetings.map((m) => (
+                        <CommandItem
+                          key={m.id}
+                          value={m.id}
+                          keywords={[m.title || "Untitled"]}
+                          onSelect={() => {
+                            setActiveView({ type: "meeting", id: m.id });
+                            setSearchOpen(false);
+                          }}
+                        >
+                          {m.title || "Untitled"}
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </CommandDialog>
+              </div>
             </SidebarHeader>
             <SidebarContent>
               {grouped.map((group) => (

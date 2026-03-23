@@ -32,7 +32,9 @@ pub fn run() {
         cancel_token: Mutex::new(None),
         session_id: Mutex::new(None),
         started_at: Mutex::new(None),
+        wall_time_offset_secs: Mutex::new(0.0),
         transcribe_task: Mutex::new(None),
+        finalize_in_progress: Arc::new(AtomicBool::new(false)),
     };
 
     #[cfg(not(target_os = "macos"))]
@@ -127,11 +129,14 @@ pub fn run() {
             check_microphone_permission,
             request_microphone_permission,
             open_microphone_settings,
+            open_sound_settings,
             check_accessibility_permission,
             request_accessibility_permission,
             open_accessibility_settings,
             start_recording,
             stop_recording,
+            pause_recording,
+            resume_recording,
             get_recording_state,
             debug_show_overlay,
             list_meetings,
