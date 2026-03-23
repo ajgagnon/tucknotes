@@ -22,6 +22,7 @@ import { LiveTranscript } from "./LiveTranscript";
 import { PersistedTranscript } from "./PersistedTranscript";
 import { RecordingErrorBanner } from "./RecordingErrorBanner";
 import { TranscriptFab } from "./TranscriptFab";
+import { Toggle } from "@/components/ui/toggle";
 
 interface MeetingDetailViewProps {
   detail: MeetingDetail;
@@ -163,7 +164,7 @@ export function MeetingDetailView({
       {!isLiveRecording && (
         <div className="mb-4 flex shrink-0 items-center justify-between">
           <div className="flex items-center gap-1.5 text-sm font-medium">
-            Summary
+            <Toggle pressed={true}>Minutes</Toggle>
             {summarizing && (
               <span className="inline-block size-1.5 animate-pulse rounded-full bg-muted-foreground" />
             )}
