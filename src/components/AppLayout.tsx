@@ -3,7 +3,15 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { FileText, Mic, Settings, Clock, Trash2, MoreVertical } from "lucide-react";
+import {
+  FileText,
+  Mic,
+  Settings,
+  Clock,
+  Trash2,
+  MoreVertical,
+  Search,
+} from "lucide-react";
 import {
   SidebarProvider,
   Sidebar,
@@ -35,6 +43,14 @@ import MeetingsView, {
 import SettingsView from "./SettingsView";
 import AudioVisualizer from "./AudioVisualizer";
 import { Button } from "./ui/button";
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "./ui/command";
 
 type ActiveView =
   | { type: "meeting"; id: string }
@@ -124,7 +140,7 @@ function HeaderControls({
   return (
     <Button
       variant={sessionActive ? "outline" : "default"}
-      className="max-w-[min(100%,14rem)] rounded-full gap-2"
+      className="w-full justify-start gap-2 rounded-full"
       title={sessionActive ? activeTitle : undefined}
       onClick={() => void handleClick()}
     >
@@ -316,9 +332,7 @@ function MeetingMenu({ onDelete }: { onDelete: () => void }) {
 function LayoutContent({
   activeView,
   onDrag,
-  meetings,
   onStartRecording,
-  onNavigateToActiveRecording,
   onDeleteMeeting,
   onTitleChange,
   meetingInfo,
@@ -326,9 +340,7 @@ function LayoutContent({
 }: {
   activeView: ActiveView;
   onDrag: (e: React.MouseEvent) => void;
-  meetings: MeetingRow[];
   onStartRecording: (meetingId: string) => void;
-  onNavigateToActiveRecording: (meetingId: string) => void;
   onDeleteMeeting: (meetingId: string) => void;
   onTitleChange: (info: MeetingTitleInfo) => void;
   meetingInfo: MeetingTitleInfo | null;
@@ -347,37 +359,28 @@ function LayoutContent({
       <h1 className="text-sm font-semibold px-2 m-0">Settings</h1>
     ) : null;
 
-  // Build header right content
-  const headerRight = (
-    <>
-      <HeaderControls
-        meetings={meetings}
-        onStartRecording={onStartRecording}
-        onNavigateToActiveRecording={onNavigateToActiveRecording}
-      />
-    </>
-  );
-
   return (
-    <SidebarInset className="overflow-hidden">
-      <PageHeader left={headerLeft} right={headerRight} onDrag={onDrag} />
-      <div className="flex-1 overflow-auto">
-        {activeView?.type === "meeting" && (
-          <MeetingsView
-            meetingId={activeView.id}
-            onTitleChange={onTitleChange}
-            onRecordingStarted={onStartRecording}
-          />
-        )}
-        {activeView?.type === "settings" && <SettingsView />}
-        {activeView === null && (
-          <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-            <FileText className="w-12 h-12 text-muted-foreground mb-4" />
-            <p className="text-sm text-muted-foreground">
-              No meetings yet. Start a recording to create your first meeting.
-            </p>
-          </div>
-        )}
+    <SidebarInset className="min-h-0 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background md:rounded-2xl">
+        <PageHeader left={headerLeft} onDrag={onDrag} />
+        <div className="min-h-0 flex-1 overflow-auto">
+          {activeView?.type === "meeting" && (
+            <MeetingsView
+              meetingId={activeView.id}
+              onTitleChange={onTitleChange}
+              onRecordingStarted={onStartRecording}
+            />
+          )}
+          {activeView?.type === "settings" && <SettingsView />}
+          {activeView === null && (
+            <div className="flex h-full flex-col items-center justify-center p-8 text-center">
+              <FileText className="mb-4 h-12 w-12 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">
+                No meetings yet. Start a recording to create your first meeting.
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </SidebarInset>
   );
@@ -518,16 +521,102 @@ function AppLayout() {
     }
   }, [activeView]);
 
+  const [searchOpen, setSearchOpen] = useState(false);
+  const isMac =
+    typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return;
+      e.preventDefault();
+      setSearchOpen((open) => {
+        if (open) return false;
+        const t = e.target as HTMLElement;
+        if (
+          t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable
+        ) {
+          return false;
+        }
+        return true;
+      });
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <TooltipProvider>
       <RecordingProvider>
         <SidebarProvider className="max-h-svh overflow-hidden">
           <Sidebar variant="inset">
             <SidebarTrigger className="fixed left-[95px] top-[18px] text-muted-foreground/60 hover:text-muted-foreground" />
-            <SidebarHeader
-              className="pt-[50px] flex items-end px-3 pb-2"
-              onMouseDown={onDrag}
-            >
+            <SidebarHeader className="flex flex-col gap-2 px-3 pb-3 pt-[50px]">
+              <div
+                className="flex flex-col gap-2"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <HeaderControls
+                  meetings={meetings}
+                  onStartRecording={handleStartRecording}
+                  onNavigateToActiveRecording={handleNavigateToActiveRecording}
+                />
+                <button
+                  type="button"
+                  onClick={() => setSearchOpen(true)}
+                  className={cn(
+                    "flex h-8 w-full min-w-0 items-center gap-2 px-2 text-left text-sm text-muted-foreground hover:text-foreground transition-colors",
+                  )}
+                  aria-label="Search meetings"
+                  aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"}
+                >
+                  <Search className="size-3 shrink-0 opacity-70" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate">
+                    Search...
+                  </span>
+                  <span className="pointer-events-none hidden shrink-0 items-center gap-0.5 sm:inline-flex">
+                    <kbd className="bg-muted text-muted-foreground rounded font-sans text-xs font-medium">
+                    {isMac ? "⌘" : "Ctrl"}
+                      K
+                    </kbd>
+                  </span>
+                </button>
+                <CommandDialog
+                  open={searchOpen}
+                  onOpenChange={setSearchOpen}
+                  label="Search meetings"
+                >
+                  <div className="flex items-center gap-2 border-b border-border px-3">
+                    <Search
+                      className="size-4 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
+                    <CommandInput
+                      placeholder="Search meetings…"
+                      className="h-11 flex-1 border-0 focus-visible:ring-0"
+                    />
+                  </div>
+                  <CommandList>
+                    <CommandEmpty>No meetings found.</CommandEmpty>
+                    <CommandGroup heading="Meetings">
+                      {meetings.map((m) => (
+                        <CommandItem
+                          key={m.id}
+                          value={m.id}
+                          keywords={[m.title || "Untitled"]}
+                          onSelect={() => {
+                            setActiveView({ type: "meeting", id: m.id });
+                            setSearchOpen(false);
+                          }}
+                        >
+                          {m.title || "Untitled"}
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </CommandDialog>
+              </div>
             </SidebarHeader>
             <SidebarContent>
               {grouped.map((group) => (
@@ -587,9 +676,7 @@ function AppLayout() {
           <LayoutContent
             activeView={activeView}
             onDrag={onDrag}
-            meetings={meetings}
             onStartRecording={handleStartRecording}
-            onNavigateToActiveRecording={handleNavigateToActiveRecording}
             onDeleteMeeting={handleDeleteMeeting}
             onTitleChange={handleTitleChange}
             meetingInfo={meetingInfo}
