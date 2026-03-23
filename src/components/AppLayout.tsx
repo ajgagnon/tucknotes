@@ -243,13 +243,11 @@ function MeetingHeaderTitle({
   }
 
   return (
-    <div
-      className="min-w-0 flex-1"
-      onMouseDown={(e) => e.stopPropagation()}
-    >
+    <div className="min-w-0 flex-1">
       <div className="flex items-center gap-2 min-w-0">
         <h1
           className="text-md font-semibold truncate cursor-text m-0"
+          onMouseDown={(e) => e.stopPropagation()}
           onClick={() => {
             if (!info.generatingTitle) setEditing(true);
           }}
@@ -552,19 +550,22 @@ function AppLayout() {
         <SidebarProvider className="max-h-svh overflow-hidden">
           <Sidebar variant="inset">
             <SidebarTrigger className="fixed left-[95px] top-[18px] text-muted-foreground/60 hover:text-muted-foreground" />
-            <SidebarHeader className="flex flex-col gap-2 px-3 pb-3 pt-[50px]">
-              <div
-                className="flex flex-col gap-2"
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <HeaderControls
-                  meetings={meetings}
-                  onStartRecording={handleStartRecording}
-                  onNavigateToActiveRecording={handleNavigateToActiveRecording}
-                />
+            <SidebarHeader
+              className="flex flex-col gap-2 px-3 pb-3 pt-[50px]"
+              onMouseDown={onDrag}
+            >
+              <div className="flex flex-col gap-2">
+                <div onMouseDown={(e) => e.stopPropagation()}>
+                  <HeaderControls
+                    meetings={meetings}
+                    onStartRecording={handleStartRecording}
+                    onNavigateToActiveRecording={handleNavigateToActiveRecording}
+                  />
+                </div>
                 <button
                   type="button"
                   onClick={() => setSearchOpen(true)}
+                  onMouseDown={(e) => e.stopPropagation()}
                   className={cn(
                     "flex h-8 w-full min-w-0 items-center gap-2 px-2 text-left text-sm text-muted-foreground hover:text-foreground transition-colors",
                   )}
