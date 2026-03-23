@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Sparkles, Settings2 } from "lucide-react";
+import { Sparkles, Settings2, PlusIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -164,7 +164,9 @@ export function MeetingDetailView({
       {!isLiveRecording && (
         <div className="mb-4 flex shrink-0 items-center justify-between">
           <div className="flex items-center gap-1.5 text-sm font-medium">
-            <Toggle pressed={true}>Minutes</Toggle>
+            <Toggle pressed={true} className="rounded-full px-3 border-1 border-muted" aria-label="Toggle bookmark" size="sm">Minutes</Toggle>
+            <Toggle pressed={false} className="rounded-full px-3 border-1 border-muted text-muted-foreground" aria-label="Toggle bookmark" size="sm">Notes</Toggle>
+            <Toggle pressed={false} className="rounded-full px-3 text-muted-foreground" aria-label="Toggle bookmark" size="sm"><PlusIcon className="size-3" /></Toggle>
             {summarizing && (
               <span className="inline-block size-1.5 animate-pulse rounded-full bg-muted-foreground" />
             )}
@@ -221,7 +223,7 @@ export function MeetingDetailView({
         />
       </div>
 
-      <Sheet open={transcriptOpen} onOpenChange={handleTranscriptOpenChange}>
+      <Sheet open={transcriptOpen} modal={false} onOpenChange={handleTranscriptOpenChange}>
         <SheetContent
           side="right"
           showCloseButton

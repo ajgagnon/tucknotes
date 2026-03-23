@@ -359,7 +359,7 @@ function LayoutContent({
 
   return (
     <SidebarInset className="min-h-0 overflow-hidden">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background md:rounded-2xl">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background/50 md:rounded-2xl">
         <PageHeader left={headerLeft} onDrag={onDrag} />
         <div className="min-h-0 flex-1 overflow-auto">
           {activeView?.type === "meeting" && (
@@ -552,147 +552,149 @@ function AppLayout() {
   }, []);
 
   return (
-    <TooltipProvider>
-      <RecordingProvider>
-        <SidebarProvider className="max-h-svh overflow-hidden">
-          <Sidebar variant="inset">
-            <SidebarTrigger className="fixed left-[95px] top-[18px] text-muted-foreground/60 hover:text-muted-foreground" />
-            <SidebarHeader
-              className="flex flex-col gap-2 px-3 pb-3 pt-[50px]"
-              onMouseDown={onDrag}
-            >
-              <div className="flex flex-col gap-2">
-                <div onMouseDown={(e) => e.stopPropagation()}>
-                  <HeaderControls
-                    meetings={meetings}
-                    onStartRecording={handleStartRecording}
-                    onNavigateToActiveRecording={handleNavigateToActiveRecording}
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSearchOpen(true)}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  className={cn(
-                    "flex h-8 w-full min-w-0 items-center gap-2 px-2 text-left text-sm text-muted-foreground hover:text-foreground transition-colors",
-                  )}
-                  aria-label="Search meetings"
-                  aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"}
-                >
-                  <Search className="size-3 shrink-0 opacity-70" aria-hidden />
-                  <span className="min-w-0 flex-1 truncate">
-                    Search...
-                  </span>
-                  <span className="pointer-events-none hidden shrink-0 items-center gap-0.5 sm:inline-flex">
-                    <kbd className="bg-muted text-muted-foreground rounded font-sans text-xs font-medium">
-                    {isMac ? "⌘" : "Ctrl"}
-                      K
-                    </kbd>
-                  </span>
-                </button>
-                <CommandDialog
-                  open={searchOpen}
-                  onOpenChange={setSearchOpen}
-                  label="Search meetings"
-                >
-                  <div className="flex items-center gap-2 border-b border-border px-3">
-                    <Search
-                      className="size-4 shrink-0 text-muted-foreground"
-                      aria-hidden
-                    />
-                    <CommandInput
-                      placeholder="Search meetings…"
-                      className="h-11 flex-1 border-0 focus-visible:ring-0"
+    <div className="bg-background/25">
+      <TooltipProvider>
+        <RecordingProvider>
+          <SidebarProvider className="max-h-svh overflow-hidden">
+            <Sidebar variant="inset">
+              <SidebarTrigger className="fixed left-[95px] top-[18px] text-muted-foreground/60 hover:text-muted-foreground" />
+              <SidebarHeader
+                className="flex flex-col gap-2 px-3 pb-3 pt-[50px]"
+                onMouseDown={onDrag}
+              >
+                <div className="flex flex-col gap-2">
+                  <div onMouseDown={(e) => e.stopPropagation()}>
+                    <HeaderControls
+                      meetings={meetings}
+                      onStartRecording={handleStartRecording}
+                      onNavigateToActiveRecording={handleNavigateToActiveRecording}
                     />
                   </div>
-                  <CommandList>
-                    <CommandEmpty>No meetings found.</CommandEmpty>
-                    <CommandGroup heading="Meetings">
-                      {meetings.map((m) => (
-                        <CommandItem
-                          key={m.id}
-                          value={m.id}
-                          keywords={[m.title || "Untitled"]}
-                          onSelect={() => {
-                            setActiveView({ type: "meeting", id: m.id });
-                            setSearchOpen(false);
-                          }}
-                        >
-                          {m.title || "Untitled"}
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </CommandDialog>
-              </div>
-            </SidebarHeader>
-            <SidebarContent>
-              {grouped.map((group) => (
-                <SidebarGroup key={group.label} className="px-3 py-0">
-                  <SidebarGroupLabel className="text-xs text-muted-foreground/70 px-2">
-                    {group.label}
-                  </SidebarGroupLabel>
-                  <SidebarGroupContent>
-                    <SidebarMenu>
-                      {group.meetings.map((meeting) => (
-                        <SidebarMenuItem key={meeting.id}>
-                          <SidebarMenuButton
-                            isActive={
-                              activeView?.type === "meeting" &&
-                              activeView.id === meeting.id
-                            }
-                            onClick={() =>
-                              setActiveView({
-                                type: "meeting",
-                                id: meeting.id,
-                              })
-                            }
-                            tooltip={meeting.title || "Untitled"}
-                          >
-                            <span className="truncate flex items-center gap-1.5">
-                              {meeting.title || "Untitled"}
-                              {summaryQueue.active === meeting.id && (
-                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
-                              )}
-                              {summaryQueue.pending.includes(meeting.id) && (
-                                <Clock className="w-3 h-3 text-muted-foreground shrink-0" />
-                              )}
-                            </span>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      ))}
-                    </SidebarMenu>
-                  </SidebarGroupContent>
-                </SidebarGroup>
-              ))}
-            </SidebarContent>
-            <SidebarFooter className="px-3 pb-3">
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={activeView?.type === "settings"}
-                    onClick={() => setActiveView({ type: "settings" })}
-                    tooltip="Settings"
+                  <button
+                    type="button"
+                    onClick={() => setSearchOpen(true)}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className={cn(
+                      "flex h-8 w-full min-w-0 items-center gap-2 px-2 text-left text-sm text-muted-foreground hover:text-foreground transition-colors",
+                    )}
+                    aria-label="Search meetings"
+                    aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"}
                   >
-                    <Settings className="text-muted-foreground" />
-                    <span>Settings</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarFooter>
-          </Sidebar>
-          <LayoutContent
-            activeView={activeView}
-            onDrag={onDrag}
-            onStartRecording={handleStartRecording}
-            onDeleteMeeting={handleDeleteMeeting}
-            onTitleChange={handleTitleChange}
-            meetingInfo={meetingInfo}
-            onSaveTitle={handleSaveTitle}
-          />
-        </SidebarProvider>
-      </RecordingProvider>
-    </TooltipProvider>
+                    <Search className="size-3 shrink-0 opacity-70" aria-hidden />
+                    <span className="min-w-0 flex-1 truncate text-xs">
+                      Search...
+                    </span>
+                    <span className="pointer-events-none hidden shrink-0 items-center gap-0.5 sm:inline-flex">
+                      <kbd className="text-muted-foreground rounded font-sans text-xs font-medium">
+                      {isMac ? "⌘" : "Ctrl"}
+                        K
+                      </kbd>
+                    </span>
+                  </button>
+                  <CommandDialog
+                    open={searchOpen}
+                    onOpenChange={setSearchOpen}
+                    label="Search meetings"
+                  >
+                    <div className="flex items-center gap-2 border-b border-border px-3">
+                      <Search
+                        className="size-4 shrink-0 text-muted-foreground"
+                        aria-hidden
+                      />
+                      <CommandInput
+                        placeholder="Search meetings…"
+                        className="h-11 flex-1 border-0 focus-visible:ring-0"
+                      />
+                    </div>
+                    <CommandList>
+                      <CommandEmpty>No meetings found.</CommandEmpty>
+                      <CommandGroup heading="Meetings">
+                        {meetings.map((m) => (
+                          <CommandItem
+                            key={m.id}
+                            value={m.id}
+                            keywords={[m.title || "Untitled"]}
+                            onSelect={() => {
+                              setActiveView({ type: "meeting", id: m.id });
+                              setSearchOpen(false);
+                            }}
+                          >
+                            {m.title || "Untitled"}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </CommandDialog>
+                </div>
+              </SidebarHeader>
+              <SidebarContent>
+                {grouped.map((group) => (
+                  <SidebarGroup key={group.label} className="px-3 py-0">
+                    <SidebarGroupLabel className="text-xs text-muted-foreground px-2">
+                      {group.label}
+                    </SidebarGroupLabel>
+                    <SidebarGroupContent>
+                      <SidebarMenu>
+                        {group.meetings.map((meeting) => (
+                          <SidebarMenuItem key={meeting.id}>
+                            <SidebarMenuButton
+                              isActive={
+                                activeView?.type === "meeting" &&
+                                activeView.id === meeting.id
+                              }
+                              onClick={() =>
+                                setActiveView({
+                                  type: "meeting",
+                                  id: meeting.id,
+                                })
+                              }
+                              tooltip={meeting.title || "Untitled"}
+                            >
+                              <span className="truncate flex items-center gap-1.5 text-xs">
+                                {meeting.title || "Untitled"}
+                                {summaryQueue.active === meeting.id && (
+                                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
+                                )}
+                                {summaryQueue.pending.includes(meeting.id) && (
+                                  <Clock className="w-3 h-3 text-muted-foreground shrink-0" />
+                                )}
+                              </span>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        ))}
+                      </SidebarMenu>
+                    </SidebarGroupContent>
+                  </SidebarGroup>
+                ))}
+              </SidebarContent>
+              <SidebarFooter className="px-3 pb-3">
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      isActive={activeView?.type === "settings"}
+                      onClick={() => setActiveView({ type: "settings" })}
+                      tooltip="Settings"
+                    >
+                      <Settings className="text-muted-foreground" />
+                      <span>Settings</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarFooter>
+            </Sidebar>
+            <LayoutContent
+              activeView={activeView}
+              onDrag={onDrag}
+              onStartRecording={handleStartRecording}
+              onDeleteMeeting={handleDeleteMeeting}
+              onTitleChange={handleTitleChange}
+              meetingInfo={meetingInfo}
+              onSaveTitle={handleSaveTitle}
+            />
+          </SidebarProvider>
+        </RecordingProvider>
+      </TooltipProvider>
+    </div>
   );
 }
 
