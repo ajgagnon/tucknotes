@@ -419,6 +419,13 @@ function AppLayout() {
     loadMeetings();
   }, [loadMeetings]);
 
+  // Open latest meeting when nothing is selected (list_meetings is created_at DESC)
+  useEffect(() => {
+    if (activeView !== null) return;
+    if (meetings.length === 0) return;
+    setActiveView({ type: "meeting", id: meetings[0].id });
+  }, [meetings, activeView]);
+
   // Track summarization queue
   useEffect(() => {
     let cancelled = false;
