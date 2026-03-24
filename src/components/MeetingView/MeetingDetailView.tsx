@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles, Settings2, PlusIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { invoke } from "@tauri-apps/api/core";
@@ -15,14 +15,20 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { type MeetingDetail, type MeetingTitleInfo } from "./types";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  type MeetingDetail,
+  type MeetingDocument,
+  type MeetingTitleInfo,
+  minutesBodyFromDocuments,
+} from "./types";
 import { useMeetingSummarization } from "./useMeetingSummarization";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { LiveTranscript } from "./LiveTranscript";
 import { PersistedTranscript } from "./PersistedTranscript";
 import { RecordingErrorBanner } from "./RecordingErrorBanner";
 import { TranscriptFab } from "./TranscriptFab";
-import { Toggle } from "@/components/ui/toggle";
+import { cn } from "@/lib/utils";
 
 interface MeetingDetailViewProps {
   detail: MeetingDetail;
@@ -33,6 +39,8 @@ interface MeetingDetailViewProps {
   onTitleChange?: (info: MeetingTitleInfo) => void;
   /** After starting capture for an existing meeting (resume completed). */
   onRecordingStarted?: (meetingId: string) => void;
+  /** Reload meeting detail from the backend (e.g. after adding a document). */
+  onRefreshMeeting?: () => void | Promise<void>;
 }
 
 export function MeetingDetailView({
@@ -43,9 +51,16 @@ export function MeetingDetailView({
   error,
   onTitleChange,
   onRecordingStarted,
+  onRefreshMeeting,
 }: MeetingDetailViewProps) {
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const docIds = useMemo(
+    () => detail.documents.map((d) => d.id).join(","),
+    [detail.documents],
+  );
+  const [selectedDocId, setSelectedDocId] = useState("");
+
   const {
     recording,
     paused,
@@ -61,6 +76,8 @@ export function MeetingDetailView({
   const capturingThisMeeting =
     isLiveRecording && recording && !paused;
 
+  const minutesBodyStored = minutesBodyFromDocuments(detail.documents);
+
   const {
     summarizing,
     streamedSummary,
@@ -69,7 +86,32 @@ export function MeetingDetailView({
     llmModelReady,
     currentSummary,
     handleSummarize,
-  } = useMeetingSummarization(detail.meeting, onTitleChange);
+  } = useMeetingSummarization(
+    detail.meeting,
+    minutesBodyStored,
+    onTitleChange,
+  );
+
+  useEffect(() => {
+    setSelectedDocId((prev) => {
+      if (detail.documents.some((d) => d.id === prev)) return prev;
+      return (
+        detail.documents.find((d) => d.kind === "minutes")?.id ??
+        detail.documents[0]?.id ??
+        ""
+      );
+    });
+  }, [detail.meeting.id, docIds]);
+
+  const effectiveTabId =
+    selectedDocId ||
+    detail.documents.find((d) => d.kind === "minutes")?.id ||
+    detail.documents[0]?.id ||
+    "";
+
+  const selectedDoc =
+    detail.documents.find((d) => d.id === effectiveTabId) ??
+    detail.documents[0];
 
   useEffect(() => {
     if (isLiveRecording && transcriptOpen) {
@@ -131,7 +173,20 @@ export function MeetingDetailView({
     }
   }, [stopRecording]);
 
-  const summaryBody = summarizing ? (
+  const handleAddDocument = useCallback(async () => {
+    try {
+      const doc = await invoke<MeetingDocument>("create_meeting_document", {
+        meetingId: detail.meeting.id,
+        title: null,
+      });
+      await onRefreshMeeting?.();
+      setSelectedDocId(doc.id);
+    } catch (e) {
+      console.error("create_meeting_document:", e);
+    }
+  }, [detail.meeting.id, onRefreshMeeting]);
+
+  const minutesPanel = summarizing ? (
     <div className="text-sm leading-relaxed">
       {thinkingText && !streamedSummary && (
         <ThinkingBlock text={thinkingText} />
@@ -157,18 +212,82 @@ export function MeetingDetailView({
     </p>
   );
 
+  const documentPanel =
+    selectedDoc?.kind === "minutes" ? (
+      <>
+        {minutesPanel}
+        {summaryError && !summarizing && (
+          <p className="mt-2 text-xs text-red-500 dark:text-red-400">
+            {summaryError}
+          </p>
+        )}
+      </>
+    ) : selectedDoc?.kind === "notes" ? (
+      <p className="text-sm text-muted-foreground">Notes coming soon.</p>
+    ) : selectedDoc ? (
+      selectedDoc.body ? (
+        <div className="prose prose-sm dark:prose-invert max-w-none">
+          <ReactMarkdown>{selectedDoc.body}</ReactMarkdown>
+        </div>
+      ) : (
+        <p className="text-sm text-neutral-400 italic">Empty document.</p>
+      )
+    ) : null;
+
+  const showSummarizeAction =
+    selectedDoc?.kind === "minutes" &&
+    !summarizing &&
+    llmModelReady &&
+    !transcriptFinalizing;
+
   return (
     <div className="flex h-full min-h-0 flex-col p-5">
       {error && <RecordingErrorBanner error={error} />}
 
       {!isLiveRecording && (
-        <div className="mb-4 flex shrink-0 items-center justify-between">
-          <div className="flex items-center gap-1.5 text-sm font-medium">
-            <Toggle pressed={true} className="rounded-full px-3 border-1 border-muted" aria-label="Toggle bookmark" size="sm">Minutes</Toggle>
-            <Toggle pressed={false} className="rounded-full px-3 border-1 border-muted text-muted-foreground" aria-label="Toggle bookmark" size="sm">Notes</Toggle>
-            <Toggle pressed={false} className="rounded-full px-3 text-muted-foreground" aria-label="Toggle bookmark" size="sm"><PlusIcon className="size-3" /></Toggle>
+        <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium">
+            {detail.documents.length > 0 ? (
+              <Tabs
+                value={effectiveTabId}
+                onValueChange={setSelectedDocId}
+                className="min-w-0 flex flex-row flex-wrap items-center gap-1.5"
+              >
+                <TabsList
+                  variant="line"
+                  className="h-auto min-h-8 flex-wrap gap-1 bg-transparent p-0"
+                >
+                  {detail.documents.map((doc) => (
+                    <TabsTrigger
+                      key={doc.id}
+                      value={doc.id}
+                      className={cn(
+                        "h-8 shrink-0 rounded-full border px-3 text-muted-foreground text-xs",
+                        "border-muted data-active:border-muted data-active:text-foreground",
+                        "data-active:bg-muted",
+                        "group-data-[variant=line]/tabs-list:data-active:bg-muted",
+                        "dark:group-data-[variant=line]/tabs-list:data-active:bg-muted",
+                        "after:hidden",
+                      )}
+                    >
+                      {doc.title}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="size-8 shrink-0 rounded-full p-0 text-muted-foreground"
+              aria-label="Add document"
+              onClick={() => void handleAddDocument()}
+            >
+              <PlusIcon className="size-3.5" />
+            </Button>
             {summarizing && (
-              <span className="inline-block size-1.5 animate-pulse rounded-full bg-muted-foreground" />
+              <span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground" />
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -177,17 +296,15 @@ export function MeetingDetailView({
                 Saving transcript…
               </span>
             )}
-            {!summarizing && llmModelReady && !transcriptFinalizing && (
-              <Button
-                onClick={handleSummarize}
-                size="xs"
-                variant="outline"
-                className="rounded-full"
-              >
-                <Sparkles className="size-2.5" />
-                {currentSummary ? "Resummarize" : "Summarize"}
-              </Button>
-            )}
+            <TranscriptFab
+              className="shrink-0"
+              open={transcriptOpen}
+              onOpenChange={handleTranscriptOpenChange}
+              capturing={capturingThisMeeting}
+              onStopRecording={
+                isLiveRecording ? handleFabStopRecording : undefined
+              }
+            />
           </div>
         </div>
       )}
@@ -202,25 +319,30 @@ export function MeetingDetailView({
             </p>
           </div>
         ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {summaryBody}
-            {summaryError && !summarizing && (
-              <p className="mt-2 text-xs text-red-500 dark:text-red-400">
-                {summaryError}
-              </p>
-            )}
-          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">{documentPanel}</div>
         )}
 
-        <TranscriptFab
-          className="absolute bottom-1 right-0 z-10"
-          open={transcriptOpen}
-          onOpenChange={handleTranscriptOpenChange}
-          capturing={capturingThisMeeting}
-          onStopRecording={
-            isLiveRecording ? handleFabStopRecording : undefined
-          }
-        />
+        {isLiveRecording && (
+          <TranscriptFab
+            className="absolute bottom-1 right-0 z-10"
+            open={transcriptOpen}
+            onOpenChange={handleTranscriptOpenChange}
+            capturing={capturingThisMeeting}
+            onStopRecording={handleFabStopRecording}
+          />
+        )}
+
+        {!isLiveRecording && showSummarizeAction && (
+          <Button
+            type="button"
+            onClick={() => void handleSummarize()}
+            variant="secondary"
+            className="absolute bottom-1 right-0 z-10 rounded-full shadow-md text-xs"
+          >
+            <Sparkles className="size-3 shrink-0 text-muted-foreground" />
+            {currentSummary ? "Resummarize" : "Summarize"}
+          </Button>
+        )}
       </div>
 
       <Sheet open={transcriptOpen} modal={false} onOpenChange={handleTranscriptOpenChange}>

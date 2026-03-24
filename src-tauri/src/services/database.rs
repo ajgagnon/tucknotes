@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
+use uuid::Uuid;
 
 use crate::errors::AppError;
 
@@ -17,7 +18,17 @@ pub struct MeetingRow {
     pub created_at: i64,
     pub ended_at: Option<i64>,
     pub duration_ms: Option<i64>,
-    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MeetingDocumentRow {
+    pub id: String,
+    pub meeting_id: String,
+    pub kind: String,
+    pub title: String,
+    pub body: Option<String>,
+    pub sort_order: i64,
+    pub created_at: i64,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -44,6 +55,7 @@ pub fn open_db(base_dir: &Path) -> Result<Connection, AppError> {
     let conn = Connection::open(&db_path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
     init_schema(&conn)?;
+    migrate_database(&conn)?;
     Ok(conn)
 }
 
@@ -52,6 +64,7 @@ fn open_db_memory() -> Result<Connection, AppError> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
     init_schema(&conn)?;
+    migrate_database(&conn)?;
     Ok(conn)
 }
 
@@ -62,8 +75,7 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             title        TEXT,
             created_at   INTEGER NOT NULL,
             ended_at     INTEGER,
-            duration_ms  INTEGER,
-            summary      TEXT
+            duration_ms  INTEGER
         );
         CREATE TABLE IF NOT EXISTS transcript_segments (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,7 +88,81 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_segments_meeting
-            ON transcript_segments(meeting_id);",
+            ON transcript_segments(meeting_id);
+        CREATE TABLE IF NOT EXISTS meeting_documents (
+            id           TEXT PRIMARY KEY,
+            meeting_id   TEXT NOT NULL,
+            kind         TEXT NOT NULL CHECK (kind IN ('minutes', 'notes', 'custom')),
+            title        TEXT NOT NULL,
+            body         TEXT,
+            sort_order   INTEGER NOT NULL,
+            created_at   INTEGER NOT NULL,
+            FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_minutes_notes
+            ON meeting_documents(meeting_id, kind) WHERE kind IN ('minutes', 'notes');
+        CREATE INDEX IF NOT EXISTS idx_documents_meeting_sort
+            ON meeting_documents(meeting_id, sort_order, created_at);",
+    )?;
+    Ok(())
+}
+
+/// Upgrade paths for pre-launch dev DBs (e.g. drop legacy `meetings.summary`).
+fn migrate_database(conn: &Connection) -> Result<(), AppError> {
+    if meetings_table_has_column(conn, "summary")? {
+        conn.execute("ALTER TABLE meetings DROP COLUMN summary", [])?;
+    }
+    backfill_default_documents(conn)?;
+    Ok(())
+}
+
+fn meetings_table_has_column(conn: &Connection, name: &str) -> Result<bool, AppError> {
+    let mut stmt = conn.prepare("PRAGMA table_info(meetings)")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let col_name: String = row.get(1)?;
+        if col_name == name {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn backfill_default_documents(conn: &Connection) -> Result<(), AppError> {
+    let mut stmt = conn.prepare("SELECT id, created_at FROM meetings")?;
+    let meetings: Vec<(String, i64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, rusqlite::Error>>()?;
+
+    for (meeting_id, created_at) in meetings {
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM meeting_documents WHERE meeting_id = ?1",
+            [&meeting_id],
+            |r| r.get(0),
+        )?;
+        if count == 0 {
+            insert_default_meeting_documents(conn, &meeting_id, created_at)?;
+        }
+    }
+    Ok(())
+}
+
+fn insert_default_meeting_documents(
+    conn: &Connection,
+    meeting_id: &str,
+    created_at: i64,
+) -> Result<(), AppError> {
+    let minutes_id = Uuid::new_v4().to_string();
+    let notes_id = Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO meeting_documents (id, meeting_id, kind, title, body, sort_order, created_at)
+         VALUES (?1, ?2, 'minutes', 'Minutes', NULL, 0, ?3)",
+        rusqlite::params![minutes_id, meeting_id, created_at],
+    )?;
+    conn.execute(
+        "INSERT INTO meeting_documents (id, meeting_id, kind, title, body, sort_order, created_at)
+         VALUES (?1, ?2, 'notes', 'Notes', NULL, 1, ?3)",
+        rusqlite::params![notes_id, meeting_id, created_at],
     )?;
     Ok(())
 }
@@ -87,10 +173,13 @@ pub fn create_meeting(
     title: &str,
     created_at: i64,
 ) -> Result<(), AppError> {
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "INSERT INTO meetings (id, title, created_at) VALUES (?1, ?2, ?3)",
         rusqlite::params![id, title, created_at],
     )?;
+    insert_default_meeting_documents(&tx, id, created_at)?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -148,15 +237,16 @@ pub fn meeting_recording_duration_ms(conn: &Connection, id: &str) -> Result<i64,
     .map_err(Into::into)
 }
 
-pub fn update_meeting_summary(
-    conn: &Connection,
-    id: &str,
-    summary: &str,
-) -> Result<(), AppError> {
-    conn.execute(
-        "UPDATE meetings SET summary = ?1 WHERE id = ?2",
-        rusqlite::params![summary, id],
+pub fn set_minutes_body(conn: &Connection, meeting_id: &str, body: &str) -> Result<(), AppError> {
+    let n = conn.execute(
+        "UPDATE meeting_documents SET body = ?1 WHERE meeting_id = ?2 AND kind = 'minutes'",
+        rusqlite::params![body, meeting_id],
     )?;
+    if n == 0 {
+        return Err(AppError::DatabaseError(format!(
+            "No minutes document for meeting: {meeting_id}"
+        )));
+    }
     Ok(())
 }
 
@@ -191,7 +281,7 @@ pub fn insert_segment(
 
 pub fn list_meetings(conn: &Connection) -> Result<Vec<MeetingRow>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, created_at, ended_at, duration_ms, summary
+        "SELECT id, title, created_at, ended_at, duration_ms
          FROM meetings ORDER BY created_at DESC",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -201,7 +291,6 @@ pub fn list_meetings(conn: &Connection) -> Result<Vec<MeetingRow>, AppError> {
             created_at: row.get(2)?,
             ended_at: row.get(3)?,
             duration_ms: row.get(4)?,
-            summary: row.get(5)?,
         })
     })?;
     let mut meetings = Vec::new();
@@ -211,12 +300,67 @@ pub fn list_meetings(conn: &Connection) -> Result<Vec<MeetingRow>, AppError> {
     Ok(meetings)
 }
 
+fn map_document_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MeetingDocumentRow> {
+    Ok(MeetingDocumentRow {
+        id: row.get(0)?,
+        meeting_id: row.get(1)?,
+        kind: row.get(2)?,
+        title: row.get(3)?,
+        body: row.get(4)?,
+        sort_order: row.get(5)?,
+        created_at: row.get(6)?,
+    })
+}
+
+pub fn list_meeting_documents(
+    conn: &Connection,
+    meeting_id: &str,
+) -> Result<Vec<MeetingDocumentRow>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, meeting_id, kind, title, body, sort_order, created_at
+         FROM meeting_documents WHERE meeting_id = ?1
+         ORDER BY sort_order ASC, created_at ASC, id ASC",
+    )?;
+    let rows = stmt.query_map([meeting_id], map_document_row)?;
+    let mut docs = Vec::new();
+    for row in rows {
+        docs.push(row?);
+    }
+    Ok(docs)
+}
+
+pub fn create_meeting_document(
+    conn: &Connection,
+    meeting_id: &str,
+    title: &str,
+) -> Result<MeetingDocumentRow, AppError> {
+    let sort_order: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM meeting_documents WHERE meeting_id = ?1",
+        [meeting_id],
+        |r| r.get(0),
+    )?;
+    let id = Uuid::new_v4().to_string();
+    let now = now_unix_ms();
+    conn.execute(
+        "INSERT INTO meeting_documents (id, meeting_id, kind, title, body, sort_order, created_at)
+         VALUES (?1, ?2, 'custom', ?3, NULL, ?4, ?5)",
+        rusqlite::params![id, meeting_id, title, sort_order, now],
+    )?;
+    conn.query_row(
+        "SELECT id, meeting_id, kind, title, body, sort_order, created_at
+         FROM meeting_documents WHERE id = ?1",
+        [&id],
+        map_document_row,
+    )
+    .map_err(Into::into)
+}
+
 pub fn get_meeting_with_segments(
     conn: &Connection,
     meeting_id: &str,
-) -> Result<(MeetingRow, Vec<SegmentRow>), AppError> {
+) -> Result<(MeetingRow, Vec<SegmentRow>, Vec<MeetingDocumentRow>), AppError> {
     let meeting = conn.query_row(
-        "SELECT id, title, created_at, ended_at, duration_ms, summary FROM meetings WHERE id = ?1",
+        "SELECT id, title, created_at, ended_at, duration_ms FROM meetings WHERE id = ?1",
         rusqlite::params![meeting_id],
         |row| {
             Ok(MeetingRow {
@@ -225,7 +369,6 @@ pub fn get_meeting_with_segments(
                 created_at: row.get(2)?,
                 ended_at: row.get(3)?,
                 duration_ms: row.get(4)?,
-                summary: row.get(5)?,
             })
         },
     )?;
@@ -250,7 +393,9 @@ pub fn get_meeting_with_segments(
         segments.push(row?);
     }
 
-    Ok((meeting, segments))
+    let documents = list_meeting_documents(conn, meeting_id)?;
+
+    Ok((meeting, segments, documents))
 }
 
 pub fn delete_meeting(conn: &Connection, meeting_id: &str) -> Result<(), AppError> {
@@ -283,18 +428,20 @@ mod tests {
         .unwrap();
         end_meeting(&conn, "s1", 1708700300000, 300000).unwrap();
 
-        let (meeting, segments) = get_meeting_with_segments(&conn, "s1").unwrap();
+        let (meeting, segments, docs) = get_meeting_with_segments(&conn, "s1").unwrap();
         assert_eq!(meeting.id, "s1");
         assert_eq!(meeting.title.as_deref(), Some("Test Meeting"));
         assert_eq!(meeting.ended_at, Some(1708700300000));
         assert_eq!(meeting.duration_ms, Some(300000));
-        assert_eq!(meeting.summary, None);
         assert_eq!(segments.len(), 2);
         assert_eq!(segments[0].text, "Hello world");
         assert_eq!(segments[0].source, "system");
         assert_eq!(segments[0].prompt, None);
         assert_eq!(segments[1].text, "How are you");
         assert_eq!(segments[1].prompt.as_deref(), Some("Hello world"));
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].kind, "minutes");
+        assert_eq!(docs[1].kind, "notes");
     }
 
     #[test]
@@ -311,7 +458,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_cascades_segments() {
+    fn delete_cascades_segments_and_documents() {
         let conn = open_db_memory().unwrap();
 
         create_meeting(&conn, "s1", "To Delete", 1708700000000).unwrap();
@@ -330,6 +477,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0);
+
+        let doc_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM meeting_documents WHERE meeting_id = 's1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(doc_count, 0);
     }
 
     #[test]
@@ -342,27 +498,37 @@ mod tests {
         end_meeting(&conn, "m", 10, 3000).unwrap();
         assert_eq!(meeting_recording_duration_ms(&conn, "m").unwrap(), 3000);
         reopen_meeting(&conn, "m").unwrap();
-        let (meeting, _) = get_meeting_with_segments(&conn, "m").unwrap();
+        let (meeting, _, _) = get_meeting_with_segments(&conn, "m").unwrap();
         assert_eq!(meeting.ended_at, None);
         assert!(meeting_exists(&conn, "m").unwrap());
         assert!(!meeting_exists(&conn, "missing").unwrap());
     }
 
     #[test]
-    fn update_summary() {
+    fn minutes_body_persists_in_documents() {
         let conn = open_db_memory().unwrap();
 
         create_meeting(&conn, "s1", "Meeting", 1708700000000).unwrap();
-        assert_eq!(
-            get_meeting_with_segments(&conn, "s1").unwrap().0.summary,
-            None
-        );
+        let (_, _, docs) = get_meeting_with_segments(&conn, "s1").unwrap();
+        assert_eq!(docs[0].body, None);
 
-        update_meeting_summary(&conn, "s1", "This was a productive meeting.").unwrap();
-        let (meeting, _) = get_meeting_with_segments(&conn, "s1").unwrap();
+        super::set_minutes_body(&conn, "s1", "This was a productive meeting.").unwrap();
+        let (_, _, docs) = get_meeting_with_segments(&conn, "s1").unwrap();
         assert_eq!(
-            meeting.summary.as_deref(),
+            docs[0].body.as_deref(),
             Some("This was a productive meeting.")
         );
+    }
+
+    #[test]
+    fn create_custom_document() {
+        let conn = open_db_memory().unwrap();
+        create_meeting(&conn, "s1", "M", 1).unwrap();
+        let doc = create_meeting_document(&conn, "s1", "Extra").unwrap();
+        assert_eq!(doc.kind, "custom");
+        assert_eq!(doc.title, "Extra");
+        let (_, _, docs) = get_meeting_with_segments(&conn, "s1").unwrap();
+        assert_eq!(docs.len(), 3);
+        assert_eq!(docs[2].title, "Extra");
     }
 }

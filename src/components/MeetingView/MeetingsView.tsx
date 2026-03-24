@@ -91,6 +91,7 @@ export default function MeetingsView({
       error={error}
       onTitleChange={onTitleChange}
       onRecordingStarted={onRecordingStarted}
+      onRefreshMeeting={() => openMeeting(detail.meeting.id)}
     />
   );
 }

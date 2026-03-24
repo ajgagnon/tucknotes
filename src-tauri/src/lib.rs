@@ -141,6 +141,7 @@ pub fn run() {
             debug_show_overlay,
             list_meetings,
             get_meeting,
+            create_meeting_document,
             delete_meeting,
             list_available_models,
             get_model_status,

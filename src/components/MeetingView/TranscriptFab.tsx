@@ -1,4 +1,4 @@
-import { AudioLines, ChevronDown, ChevronUp, Square } from "lucide-react";
+import { ChartNoAxesColumn, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAudioLevels } from "@/hooks/useRecording";
 
@@ -15,7 +15,7 @@ interface TranscriptFabProps {
   className?: string;
 }
 
-/** Pill control: AudioLines when idle, live bars while capturing + optional stop + chevron for transcript sheet. */
+/** Pill control (h-8, aligned with document tabs): AudioLines when idle, live bars while capturing + optional stop + chevron for transcript sheet. */
 export function TranscriptFab({
   open,
   onOpenChange,
@@ -33,7 +33,7 @@ export function TranscriptFab({
   return (
     <div
       className={cn(
-        "flex h-11 shrink-0 items-center rounded-full border border-border bg-muted shadow-md transition-[box-shadow,transform] hover:shadow-lg",
+        "flex h-9 shrink-0 items-center rounded-full border border-muted bg-muted shadow-sm transition-[box-shadow,transform] hover:shadow-md",
         className,
       )}
     >
@@ -42,39 +42,34 @@ export function TranscriptFab({
         aria-label={open ? "Close transcript" : "Open transcript"}
         aria-expanded={open}
         onClick={() => onOpenChange(!open)}
-        className="flex h-full min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-3.5 transition-[transform] active:scale-95"
+        className="flex h-full min-w-0 flex-1 items-center justify-center gap-2 rounded-full px-2.5 transition-[transform] active:scale-95"
       >
         {capturing ? (
-          <div className="flex h-4 items-end gap-[2px]">
+          <div className="flex h-2.5 items-end gap-px">
             {bars.map((height, i) => (
               <div
                 key={i}
-                className="w-[3px] rounded-full bg-muted-foreground transition-all duration-100 ease-out"
+                className="w-0.5 rounded-full bg-muted-foreground transition-all duration-100 ease-out"
                 style={{ height: `${height * 100}%` }}
               />
             ))}
           </div>
         ) : (
-          <AudioLines
-            className="size-4 shrink-0 text-muted-foreground"
+          <>
+          <span className="text-xs">Transcript</span>
+          <ChartNoAxesColumn
+            className="size-3 shrink-0 text-muted-foreground"
             strokeWidth={2}
           />
-        )}
-        {open ? (
-          <ChevronDown
-            className="size-3.5 text-muted-foreground"
-            strokeWidth={2}
-          />
-        ) : (
-          <ChevronUp
-            className="size-3.5 text-muted-foreground"
-            strokeWidth={2}
-          />
+          </>
         )}
       </button>
       {onStopRecording && (
         <>
-          <div className="h-5 w-px shrink-0 bg-border" aria-hidden />
+          <div
+            className="h-3.5 w-px shrink-0 bg-border"
+            aria-hidden
+          />
           <button
             type="button"
             aria-label="Stop recording"
@@ -83,9 +78,9 @@ export function TranscriptFab({
               e.stopPropagation();
               void onStopRecording();
             }}
-            className="flex h-full shrink-0 items-center justify-center rounded-r-full px-3 text-danger transition-colors hover:bg-danger/10 active:scale-95"
+            className="flex h-full shrink-0 items-center justify-center rounded-r-full px-2 text-danger transition-colors hover:bg-danger/10 active:scale-95"
           >
-            <Square className="size-3 fill-current" strokeWidth={0} />
+            <Square className="size-2.5 fill-current" strokeWidth={0} />
           </button>
         </>
       )}

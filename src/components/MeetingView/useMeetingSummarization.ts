@@ -9,10 +9,12 @@ import {
   type SummarizationQueue,
   type TokenPayload,
   type TitlePayload,
+  minutesBodyFromDocuments,
 } from "./types";
 
 export function useMeetingSummarization(
   meeting: MeetingRow,
+  minutesBody: string | null,
   onTitleChange?: (info: MeetingTitleInfo) => void,
 ) {
   const [currentTitle, setCurrentTitle] = useState(meeting.title);
@@ -24,11 +26,13 @@ export function useMeetingSummarization(
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [llmModelReady, setLlmModelReady] = useState<boolean | null>(null);
   const [currentSummary, setCurrentSummary] = useState<string | null>(
-    meeting.summary,
+    minutesBody,
   );
 
   const unlistenTokenRef = useRef<(() => void) | null>(null);
   const unlistenThinkingRef = useRef<(() => void) | null>(null);
+  const minutesBodyRef = useRef(minutesBody);
+  minutesBodyRef.current = minutesBody;
 
   const registerStreamListeners = useCallback(async () => {
     const tokenUn = await listen<TokenPayload>("summary:token", (event) => {
@@ -76,8 +80,8 @@ export function useMeetingSummarization(
   }, []);
 
   useEffect(() => {
-    setCurrentSummary(meeting.summary);
-  }, [meeting.summary]);
+    setCurrentSummary(minutesBody);
+  }, [minutesBody]);
 
   useEffect(() => {
     setCurrentTitle(meeting.title);
@@ -116,11 +120,12 @@ export function useMeetingSummarization(
               meetingId: meeting.id,
             });
             if (cancelled) return;
+            const freshMinutes = minutesBodyFromDocuments(fresh.documents);
             if (
-              fresh.meeting.summary &&
-              fresh.meeting.summary !== meeting.summary
+              freshMinutes &&
+              freshMinutes !== minutesBodyRef.current
             ) {
-              setCurrentSummary(fresh.meeting.summary);
+              setCurrentSummary(freshMinutes);
               setGeneratingTitle(true);
               return;
             }
@@ -155,7 +160,7 @@ export function useMeetingSummarization(
         const result = await invoke<MeetingDetail>("get_meeting", {
           meetingId: meeting.id,
         });
-        setCurrentSummary(result.meeting.summary);
+        setCurrentSummary(minutesBodyFromDocuments(result.documents));
       } catch {
         // fall through — summary will appear on next navigation
       }
@@ -167,8 +172,7 @@ export function useMeetingSummarization(
     return () => {
       unlisten.then((fn) => fn());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meeting.id]);
+  }, [meeting.id, cleanupStreamListeners]);
 
   useEffect(() => {
     return () => cleanupStreamListeners();

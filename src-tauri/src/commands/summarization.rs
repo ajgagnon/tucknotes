@@ -151,7 +151,7 @@ async fn do_summarize(
     // 1. Load meeting transcript from DB
     let transcript = {
         let conn = lock_or_err(&db_state.conn)?;
-        let (_, segments) = database::get_meeting_with_segments(&conn, meeting_id)?;
+        let (_, segments, _) = database::get_meeting_with_segments(&conn, meeting_id)?;
         segments
             .iter()
             .map(|s| {
@@ -209,7 +209,7 @@ async fn do_summarize(
     // 4. Persist summary to database
     {
         let conn = lock_or_err(&db_state.conn)?;
-        database::update_meeting_summary(&conn, meeting_id, &summary)?;
+        database::set_minutes_body(&conn, meeting_id, &summary)?;
     }
 
     // 5. Signal summary completion (scoped to meeting_id)

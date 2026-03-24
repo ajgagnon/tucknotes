@@ -4,7 +4,22 @@ export interface MeetingRow {
   created_at: number;
   ended_at: number | null;
   duration_ms: number | null;
-  summary: string | null;
+}
+
+export interface MeetingDocument {
+  id: string;
+  meeting_id: string;
+  kind: string;
+  title: string;
+  body: string | null;
+  sort_order: number;
+  created_at: number;
+}
+
+export function minutesBodyFromDocuments(
+  documents: MeetingDocument[],
+): string | null {
+  return documents.find((d) => d.kind === "minutes")?.body ?? null;
 }
 
 export interface SegmentRow {
@@ -20,6 +35,7 @@ export interface SegmentRow {
 export interface MeetingDetail {
   meeting: MeetingRow;
   segments: SegmentRow[];
+  documents: MeetingDocument[];
 }
 
 export interface MeetingTitleInfo {

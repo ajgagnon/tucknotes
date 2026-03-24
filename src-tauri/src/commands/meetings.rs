@@ -1,5 +1,7 @@
 use crate::errors::{lock_or_err, AppError};
-use crate::services::database::{self, DatabaseState, MeetingRow, SegmentRow};
+use crate::services::database::{
+    self, DatabaseState, MeetingDocumentRow, MeetingRow, SegmentRow,
+};
 
 #[tauri::command]
 pub fn list_meetings(
@@ -13,6 +15,7 @@ pub fn list_meetings(
 pub struct MeetingDetail {
     pub meeting: MeetingRow,
     pub segments: Vec<SegmentRow>,
+    pub documents: Vec<MeetingDocumentRow>,
 }
 
 #[tauri::command]
@@ -21,8 +24,24 @@ pub fn get_meeting(
     meeting_id: String,
 ) -> Result<MeetingDetail, AppError> {
     let conn = lock_or_err(&state.conn)?;
-    let (meeting, segments) = database::get_meeting_with_segments(&conn, &meeting_id)?;
-    Ok(MeetingDetail { meeting, segments })
+    let (meeting, segments, documents) =
+        database::get_meeting_with_segments(&conn, &meeting_id)?;
+    Ok(MeetingDetail {
+        meeting,
+        segments,
+        documents,
+    })
+}
+
+#[tauri::command]
+pub fn create_meeting_document(
+    state: tauri::State<'_, DatabaseState>,
+    meeting_id: String,
+    title: Option<String>,
+) -> Result<MeetingDocumentRow, AppError> {
+    let conn = lock_or_err(&state.conn)?;
+    let title = title.unwrap_or_else(|| "New document".to_string());
+    database::create_meeting_document(&conn, &meeting_id, &title)
 }
 
 #[tauri::command]
