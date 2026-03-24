@@ -359,7 +359,7 @@ function LayoutContent({
 
   return (
     <SidebarInset className="min-h-0 overflow-hidden">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background/50 md:rounded-2xl">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white dark:bg-neutral-900 border border-muted-foreground/10 md:rounded-2xl">
         <PageHeader left={headerLeft} onDrag={onDrag} />
         <div className="min-h-0 flex-1 overflow-auto">
           {activeView?.type === "meeting" && (
@@ -552,14 +552,14 @@ function AppLayout() {
   }, []);
 
   return (
-    <div className="bg-background/25">
+    <div className="bg-background/50">
       <TooltipProvider>
         <RecordingProvider>
           <SidebarProvider className="max-h-svh overflow-hidden">
             <Sidebar variant="inset">
               <SidebarTrigger className="fixed left-[95px] top-[18px] text-muted-foreground/60 hover:text-muted-foreground" />
               <SidebarHeader
-                className="flex flex-col gap-2 px-3 pb-3 pt-[50px]"
+                className="flex flex-col gap-2 px-3 pb-3 pt-[55px]"
                 onMouseDown={onDrag}
               >
                 <div className="flex flex-col gap-2">

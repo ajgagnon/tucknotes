@@ -1,4 +1,5 @@
 import { ChartNoAxesColumn, Square } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAudioLevels } from "@/hooks/useRecording";
 
@@ -37,12 +38,12 @@ export function TranscriptFab({
         className,
       )}
     >
-      <button
-        type="button"
+      <Button
+        variant="secondary"
         aria-label={open ? "Close transcript" : "Open transcript"}
         aria-expanded={open}
         onClick={() => onOpenChange(!open)}
-        className="flex h-full min-w-0 flex-1 items-center justify-center gap-2 rounded-full px-2.5 transition-[transform] active:scale-95"
+        className="rounded-full text-xs"
       >
         {capturing ? (
           <div className="flex h-2.5 items-end gap-px">
@@ -56,14 +57,14 @@ export function TranscriptFab({
           </div>
         ) : (
           <>
-          <span className="text-xs">Transcript</span>
+          <span>Transcript</span>
           <ChartNoAxesColumn
             className="size-3 shrink-0 text-muted-foreground"
             strokeWidth={2}
           />
           </>
         )}
-      </button>
+      </Button>
       {onStopRecording && (
         <>
           <div

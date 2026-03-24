@@ -337,10 +337,10 @@ export function MeetingDetailView({
             type="button"
             onClick={() => void handleSummarize()}
             variant="secondary"
-            className="absolute bottom-1 right-0 z-10 rounded-full shadow-md text-xs"
+            className="absolute bottom-1 right-0 z-10 rounded-full text-xs"
           >
-            <Sparkles className="size-3 shrink-0 text-muted-foreground" />
             {currentSummary ? "Resummarize" : "Summarize"}
+            <Sparkles className="size-3 shrink-0 text-muted-foreground" />
           </Button>
         )}
       </div>
@@ -349,11 +349,12 @@ export function MeetingDetailView({
         <SheetContent
           side="right"
           showCloseButton
-          className="flex bg-muted flex-col gap-0 rounded-t-2xl p-0"
+          className="flex bg-background flex-col gap-0 rounded-t-2xl p-0"
         >
           <SheetHeader className="shrink-0 border-b px-4 py-3">
             <SheetTitle>Transcript</SheetTitle>
           </SheetHeader>
+          
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
             {isLiveRecording ? (
               <div className="flex flex-col gap-3">
