@@ -14,6 +14,7 @@ pub enum AppError {
     NotSupported(String),
     PermissionDenied(String),
     SummarizationFailed(String),
+    NotFound(String),
 }
 
 impl std::fmt::Display for AppError {
@@ -30,6 +31,7 @@ impl std::fmt::Display for AppError {
             AppError::NotSupported(msg) => write!(f, "Not supported: {}", msg),
             AppError::PermissionDenied(msg) => write!(f, "Permission denied: {}", msg),
             AppError::SummarizationFailed(msg) => write!(f, "Summarization failed: {}", msg),
+            AppError::NotFound(msg) => write!(f, "Not found: {}", msg),
         }
     }
 }

@@ -250,6 +250,23 @@ pub fn set_minutes_body(conn: &Connection, meeting_id: &str, body: &str) -> Resu
     Ok(())
 }
 
+pub fn update_meeting_document_body(
+    conn: &Connection,
+    document_id: &str,
+    body: &str,
+) -> Result<(), AppError> {
+    let n = conn.execute(
+        "UPDATE meeting_documents SET body = ?1 WHERE id = ?2",
+        rusqlite::params![body, document_id],
+    )?;
+    if n == 0 {
+        return Err(AppError::NotFound(format!(
+            "Meeting document not found: {document_id}"
+        )));
+    }
+    Ok(())
+}
+
 pub fn update_meeting_title(
     conn: &Connection,
     id: &str,
@@ -530,5 +547,30 @@ mod tests {
         let (_, _, docs) = get_meeting_with_segments(&conn, "s1").unwrap();
         assert_eq!(docs.len(), 3);
         assert_eq!(docs[2].title, "Extra");
+    }
+
+    #[test]
+    fn update_meeting_document_body_persists() {
+        let conn = open_db_memory().unwrap();
+        create_meeting(&conn, "s1", "M", 1).unwrap();
+        let (_, _, docs) = get_meeting_with_segments(&conn, "s1").unwrap();
+        let notes = docs.iter().find(|d| d.kind == "notes").unwrap();
+        assert_eq!(notes.body, None);
+
+        super::update_meeting_document_body(&conn, &notes.id, "# Hello\n\nNote body.").unwrap();
+        let (_, _, docs) = get_meeting_with_segments(&conn, "s1").unwrap();
+        let notes = docs.iter().find(|d| d.kind == "notes").unwrap();
+        assert_eq!(notes.body.as_deref(), Some("# Hello\n\nNote body."));
+    }
+
+    #[test]
+    fn update_meeting_document_body_missing_id_errors() {
+        let conn = open_db_memory().unwrap();
+        create_meeting(&conn, "s1", "M", 1).unwrap();
+        let err = super::update_meeting_document_body(&conn, "nonexistent-id", "x").unwrap_err();
+        match err {
+            crate::errors::AppError::NotFound(_) => {}
+            _ => panic!("expected NotFound, got {err:?}"),
+        }
     }
 }

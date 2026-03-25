@@ -1,0 +1,58 @@
+/* Scoped to the editor shell; typography matches Grain (Geist via --font-sans). */
+.simple-editor-wrapper {
+  --tt-toolbar-height: 44px;
+  /* TipTap UI primitives read --tt-theme-text; align with app foreground */
+  --tt-theme-text: var(--foreground);
+
+  width: 100%;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  overflow: auto;
+  font-family: var(--font-sans);
+  color: var(--foreground);
+  font-optical-sizing: auto;
+  font-weight: 400;
+  font-style: normal;
+  overscroll-behavior: none;
+
+  scrollbar-width: thin;
+  scrollbar-color: var(--tt-scrollbar-color) transparent;
+
+  &::-webkit-scrollbar {
+    width: 0.25rem;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--tt-scrollbar-color);
+    border-radius: 9999px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+.simple-editor-wrapper .tiptap.ProseMirror {
+  font-family: inherit;
+}
+
+.simple-editor-content {
+  width: 100%;
+  margin: 0 auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.simple-editor-content .tiptap.ProseMirror.simple-editor {
+  flex: 1;
+  padding: 1rem;
+}
+
+@media screen and (max-width: 480px) {
+  .simple-editor-content .tiptap.ProseMirror.simple-editor {
+    padding: 1rem 1.5rem 30vh;
+  }
+}

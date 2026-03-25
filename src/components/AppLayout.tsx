@@ -359,7 +359,7 @@ function LayoutContent({
 
   return (
     <SidebarInset className="min-h-0 overflow-hidden">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white dark:bg-neutral-900 border border-muted-foreground/10 md:rounded-2xl">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background border border-muted-foreground/10 md:rounded-2xl">
         <PageHeader left={headerLeft} onDrag={onDrag} />
         <div className="min-h-0 flex-1 overflow-auto">
           {activeView?.type === "meeting" && (

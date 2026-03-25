@@ -46,6 +46,21 @@ export default function MeetingsView({
     setLoading(false);
   }, []);
 
+  const handleMeetingDocumentBodyUpdated = useCallback(
+    (documentId: string, body: string) => {
+      setDetail((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          documents: prev.documents.map((d) =>
+            d.id === documentId ? { ...d, body } : d,
+          ),
+        };
+      });
+    },
+    [],
+  );
+
   useEffect(() => {
     openMeeting(meetingId);
   }, [meetingId, openMeeting]);
@@ -92,6 +107,7 @@ export default function MeetingsView({
       onTitleChange={onTitleChange}
       onRecordingStarted={onRecordingStarted}
       onRefreshMeeting={() => openMeeting(detail.meeting.id)}
+      onMeetingDocumentBodyUpdated={handleMeetingDocumentBodyUpdated}
     />
   );
 }

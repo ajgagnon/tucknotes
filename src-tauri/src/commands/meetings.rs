@@ -45,6 +45,16 @@ pub fn create_meeting_document(
 }
 
 #[tauri::command]
+pub fn update_meeting_document_body(
+    state: tauri::State<'_, DatabaseState>,
+    document_id: String,
+    body: String,
+) -> Result<(), AppError> {
+    let conn = lock_or_err(&state.conn)?;
+    database::update_meeting_document_body(&conn, &document_id, &body)
+}
+
+#[tauri::command]
 pub fn delete_meeting(
     state: tauri::State<'_, DatabaseState>,
     meeting_id: String,

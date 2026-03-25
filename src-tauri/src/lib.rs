@@ -142,6 +142,7 @@ pub fn run() {
             list_meetings,
             get_meeting,
             create_meeting_document,
+            update_meeting_document_body,
             delete_meeting,
             list_available_models,
             get_model_status,

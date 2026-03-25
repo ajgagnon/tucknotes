@@ -1,6 +1,5 @@
 import { ChartNoAxesColumn, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { useAudioLevels } from "@/hooks/useRecording";
 
 const MIN_OUTER = 0.15;
@@ -32,12 +31,7 @@ export function TranscriptFab({
   ];
 
   return (
-    <div
-      className={cn(
-        "flex h-9 shrink-0 items-center rounded-full border border-muted bg-muted shadow-sm transition-[box-shadow,transform] hover:shadow-md",
-        className,
-      )}
-    >
+    <div className={className}>
       <Button
         variant="secondary"
         aria-label={open ? "Close transcript" : "Open transcript"}
