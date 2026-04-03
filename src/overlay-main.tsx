@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import MeetingOverlay from "./components/MeetingOverlay";
+import MeetingOverlay from "@/layout/MeetingOverlay";
 import "./overlay.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

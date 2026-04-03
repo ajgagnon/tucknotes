@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import PermissionSetup from "./components/PermissionSetup";
-import ModelSetup from "./components/ModelSetup";
-import AppLayout from "./components/AppLayout";
+import PermissionSetup from "@/features/onboarding/PermissionSetup";
+import ModelSetup from "@/features/onboarding/ModelSetup";
+import AppLayout from "@/layout/AppLayout";
 
 type OnboardingStep = "loading" | "permissions" | "model-setup" | "ready";
 

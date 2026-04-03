@@ -70,6 +70,16 @@ All macOS-specific code (ScreenCaptureKit, CoreGraphics FFI, AVFoundation FFI) m
 
 ## Frontend (`src/`)
 
+**Layout**
+
+- **`features/`** — Domain modules: `recording` (providers, transcript state, `AudioVisualizer`), `meetings`, `settings`, `models` (Whisper/LLM catalog + `useModelManager`), `onboarding`, `theme`. Co-locate types, hooks, and feature UI; use `index.ts` barrels where helpful.
+- **`layout/`** — App shell (`AppLayout`, `MeetingOverlay`).
+- **`editor/`** — TipTap editor subtree: `templates/`, `ui/`, `primitives/`, `icons/`, `extensions/`, `nodes/`, plus `tiptap-utils.ts` and editor-only hooks (`use-tiptap-editor`, `use-cursor-visibility`, `use-menu-navigation`).
+- **`components/ui/`** — Shared design-system primitives (buttons, sidebar, etc.).
+- **`hooks/`** — Generic reusable hooks only (measurement, throttling, refs) — **no** domain or Tauri-specific recording logic.
+- **`lib/`** — Pure utilities: `utils.ts` (`cn`), `audio-level.ts`, `format-time.ts`. Tests live next to sources as `*.test.ts`.
+- **Entry points** — `App.tsx`, `main.tsx`, `overlay-main.tsx` at the `src/` root; global styles in `App.css` / `overlay.css`.
+
 - React + TypeScript + Vite
 - Tauri commands are called via `invoke()` from `@tauri-apps/api/core`
 - Backend-to-frontend events use `listen()` from `@tauri-apps/api/event`
