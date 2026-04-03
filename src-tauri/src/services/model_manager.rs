@@ -86,6 +86,81 @@ pub fn resolve_llm_path(base_dir: &Path) -> Result<Option<PathBuf>, AppError> {
     resolve_path(base_dir, |s| s.selected_llm_model.clone())
 }
 
+/// Remove a Whisper model file and any `.partial` download artifact from
+/// `models/`. Clears `selected_model` in settings when it points at this model.
+pub fn remove_whisper_downloaded_in(
+    base_dir: &Path,
+    model: &WhisperModel,
+) -> Result<(), AppError> {
+    let models_dir = ensure_models_dir(base_dir)?;
+    let file_path = models_dir.join(model.filename());
+    let partial_path = models_dir.join(format!("{}.partial", model.filename()));
+
+    let file_existed = file_path.exists();
+    let partial_existed = partial_path.exists();
+
+    let mut settings = load_settings_from(base_dir)?;
+    let had_selection = settings.selected_model.as_ref() == Some(model);
+    if had_selection {
+        settings.selected_model = None;
+    }
+
+    if file_existed {
+        std::fs::remove_file(&file_path)?;
+    }
+    if partial_existed {
+        std::fs::remove_file(&partial_path)?;
+    }
+
+    if !file_existed && !partial_existed && !had_selection {
+        return Err(AppError::NotFound(format!(
+            "Model {} is not on disk",
+            model.id()
+        )));
+    }
+
+    if had_selection {
+        save_settings_to(base_dir, &settings)?;
+    }
+    Ok(())
+}
+
+/// Remove an LLM model file and any `.partial` download artifact from `models/`.
+/// Clears `selected_llm_model` in settings when it points at this model.
+pub fn remove_llm_downloaded_in(base_dir: &Path, model: &LlmModel) -> Result<(), AppError> {
+    let models_dir = ensure_models_dir(base_dir)?;
+    let file_path = models_dir.join(model.filename());
+    let partial_path = models_dir.join(format!("{}.partial", model.filename()));
+
+    let file_existed = file_path.exists();
+    let partial_existed = partial_path.exists();
+
+    let mut settings = load_settings_from(base_dir)?;
+    let had_selection = settings.selected_llm_model.as_ref() == Some(model);
+    if had_selection {
+        settings.selected_llm_model = None;
+    }
+
+    if file_existed {
+        std::fs::remove_file(&file_path)?;
+    }
+    if partial_existed {
+        std::fs::remove_file(&partial_path)?;
+    }
+
+    if !file_existed && !partial_existed && !had_selection {
+        return Err(AppError::NotFound(format!(
+            "Model {} is not on disk",
+            model.id()
+        )));
+    }
+
+    if had_selection {
+        save_settings_to(base_dir, &settings)?;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // AppHandle wrappers — thin one-liners called by Tauri commands.
 // Each resolves the app data dir, then delegates to a core function above.
@@ -105,6 +180,32 @@ pub fn save_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), AppE
 
 pub fn is_downloaded<M: Model>(app: &AppHandle, model: &M) -> Result<bool, AppError> {
     is_downloaded_in(&resolve_data_dir(app)?, model)
+}
+
+pub fn remove_whisper_model(app: &AppHandle, model: &WhisperModel) -> Result<(), AppError> {
+    remove_whisper_downloaded_in(&resolve_data_dir(app)?, model)
+}
+
+pub fn remove_llm_model(app: &AppHandle, model: &LlmModel) -> Result<(), AppError> {
+    remove_llm_downloaded_in(&resolve_data_dir(app)?, model)
+}
+
+/// Absolute path to the Whisper model file on disk, if it exists.
+pub fn whisper_model_file_path(app: &AppHandle, model_id: &str) -> Result<Option<String>, AppError> {
+    let model =
+        WhisperModel::from_id(model_id).ok_or_else(|| AppError::InvalidModel(model_id.to_string()))?;
+    let base_dir = resolve_data_dir(app)?;
+    let path = ensure_models_dir(&base_dir)?.join(model.filename());
+    Ok(path.exists().then(|| path.to_string_lossy().into_owned()))
+}
+
+/// Absolute path to the LLM model file on disk, if it exists.
+pub fn llm_model_file_path(app: &AppHandle, model_id: &str) -> Result<Option<String>, AppError> {
+    let model =
+        LlmModel::from_id(model_id).ok_or_else(|| AppError::InvalidModel(model_id.to_string()))?;
+    let base_dir = resolve_data_dir(app)?;
+    let path = ensure_models_dir(&base_dir)?.join(model.filename());
+    Ok(path.exists().then(|| path.to_string_lossy().into_owned()))
 }
 
 /// Download a model file from Hugging Face.
@@ -212,6 +313,7 @@ pub fn list_llm_models() -> Vec<ModelInfo<LlmModel>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::errors::AppError;
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -462,5 +564,80 @@ mod tests {
             loaded.selected_llm_model,
             Some(LlmModel::Qwen3_5_4B_Q4KM)
         );
+    }
+
+    #[test]
+    fn remove_whisper_downloaded_deletes_file() {
+        let base = TempDir::new();
+        let models_dir = ensure_models_dir(base.path()).unwrap();
+        fs::write(
+            models_dir.join(WhisperModel::BaseEn.filename()),
+            b"fake",
+        )
+        .unwrap();
+        remove_whisper_downloaded_in(base.path(), &WhisperModel::BaseEn).unwrap();
+        assert!(!is_downloaded_in(base.path(), &WhisperModel::BaseEn).unwrap());
+    }
+
+    #[test]
+    fn remove_whisper_downloaded_clears_selected_model() {
+        let base = TempDir::new();
+        let models_dir = ensure_models_dir(base.path()).unwrap();
+        fs::write(
+            models_dir.join(WhisperModel::LargeV3TurboQ5.filename()),
+            b"fake",
+        )
+        .unwrap();
+        let settings = AppSettings {
+            selected_model: Some(WhisperModel::LargeV3TurboQ5),
+            ..Default::default()
+        };
+        save_settings_to(base.path(), &settings).unwrap();
+        remove_whisper_downloaded_in(base.path(), &WhisperModel::LargeV3TurboQ5).unwrap();
+        let loaded = load_settings_from(base.path()).unwrap();
+        assert_eq!(loaded.selected_model, None);
+    }
+
+    #[test]
+    fn remove_whisper_downloaded_removes_partial() {
+        let base = TempDir::new();
+        let models_dir = ensure_models_dir(base.path()).unwrap();
+        let partial = models_dir.join(format!(
+            "{}.partial",
+            WhisperModel::BaseEn.filename()
+        ));
+        fs::write(&partial, b"partial").unwrap();
+        remove_whisper_downloaded_in(base.path(), &WhisperModel::BaseEn).unwrap();
+        assert!(!partial.exists());
+    }
+
+    #[test]
+    fn remove_whisper_downloaded_errors_when_nothing_on_disk_or_settings() {
+        let base = TempDir::new();
+        let err = remove_whisper_downloaded_in(base.path(), &WhisperModel::BaseEn).unwrap_err();
+        match err {
+            AppError::NotFound(_) => {}
+            _ => panic!("expected NotFound"),
+        }
+    }
+
+    #[test]
+    fn remove_llm_downloaded_deletes_file_and_clears_selection() {
+        let base = TempDir::new();
+        let models_dir = ensure_models_dir(base.path()).unwrap();
+        fs::write(
+            models_dir.join(LlmModel::Gemma4_E2B_Q8.filename()),
+            b"fake",
+        )
+        .unwrap();
+        let settings = AppSettings {
+            selected_llm_model: Some(LlmModel::Gemma4_E2B_Q8),
+            ..Default::default()
+        };
+        save_settings_to(base.path(), &settings).unwrap();
+        remove_llm_downloaded_in(base.path(), &LlmModel::Gemma4_E2B_Q8).unwrap();
+        let loaded = load_settings_from(base.path()).unwrap();
+        assert_eq!(loaded.selected_llm_model, None);
+        assert!(!is_downloaded_in(base.path(), &LlmModel::Gemma4_E2B_Q8).unwrap());
     }
 }

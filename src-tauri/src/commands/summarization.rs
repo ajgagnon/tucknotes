@@ -65,6 +65,21 @@ pub fn set_selected_llm_model(app: tauri::AppHandle, model_id: String) -> Result
 }
 
 #[tauri::command]
+pub fn remove_llm_model(app: tauri::AppHandle, model_id: String) -> Result<(), AppError> {
+    let model =
+        LlmModel::from_id(&model_id).ok_or_else(|| AppError::InvalidModel(model_id))?;
+    model_manager::remove_llm_model(&app, &model)
+}
+
+#[tauri::command]
+pub fn get_llm_model_file_path(
+    app: tauri::AppHandle,
+    model_id: String,
+) -> Result<Option<String>, AppError> {
+    model_manager::llm_model_file_path(&app, &model_id)
+}
+
+#[tauri::command]
 pub async fn update_meeting_title(
     db_state: tauri::State<'_, DatabaseState>,
     meeting_id: String,

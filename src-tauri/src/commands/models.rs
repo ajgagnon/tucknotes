@@ -35,3 +35,18 @@ pub fn set_selected_model(app: tauri::AppHandle, model_id: String) -> Result<(),
     settings.selected_model = Some(model);
     model_manager::save_settings(&app, &settings)
 }
+
+#[tauri::command]
+pub fn remove_model(app: tauri::AppHandle, model_id: String) -> Result<(), AppError> {
+    let model =
+        WhisperModel::from_id(&model_id).ok_or_else(|| AppError::InvalidModel(model_id))?;
+    model_manager::remove_whisper_model(&app, &model)
+}
+
+#[tauri::command]
+pub fn get_whisper_model_file_path(
+    app: tauri::AppHandle,
+    model_id: String,
+) -> Result<Option<String>, AppError> {
+    model_manager::whisper_model_file_path(&app, &model_id)
+}

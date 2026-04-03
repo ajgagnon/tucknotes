@@ -1,7 +1,18 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Sun, Moon, Monitor } from "lucide-react";
+import { ask } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import {
+  Sun,
+  Moon,
+  Monitor,
+  MoreVertical,
+  Trash2,
+  FolderOpen,
+  Download,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -22,6 +33,105 @@ import {
   applyTheme,
 } from "@/lib/theme";
 
+/** Menu label for revealing the model file in the system file manager. */
+function revealInFolderMenuLabel(): string {
+  if (typeof navigator === "undefined") return "Show in folder";
+  const p = navigator.platform;
+  if (p.startsWith("Mac") || p === "iPhone") return "Show in Finder";
+  if (p.startsWith("Win")) return "Show in File Explorer";
+  return "Show in folder";
+}
+
+/** Stops events from reaching the parent FieldLabel (label) so the radio does not toggle. */
+function stopLabelBubbling(e: React.SyntheticEvent) {
+  e.stopPropagation();
+}
+
+function ModelActionsMenu({
+  onShowInFolder,
+  onRemove,
+  canRemove,
+}: {
+  onShowInFolder: () => void;
+  onRemove: () => void;
+  /** When false, Remove is hidden (e.g. active model). */
+  canRemove: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div
+      className="relative shrink-0"
+      ref={menuRef}
+      data-slot="model-actions-menu"
+      onPointerDown={stopLabelBubbling}
+      onClick={stopLabelBubbling}
+    >
+      <button
+        type="button"
+        onClick={(e) => {
+          e.preventDefault();
+          stopLabelBubbling(e);
+          setOpen((prev) => !prev);
+        }}
+        className="p-1.5 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label="Model options"
+        aria-expanded={open}
+      >
+        <MoreVertical className="size-4" />
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-1 bg-popover text-popover-foreground border border-border rounded-lg shadow-lg py-1 z-50 min-w-[180px]"
+          onPointerDown={stopLabelBubbling}
+          onClick={stopLabelBubbling}
+        >
+          {canRemove && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                stopLabelBubbling(e);
+                setOpen(false);
+                onRemove();
+              }}
+              className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10 transition-colors cursor-pointer text-left"
+            >
+              <Trash2 className="size-3.5 shrink-0" />
+              Remove
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              stopLabelBubbling(e);
+              setOpen(false);
+              onShowInFolder();
+            }}
+            className="flex items-center gap-2 w-full px-3 py-1.5 text-sm hover:bg-muted transition-colors cursor-pointer text-left"
+          >
+            <FolderOpen className="size-3.5 shrink-0 opacity-70" />
+            {revealInFolderMenuLabel()}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsView() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [currentModelId, setCurrentModelId] = useState<string | null>(null);
@@ -40,9 +150,7 @@ function SettingsView() {
     Record<string, boolean>
   >({});
   const [llmDownloading, setLlmDownloading] = useState<string | null>(null);
-  const [llmProgress, setLlmProgress] = useState<DownloadProgress | null>(
-    null,
-  );
+  const [llmProgress, setLlmProgress] = useState<DownloadProgress | null>(null);
   const [llmError, setLlmError] = useState<string | null>(null);
   const [selectedLlmModelId, setSelectedLlmModelId] = useState<string | null>(
     null,
@@ -110,69 +218,141 @@ function SettingsView() {
     };
   }, [llmDownloading]);
 
-  async function handleSelectModel(modelId: string) {
+  async function handleSelectDownloadedModel(modelId: string) {
     if (modelId === currentModelId || downloading) return;
-
-    const isDownloaded = downloadStatus[modelId] ?? false;
-
-    if (isDownloaded) {
-      try {
-        await invoke("set_selected_model", { modelId });
-        setCurrentModelId(modelId);
-      } catch (err) {
-        const e = err as { message?: string };
-        setError(e.message ?? "Failed to switch model.");
-      }
-    } else {
-      setDownloading(modelId);
+    if (!(downloadStatus[modelId] ?? false)) return;
+    try {
+      await invoke("set_selected_model", { modelId });
+      setCurrentModelId(modelId);
       setError(null);
-      setProgress(null);
-      try {
-        await invoke("download_model", { modelId });
-        await invoke("set_selected_model", { modelId });
-        setCurrentModelId(modelId);
-        setDownloadStatus((prev) => ({ ...prev, [modelId]: true }));
-      } catch (err) {
-        const e = err as { message?: string };
-        setError(e.message ?? "Download failed. Please try again.");
-      } finally {
-        setDownloading(null);
-        setProgress(null);
-      }
+    } catch (err) {
+      const e = err as { message?: string };
+      setError(e.message ?? "Failed to switch model.");
     }
   }
 
-  /** Same interaction pattern as `handleSelectModel`: pick downloaded model, or download then select. */
-  async function handleSelectLlmModel(modelId: string) {
-    if (modelId === selectedLlmModelId || llmDownloading) return;
+  async function handleDownloadWhisper(modelId: string) {
+    if (downloading) return;
+    setDownloading(modelId);
+    setError(null);
+    setProgress(null);
+    try {
+      await invoke("download_model", { modelId });
+      setDownloadStatus((prev) => ({ ...prev, [modelId]: true }));
+    } catch (err) {
+      const e = err as { message?: string };
+      setError(e.message ?? "Download failed. Please try again.");
+    } finally {
+      setDownloading(null);
+      setProgress(null);
+    }
+  }
 
-    const isDownloaded = llmDownloadStatus[modelId] ?? false;
-
-    if (isDownloaded) {
-      try {
-        await invoke("set_selected_llm_model", { modelId });
-        setSelectedLlmModelId(modelId);
-        setLlmError(null);
-      } catch (err) {
-        const e = err as { message?: string };
-        setLlmError(e.message ?? "Failed to switch model.");
+  async function handleRemoveWhisperModel(modelId: string) {
+    const confirmed = await ask(
+      "This deletes the model file from your computer. If this was the active model, choose and download another before transcribing.",
+      {
+        title: "Remove downloaded model?",
+        kind: "warning",
+      },
+    );
+    if (!confirmed) return;
+    try {
+      await invoke("remove_model", { modelId });
+      setDownloadStatus((prev) => ({ ...prev, [modelId]: false }));
+      if (currentModelId === modelId) {
+        setCurrentModelId(null);
       }
-    } else {
-      setLlmDownloading(modelId);
+      setError(null);
+    } catch (err) {
+      const e = err as { message?: string };
+      setError(e.message ?? "Failed to remove model.");
+    }
+  }
+
+  async function handleRemoveLlmModel(modelId: string) {
+    const confirmed = await ask(
+      "This deletes the model file from your computer. If this was the active model, choose and download another before summarizing.",
+      {
+        title: "Remove downloaded model?",
+        kind: "warning",
+      },
+    );
+    if (!confirmed) return;
+    try {
+      await invoke("remove_llm_model", { modelId });
+      setLlmDownloadStatus((prev) => ({ ...prev, [modelId]: false }));
+      if (selectedLlmModelId === modelId) {
+        setSelectedLlmModelId(null);
+      }
       setLlmError(null);
-      setLlmProgress(null);
-      try {
-        await invoke("download_llm_model", { modelId });
-        await invoke("set_selected_llm_model", { modelId });
-        setSelectedLlmModelId(modelId);
-        setLlmDownloadStatus((prev) => ({ ...prev, [modelId]: true }));
-      } catch (err) {
-        const e = err as { message?: string };
-        setLlmError(e.message ?? "Download failed. Please try again.");
-      } finally {
-        setLlmDownloading(null);
-        setLlmProgress(null);
+    } catch (err) {
+      const e = err as { message?: string };
+      setLlmError(e.message ?? "Failed to remove model.");
+    }
+  }
+
+  async function handleShowWhisperInFolder(modelId: string) {
+    try {
+      const path = await invoke<string | null>("get_whisper_model_file_path", {
+        modelId,
+      });
+      if (!path) {
+        setError("Model file not found on disk.");
+        return;
       }
+      await revealItemInDir(path);
+      setError(null);
+    } catch (err) {
+      const e = err as { message?: string };
+      setError(e.message ?? "Could not show file in folder.");
+    }
+  }
+
+  async function handleShowLlmInFolder(modelId: string) {
+    try {
+      const path = await invoke<string | null>("get_llm_model_file_path", {
+        modelId,
+      });
+      if (!path) {
+        setLlmError("Model file not found on disk.");
+        return;
+      }
+      await revealItemInDir(path);
+      setLlmError(null);
+    } catch (err) {
+      const e = err as { message?: string };
+      setLlmError(e.message ?? "Could not show file in folder.");
+    }
+  }
+
+  async function handleSelectDownloadedLlmModel(modelId: string) {
+    if (modelId === selectedLlmModelId || llmDownloading) return;
+    if (!(llmDownloadStatus[modelId] ?? false)) return;
+    try {
+      await invoke("set_selected_llm_model", { modelId });
+      setSelectedLlmModelId(modelId);
+      setLlmError(null);
+    } catch (err) {
+      const e = err as { message?: string };
+      setLlmError(e.message ?? "Failed to switch model.");
+    }
+  }
+
+  async function handleDownloadLlm(modelId: string) {
+    if (llmDownloading) return;
+    setLlmDownloading(modelId);
+    setLlmError(null);
+    setLlmProgress(null);
+    try {
+      await invoke("download_llm_model", { modelId });
+      setLlmDownloadStatus((prev) => ({ ...prev, [modelId]: true }));
+    } catch (err) {
+      const e = err as { message?: string };
+      setLlmError(e.message ?? "Download failed. Please try again.");
+    } finally {
+      setLlmDownloading(null);
+      setLlmProgress(null);
     }
   }
 
@@ -231,6 +411,10 @@ function SettingsView() {
             Transcription Model
           </h2>
 
+          {error && !downloading && (
+            <p className="text-sm text-destructive mb-2">{error}</p>
+          )}
+
           {loading ? (
             <div className="flex flex-col gap-3">
               <Skeleton className="h-20 rounded-lg" />
@@ -239,16 +423,87 @@ function SettingsView() {
           ) : (
             <RadioGroup
               value={currentModelId ?? undefined}
-              onValueChange={handleSelectModel}
+              onValueChange={(id) => void handleSelectDownloadedModel(id)}
               disabled={!!downloading}
+              className="flex flex-col gap-2 w-full"
             >
               {models.map((model) => {
                 const isDownloaded = downloadStatus[model.id] ?? false;
                 const isDownloading = downloading === model.id;
 
+                if (!isDownloaded) {
+                  return (
+                    <div
+                      key={model.id}
+                      className="w-full rounded-lg border border-border p-2.5"
+                    >
+                      <Field orientation="horizontal">
+                        <RadioGroupItem value={model.id} className="mt-0.5" />
+                        <FieldContent className="min-w-0">
+                          <FieldTitle>
+                            {model.name}
+                            {model.recommended && (
+                              <Badge variant="outline">Recommended</Badge>
+                            )}
+                          </FieldTitle>
+                          <FieldDescription>
+                            {model.description}
+                            <span className="text-muted-foreground/60">
+                              {" "}
+                              &middot; {formatSize(model.size_bytes)}
+                            </span>
+                          </FieldDescription>
+                          {isDownloading && (
+                            <div className="mt-1.5">
+                              <div className="w-full bg-neutral-200 dark:bg-neutral-700 rounded-full h-1.5 mb-1 overflow-hidden">
+                                <div
+                                  className="bg-primary h-full rounded-full transition-all duration-300 ease-out"
+                                  style={{ width: `${progressPercent}%` }}
+                                />
+                              </div>
+                              <p className="text-xs text-muted-foreground tabular-nums">
+                                {progress
+                                  ? `${formatSize(progress.downloaded_bytes)} / ${formatSize(progress.total_bytes)}`
+                                  : "Starting download\u2026"}
+                              </p>
+                            </div>
+                          )}
+                        </FieldContent>
+                        {!isDownloading && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0"
+                            disabled={!!downloading}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void handleDownloadWhisper(model.id);
+                            }}
+                          >
+                            <Download className="size-3.5" />
+                            Download
+                          </Button>
+                        )}
+                      </Field>
+                    </div>
+                  );
+                }
+
+                const radioId = `model-${model.id}`;
                 return (
-                  <FieldLabel key={model.id} htmlFor={`model-${model.id}`}>
-                    <Field orientation="horizontal">
+                  <FieldLabel
+                    key={model.id}
+                    htmlFor={radioId}
+                    className="w-full"
+                  >
+                    <Field orientation="horizontal" className="items-start">
+                      <RadioGroupItem
+                        value={model.id}
+                        id={radioId}
+                        className="mt-0.5"
+                      />
                       <FieldContent>
                         <FieldTitle>
                           {model.name}
@@ -262,43 +517,14 @@ function SettingsView() {
                             {" "}
                             &middot; {formatSize(model.size_bytes)}
                           </span>
-                          {!isDownloaded && !isDownloading && (
-                            <span className="text-muted-foreground/60">
-                              {" "}
-                              &middot; Download required
-                            </span>
-                          )}
                         </FieldDescription>
-
-                        {/* Download progress */}
-                        {isDownloading && (
-                          <div className="mt-1.5">
-                            <div className="w-full bg-neutral-200 dark:bg-neutral-700 rounded-full h-1.5 mb-1 overflow-hidden">
-                              <div
-                                className="bg-primary h-full rounded-full transition-all duration-300 ease-out"
-                                style={{ width: `${progressPercent}%` }}
-                              />
-                            </div>
-                            <p className="text-xs text-muted-foreground tabular-nums">
-                              {progress
-                                ? `${formatSize(progress.downloaded_bytes)} / ${formatSize(progress.total_bytes)}`
-                                : "Starting download\u2026"}
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Error */}
-                        {error &&
-                          !downloading &&
-                          currentModelId !== model.id && (
-                            <p className="text-xs text-destructive mt-1">
-                              {error}
-                            </p>
-                          )}
                       </FieldContent>
-                      <RadioGroupItem
-                        value={model.id}
-                        id={`model-${model.id}`}
+                      <ModelActionsMenu
+                        canRemove={currentModelId !== model.id}
+                        onShowInFolder={() =>
+                          void handleShowWhisperInFolder(model.id)
+                        }
+                        onRemove={() => void handleRemoveWhisperModel(model.id)}
                       />
                     </Field>
                   </FieldLabel>
@@ -314,6 +540,10 @@ function SettingsView() {
             Summarization Model
           </h2>
 
+          {llmError && !llmDownloading && (
+            <p className="text-sm text-destructive mb-2">{llmError}</p>
+          )}
+
           {loading ? (
             <div className="flex flex-col gap-3">
               <Skeleton className="h-20 rounded-lg" />
@@ -322,16 +552,87 @@ function SettingsView() {
           ) : (
             <RadioGroup
               value={selectedLlmModelId ?? undefined}
-              onValueChange={handleSelectLlmModel}
+              onValueChange={(id) => void handleSelectDownloadedLlmModel(id)}
               disabled={!!llmDownloading}
+              className="flex flex-col gap-2 w-full"
             >
               {llmModels.map((model) => {
                 const isDownloaded = llmDownloadStatus[model.id] ?? false;
                 const isDownloading = llmDownloading === model.id;
 
+                if (!isDownloaded) {
+                  return (
+                    <div
+                      key={model.id}
+                      className="w-full rounded-lg border border-border p-2.5"
+                    >
+                      <Field orientation="horizontal">
+                        <RadioGroupItem value={model.id} className="mt-0.5" />
+                        <FieldContent className="min-w-0">
+                          <FieldTitle>
+                            {model.name}
+                            {model.recommended && (
+                              <Badge variant="outline">Recommended</Badge>
+                            )}
+                          </FieldTitle>
+                          <FieldDescription>
+                            {model.description}
+                            <span className="text-muted-foreground/60">
+                              {" "}
+                              &middot; {formatSize(model.size_bytes)}
+                            </span>
+                          </FieldDescription>
+                          {isDownloading && (
+                            <div className="mt-1.5">
+                              <div className="w-full bg-neutral-200 dark:bg-neutral-700 rounded-full h-1.5 mb-1 overflow-hidden">
+                                <div
+                                  className="bg-primary h-full rounded-full transition-all duration-300 ease-out"
+                                  style={{ width: `${llmProgressPercent}%` }}
+                                />
+                              </div>
+                              <p className="text-xs text-muted-foreground tabular-nums">
+                                {llmProgress
+                                  ? `${formatSize(llmProgress.downloaded_bytes)} / ${formatSize(llmProgress.total_bytes)}`
+                                  : "Starting download\u2026"}
+                              </p>
+                            </div>
+                          )}
+                        </FieldContent>
+                        {!isDownloading && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0"
+                            disabled={!!llmDownloading}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void handleDownloadLlm(model.id);
+                            }}
+                          >
+                            <Download className="size-3.5" />
+                            Download
+                          </Button>
+                        )}
+                      </Field>
+                    </div>
+                  );
+                }
+
+                const llmRadioId = `llm-model-${model.id}`;
                 return (
-                  <FieldLabel key={model.id} htmlFor={`llm-model-${model.id}`}>
-                    <Field orientation="horizontal">
+                  <FieldLabel
+                    key={model.id}
+                    htmlFor={llmRadioId}
+                    className="w-full"
+                  >
+                    <Field orientation="horizontal" className="items-start">
+                      <RadioGroupItem
+                        value={model.id}
+                        id={llmRadioId}
+                        className="mt-0.5"
+                      />
                       <FieldContent>
                         <FieldTitle>
                           {model.name}
@@ -345,41 +646,14 @@ function SettingsView() {
                             {" "}
                             &middot; {formatSize(model.size_bytes)}
                           </span>
-                          {!isDownloaded && !isDownloading && (
-                            <span className="text-muted-foreground/60">
-                              {" "}
-                              &middot; Download required
-                            </span>
-                          )}
                         </FieldDescription>
-
-                        {isDownloading && (
-                          <div className="mt-1.5">
-                            <div className="w-full bg-neutral-200 dark:bg-neutral-700 rounded-full h-1.5 mb-1 overflow-hidden">
-                              <div
-                                className="bg-primary h-full rounded-full transition-all duration-300 ease-out"
-                                style={{ width: `${llmProgressPercent}%` }}
-                              />
-                            </div>
-                            <p className="text-xs text-muted-foreground tabular-nums">
-                              {llmProgress
-                                ? `${formatSize(llmProgress.downloaded_bytes)} / ${formatSize(llmProgress.total_bytes)}`
-                                : "Starting download\u2026"}
-                            </p>
-                          </div>
-                        )}
-
-                        {llmError &&
-                          !llmDownloading &&
-                          selectedLlmModelId !== model.id && (
-                            <p className="text-xs text-destructive mt-1">
-                              {llmError}
-                            </p>
-                          )}
                       </FieldContent>
-                      <RadioGroupItem
-                        value={model.id}
-                        id={`llm-model-${model.id}`}
+                      <ModelActionsMenu
+                        canRemove={selectedLlmModelId !== model.id}
+                        onShowInFolder={() =>
+                          void handleShowLlmInFolder(model.id)
+                        }
+                        onRemove={() => void handleRemoveLlmModel(model.id)}
                       />
                     </Field>
                   </FieldLabel>
