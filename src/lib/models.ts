@@ -1,13 +1,5 @@
+/** Catalog entry for Whisper or LLM weights (same shape from the backend). */
 export interface ModelInfo {
-  id: string;
-  name: string;
-  description: string;
-  size_bytes: number;
-  filename: string;
-  recommended: boolean;
-}
-
-export interface LlmModelInfo {
   id: string;
   name: string;
   description: string;
