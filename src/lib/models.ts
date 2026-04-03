@@ -13,6 +13,8 @@ export interface LlmModelInfo {
   description: string;
   size_bytes: number;
   filename: string;
+  /** Present when the backend marks this option as recommended */
+  recommended?: boolean;
 }
 
 export interface DownloadProgress {

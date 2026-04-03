@@ -1,6 +1,8 @@
 import { ChartNoAxesColumn, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup, ButtonGroupSeparator } from "@/components/ui/button-group";
 import { useAudioLevels } from "@/hooks/useRecording";
+import { cn } from "@/lib/utils";
 
 const MIN_OUTER = 0.15;
 const MIN_CENTER = 0.2;
@@ -31,7 +33,7 @@ export function TranscriptFab({
   ];
 
   return (
-    <div className={className}>
+    <ButtonGroup className={cn(className, "rounded-full")}>
       <Button
         variant="secondary"
         aria-label={open ? "Close transcript" : "Open transcript"}
@@ -61,24 +63,21 @@ export function TranscriptFab({
       </Button>
       {onStopRecording && (
         <>
-          <div
-            className="h-3.5 w-px shrink-0 bg-border"
-            aria-hidden
-          />
-          <button
-            type="button"
+          <ButtonGroupSeparator />
+          <Button
             aria-label="Stop recording"
             title="Stop recording"
             onClick={(e) => {
               e.stopPropagation();
               void onStopRecording();
             }}
-            className="flex h-full shrink-0 items-center justify-center rounded-r-full px-2 text-danger transition-colors hover:bg-danger/10 active:scale-95"
+            variant="secondary"
+            className="rounded-full"
           >
-            <Square className="size-2.5 fill-current" strokeWidth={0} />
-          </button>
+            <Square className="size-2.5 fill-destructive" strokeWidth={0} />
+          </Button>
         </>
       )}
-    </div>
+    </ButtonGroup>
   );
 }

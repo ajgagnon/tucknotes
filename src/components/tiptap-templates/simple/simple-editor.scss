@@ -35,6 +35,7 @@
 
 .simple-editor-wrapper .tiptap.ProseMirror {
   font-family: inherit;
+  font-size: 14px;
 }
 
 .simple-editor-content {
@@ -48,7 +49,7 @@
 
 .simple-editor-content .tiptap.ProseMirror.simple-editor {
   flex: 1;
-  padding: 1rem;
+  padding: 1.4rem;
 }
 
 @media screen and (max-width: 480px) {

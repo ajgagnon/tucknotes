@@ -12,7 +12,6 @@ use tokio_util::sync::CancellationToken;
 #[serde(rename_all = "snake_case")]
 pub enum DetectionPhase {
     Idle,
-    Confirming,
     Active,
     Ending,
 }

@@ -44,18 +44,23 @@ function SettingsView() {
     null,
   );
   const [llmError, setLlmError] = useState<string | null>(null);
+  const [selectedLlmModelId, setSelectedLlmModelId] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     async function load() {
       try {
-        const [list, selected, llmList] = await Promise.all([
+        const [list, selected, llmList, selectedLlm] = await Promise.all([
           invoke<ModelInfo[]>("list_available_models"),
           invoke<string | null>("get_selected_model"),
           invoke<LlmModelInfo[]>("list_available_llm_models"),
+          invoke<string | null>("get_selected_llm_model"),
         ]);
         setModels(list);
         setCurrentModelId(selected);
         setLlmModels(llmList);
+        setSelectedLlmModelId(selectedLlm);
 
         const statuses: Record<string, boolean> = {};
         await Promise.all(
@@ -137,25 +142,37 @@ function SettingsView() {
     }
   }
 
-  async function handleDownloadLlm(modelId: string) {
-    if (llmDownloading) return;
+  /** Same interaction pattern as `handleSelectModel`: pick downloaded model, or download then select. */
+  async function handleSelectLlmModel(modelId: string) {
+    if (modelId === selectedLlmModelId || llmDownloading) return;
 
     const isDownloaded = llmDownloadStatus[modelId] ?? false;
-    if (isDownloaded) return;
 
-    setLlmDownloading(modelId);
-    setLlmError(null);
-    setLlmProgress(null);
-    try {
-      await invoke("download_llm_model", { modelId });
-      await invoke("set_selected_llm_model", { modelId });
-      setLlmDownloadStatus((prev) => ({ ...prev, [modelId]: true }));
-    } catch (err) {
-      const e = err as { message?: string };
-      setLlmError(e.message ?? "Download failed. Please try again.");
-    } finally {
-      setLlmDownloading(null);
+    if (isDownloaded) {
+      try {
+        await invoke("set_selected_llm_model", { modelId });
+        setSelectedLlmModelId(modelId);
+        setLlmError(null);
+      } catch (err) {
+        const e = err as { message?: string };
+        setLlmError(e.message ?? "Failed to switch model.");
+      }
+    } else {
+      setLlmDownloading(modelId);
+      setLlmError(null);
       setLlmProgress(null);
+      try {
+        await invoke("download_llm_model", { modelId });
+        await invoke("set_selected_llm_model", { modelId });
+        setSelectedLlmModelId(modelId);
+        setLlmDownloadStatus((prev) => ({ ...prev, [modelId]: true }));
+      } catch (err) {
+        const e = err as { message?: string };
+        setLlmError(e.message ?? "Download failed. Please try again.");
+      } finally {
+        setLlmDownloading(null);
+        setLlmProgress(null);
+      }
     }
   }
 
@@ -291,74 +308,84 @@ function SettingsView() {
           )}
         </section>
 
-        {/* Summarization Model */}
+        {/* Summarization Model — same layout as Transcription Model */}
         <section className="mt-8">
           <h2 className="text-sm font-medium text-muted-foreground mb-4">
             Summarization Model
           </h2>
 
           {loading ? (
-            <Skeleton className="h-20 rounded-lg" />
-          ) : (
             <div className="flex flex-col gap-3">
+              <Skeleton className="h-20 rounded-lg" />
+              <Skeleton className="h-20 rounded-lg" />
+            </div>
+          ) : (
+            <RadioGroup
+              value={selectedLlmModelId ?? undefined}
+              onValueChange={handleSelectLlmModel}
+              disabled={!!llmDownloading}
+            >
               {llmModels.map((model) => {
                 const isDownloaded = llmDownloadStatus[model.id] ?? false;
                 const isDownloading = llmDownloading === model.id;
 
                 return (
-                  <div
-                    key={model.id}
-                    className="rounded-lg border border-neutral-200 dark:border-neutral-700 p-4"
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium">{model.name}</span>
-                      {isDownloaded && (
-                        <Badge variant="outline">Downloaded</Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-2">
-                      {model.description}
-                      <span className="text-muted-foreground/60">
-                        {" "}
-                        &middot; {formatSize(model.size_bytes)}
-                      </span>
-                    </p>
+                  <FieldLabel key={model.id} htmlFor={`llm-model-${model.id}`}>
+                    <Field orientation="horizontal">
+                      <FieldContent>
+                        <FieldTitle>
+                          {model.name}
+                          {model.recommended && (
+                            <Badge variant="outline">Recommended</Badge>
+                          )}
+                        </FieldTitle>
+                        <FieldDescription>
+                          {model.description}
+                          <span className="text-muted-foreground/60">
+                            {" "}
+                            &middot; {formatSize(model.size_bytes)}
+                          </span>
+                          {!isDownloaded && !isDownloading && (
+                            <span className="text-muted-foreground/60">
+                              {" "}
+                              &middot; Download required
+                            </span>
+                          )}
+                        </FieldDescription>
 
-                    {isDownloading && (
-                      <div className="mt-1.5">
-                        <div className="w-full bg-neutral-200 dark:bg-neutral-700 rounded-full h-1.5 mb-1 overflow-hidden">
-                          <div
-                            className="bg-primary h-full rounded-full transition-all duration-300 ease-out"
-                            style={{ width: `${llmProgressPercent}%` }}
-                          />
-                        </div>
-                        <p className="text-xs text-muted-foreground tabular-nums">
-                          {llmProgress
-                            ? `${formatSize(llmProgress.downloaded_bytes)} / ${formatSize(llmProgress.total_bytes)}`
-                            : "Starting download\u2026"}
-                        </p>
-                      </div>
-                    )}
+                        {isDownloading && (
+                          <div className="mt-1.5">
+                            <div className="w-full bg-neutral-200 dark:bg-neutral-700 rounded-full h-1.5 mb-1 overflow-hidden">
+                              <div
+                                className="bg-primary h-full rounded-full transition-all duration-300 ease-out"
+                                style={{ width: `${llmProgressPercent}%` }}
+                              />
+                            </div>
+                            <p className="text-xs text-muted-foreground tabular-nums">
+                              {llmProgress
+                                ? `${formatSize(llmProgress.downloaded_bytes)} / ${formatSize(llmProgress.total_bytes)}`
+                                : "Starting download\u2026"}
+                            </p>
+                          </div>
+                        )}
 
-                    {!isDownloaded && !isDownloading && (
-                      <button
-                        onClick={() => handleDownloadLlm(model.id)}
-                        disabled={!!llmDownloading}
-                        className="mt-1 text-xs font-medium text-primary hover:text-primary-hover transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-default"
-                      >
-                        Download
-                      </button>
-                    )}
-
-                    {llmError && !llmDownloading && (
-                      <p className="text-xs text-destructive mt-1">
-                        {llmError}
-                      </p>
-                    )}
-                  </div>
+                        {llmError &&
+                          !llmDownloading &&
+                          selectedLlmModelId !== model.id && (
+                            <p className="text-xs text-destructive mt-1">
+                              {llmError}
+                            </p>
+                          )}
+                      </FieldContent>
+                      <RadioGroupItem
+                        value={model.id}
+                        id={`llm-model-${model.id}`}
+                      />
+                    </Field>
+                  </FieldLabel>
                 );
               })}
-            </div>
+            </RadioGroup>
           )}
         </section>
       </div>

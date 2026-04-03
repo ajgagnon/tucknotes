@@ -188,14 +188,25 @@ pub fn list_whisper_models() -> Vec<ModelInfo<WhisperModel>> {
 
 /// Return the catalog of available LLM models.
 pub fn list_llm_models() -> Vec<ModelInfo<LlmModel>> {
-    vec![ModelInfo {
-        id: LlmModel::Qwen3_5_4B_Q4KM,
-        name: "Qwen3.5 4B (Q4_K_M)".into(),
-        description: "Compact 4-bit quantized model for meeting summarization.".into(),
-        size_bytes: 2_740_000_000,
-        filename: LlmModel::Qwen3_5_4B_Q4KM.filename().into(),
-        recommended: None,
-    }]
+    vec![
+        ModelInfo {
+            id: LlmModel::Qwen3_5_4B_Q4KM,
+            name: "Qwen3.5 4B (Q4_K_M)".into(),
+            description: "Compact 4-bit quantized model for meeting summarization.".into(),
+            size_bytes: 2_740_000_000,
+            filename: LlmModel::Qwen3_5_4B_Q4KM.filename().into(),
+            recommended: None,
+        },
+        ModelInfo {
+            id: LlmModel::Gemma4_E2B_Q8,
+            name: "Gemma 4 E2B (Q8_0)".into(),
+            description: "Google's Gemma 4 model, 8-bit quantized. Higher quality, larger download."
+                .into(),
+            size_bytes: 5_050_000_000,
+            filename: LlmModel::Gemma4_E2B_Q8.filename().into(),
+            recommended: Some(true),
+        },
+    ]
 }
 
 #[cfg(test)]
@@ -398,10 +409,11 @@ mod tests {
     }
 
     #[test]
-    fn list_llm_models_returns_one_model() {
+    fn list_llm_models_returns_catalog() {
         let models = list_llm_models();
-        assert_eq!(models.len(), 1);
+        assert_eq!(models.len(), 2);
         assert_eq!(models[0].id, LlmModel::Qwen3_5_4B_Q4KM);
+        assert_eq!(models[1].id, LlmModel::Gemma4_E2B_Q8);
     }
 
     #[test]

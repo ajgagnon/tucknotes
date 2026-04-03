@@ -7,18 +7,21 @@ use super::Model;
 pub enum LlmModel {
     #[serde(alias = "Qwen3_4B_Q4KM")]
     Qwen3_5_4B_Q4KM,
+    Gemma4_E2B_Q8,
 }
 
 impl Model for LlmModel {
     fn id(&self) -> &'static str {
         match self {
             LlmModel::Qwen3_5_4B_Q4KM => "Qwen3_5_4B_Q4KM",
+            LlmModel::Gemma4_E2B_Q8 => "Gemma4_E2B_Q8",
         }
     }
 
     fn filename(&self) -> &'static str {
         match self {
             LlmModel::Qwen3_5_4B_Q4KM => "Qwen3.5-4B-Q4_K_M.gguf",
+            LlmModel::Gemma4_E2B_Q8 => "gemma-4-E2B-it-Q8_0.gguf",
         }
     }
 
@@ -27,12 +30,16 @@ impl Model for LlmModel {
             LlmModel::Qwen3_5_4B_Q4KM => {
                 "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf"
             }
+            LlmModel::Gemma4_E2B_Q8 => {
+                "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q8_0.gguf"
+            }
         }
     }
 
     fn from_id(id: &str) -> Option<LlmModel> {
         match id {
             "Qwen3_5_4B_Q4KM" | "Qwen3_4B_Q4KM" => Some(LlmModel::Qwen3_5_4B_Q4KM),
+            "Gemma4_E2B_Q8" => Some(LlmModel::Gemma4_E2B_Q8),
             _ => None,
         }
     }
@@ -80,6 +87,26 @@ mod tests {
         assert_eq!(
             LlmModel::from_id(LlmModel::Qwen3_5_4B_Q4KM.id()),
             Some(LlmModel::Qwen3_5_4B_Q4KM)
+        );
+        assert_eq!(
+            LlmModel::from_id(LlmModel::Gemma4_E2B_Q8.id()),
+            Some(LlmModel::Gemma4_E2B_Q8)
+        );
+    }
+
+    #[test]
+    fn llm_model_gemma4_from_id() {
+        assert_eq!(
+            LlmModel::from_id("Gemma4_E2B_Q8"),
+            Some(LlmModel::Gemma4_E2B_Q8)
+        );
+    }
+
+    #[test]
+    fn llm_model_gemma4_filename() {
+        assert_eq!(
+            LlmModel::Gemma4_E2B_Q8.filename(),
+            "gemma-4-E2B-it-Q8_0.gguf"
         );
     }
 

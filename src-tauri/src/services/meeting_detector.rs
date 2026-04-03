@@ -13,7 +13,6 @@ use crate::models::meeting_detection::{
 // ---------------------------------------------------------------------------
 
 const SCAN_INTERVAL: Duration = Duration::from_secs(5);
-const CONFIRM_TIMEOUT: Duration = Duration::from_secs(15);
 const ENDING_TIMEOUT: Duration = Duration::from_secs(30);
 const AX_MAX_DEPTH: usize = 10;
 const AX_MAX_ELEMENTS: usize = 500;
@@ -380,7 +379,6 @@ unsafe fn do_check_browser_urls(pid: i32, profiles: &[MeetingAppProfile]) -> Opt
 
 struct DetectorStateMachine {
     phase: DetectionPhase,
-    confirming_since: Option<Instant>,
     ending_since: Option<Instant>,
     detected_app: Option<String>,
 }
@@ -389,7 +387,6 @@ impl DetectorStateMachine {
     fn new() -> Self {
         Self {
             phase: DetectionPhase::Idle,
-            confirming_since: None,
             ending_since: None,
             detected_app: None,
         }
@@ -401,32 +398,11 @@ impl DetectorStateMachine {
         match self.phase {
             DetectionPhase::Idle => {
                 if signal_found {
-                    self.phase = DetectionPhase::Confirming;
-                    self.confirming_since = Some(Instant::now());
-                    self.detected_app = app_name.map(String::from);
-                    None // no external event yet
-                } else {
-                    None
-                }
-            }
-            DetectionPhase::Confirming => {
-                if !signal_found {
-                    // Lost signal during confirmation — go back to idle
-                    self.phase = DetectionPhase::Idle;
-                    self.confirming_since = None;
-                    self.detected_app = None;
-                    None
-                } else if self
-                    .confirming_since
-                    .map(|t| t.elapsed() >= CONFIRM_TIMEOUT)
-                    .unwrap_or(false)
-                {
-                    // Confirmed!
                     self.phase = DetectionPhase::Active;
-                    self.confirming_since = None;
+                    self.detected_app = app_name.map(String::from);
                     Some(DetectionPhase::Active)
                 } else {
-                    None // still confirming
+                    None
                 }
             }
             DetectionPhase::Active => {
