@@ -38,6 +38,11 @@ export interface MeetingDetail {
   documents: MeetingDocument[];
 }
 
+/** Imperative scroll to a point in the transcript (live or persisted). */
+export interface TranscriptScrollHandle {
+  scrollToTimeMs(ms: number): void;
+}
+
 export interface MeetingTitleInfo {
   title: string | null;
   generatingTitle: boolean;

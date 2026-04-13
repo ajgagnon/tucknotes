@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatTime } from "./format-time";
+import { formatMeetingNoteElapsed, formatTime } from "./format-time";
 
 describe("formatTime", () => {
   it("formats zero seconds", () => {
@@ -21,5 +21,13 @@ describe("formatTime", () => {
     expect(formatTime(3600)).toBe("1:00:00");
     expect(formatTime(3661)).toBe("1:01:01");
     expect(formatTime(7384)).toBe("2:03:04");
+  });
+});
+
+describe("formatMeetingNoteElapsed", () => {
+  it("formats m:ss", () => {
+    expect(formatMeetingNoteElapsed(0)).toBe("0:00");
+    expect(formatMeetingNoteElapsed(10)).toBe("0:10");
+    expect(formatMeetingNoteElapsed(65)).toBe("1:05");
   });
 });

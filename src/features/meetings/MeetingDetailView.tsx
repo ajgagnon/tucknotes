@@ -20,6 +20,7 @@ import {
   type MeetingDetail,
   type MeetingDocument,
   type MeetingTitleInfo,
+  type TranscriptScrollHandle,
   minutesBodyFromDocuments,
 } from "./types";
 import { useMeetingSummarization } from "./useMeetingSummarization";
@@ -58,6 +59,7 @@ export function MeetingDetailView({
   onMeetingDocumentBodyUpdated,
 }: MeetingDetailViewProps) {
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const transcriptScrollRef = useRef<TranscriptScrollHandle | null>(null);
   const wasLiveRecordingRef = useRef(false);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const docIds = useMemo(
@@ -69,6 +71,8 @@ export function MeetingDetailView({
   const {
     recording,
     paused,
+    meetingId: recordingMeetingId,
+    elapsed,
     transcriptFinalizingMeetingId,
     resumeRecording,
     stopRecording,
@@ -80,6 +84,21 @@ export function MeetingDetailView({
 
   const capturingThisMeeting =
     isLiveRecording && recording && !paused;
+
+  const stampElapsedSecs =
+    isLiveRecording &&
+    recordingMeetingId === detail.meeting.id &&
+    (recording || paused) &&
+    elapsed > 0
+      ? elapsed
+      : null;
+
+  const handleSeekTranscript = useCallback((timestampMs: number) => {
+    setTranscriptOpen(true);
+    requestAnimationFrame(() => {
+      transcriptScrollRef.current?.scrollToTimeMs(timestampMs);
+    });
+  }, []);
 
   const minutesBodyStored = minutesBodyFromDocuments(detail.documents);
 
@@ -248,6 +267,8 @@ export function MeetingDetailView({
         meetingId={detail.meeting.id}
         initialBody={selectedDoc.body}
         onDocumentBodySaved={onMeetingDocumentBodyUpdated}
+        stampElapsedSecs={stampElapsedSecs}
+        onSeekTranscript={handleSeekTranscript}
       />
     ) : selectedDoc ? (
       selectedDoc.body ? (
@@ -371,6 +392,7 @@ export function MeetingDetailView({
             {isLiveRecording ? (
               <div className="flex flex-col gap-3">
                 <LiveTranscript
+                  ref={transcriptScrollRef}
                   segments={liveSegments}
                   provisional={provisional}
                   scrollRef={transcriptEndRef}
@@ -378,7 +400,10 @@ export function MeetingDetailView({
               </div>
             ) : (
               <div className="flex flex-col gap-3">
-                <PersistedTranscript segments={detail.segments} />
+                <PersistedTranscript
+                  ref={transcriptScrollRef}
+                  segments={detail.segments}
+                />
               </div>
             )}
           </div>

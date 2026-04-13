@@ -1,11 +1,16 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { EditorContent, EditorContext, useEditor } from "@tiptap/react"
 
 // --- Tiptap Core Extensions ---
 import { Markdown } from "@tiptap/markdown"
 import { StarterKit } from "@tiptap/starter-kit"
+import {
+  MeetingNoteElapsed,
+  MeetingNoteHeading,
+  MeetingNoteParagraph,
+} from "@/editor/extensions/meeting-note-elapsed"
 import { Image } from "@tiptap/extension-image"
 import { TaskItem, TaskList } from "@tiptap/extension-list"
 import { TextAlign } from "@tiptap/extension-text-align"
@@ -172,21 +177,29 @@ const MobileToolbarContent = ({
   </>
 )
 
+export type MeetingNoteEditorConfig = {
+  /** Seconds to stamp on new blocks; `null` disables stamping. */
+  stampElapsedSecs: number | null
+}
+
 export type SimpleEditorProps = {
   /**
    * When set (including `null`), initial content is markdown. When omitted, uses the template demo JSON.
    */
   initialMarkdown?: string | null
-  /** Fired after each edit with the full document as markdown (debounce in the parent if needed). */
+  /** Fired with the full document as markdown after edits (serialized on a short debounce; parent may debounce persistence further). */
   onMarkdownChange?: (markdown: string) => void
   /** Hide the in-editor light/dark toggle (e.g. when embedded in the app shell). */
   hideThemeToggle?: boolean
+  /** Meeting notes: elapsed stamping + timestamp UI (only used from `MeetingNotesEditor`). */
+  meetingNote?: MeetingNoteEditorConfig | null
 }
 
 export function SimpleEditor({
   initialMarkdown,
   onMarkdownChange,
   hideThemeToggle = false,
+  meetingNote = null,
 }: SimpleEditorProps = {}) {
   const isMobile = useIsBreakpoint()
   const { height } = useWindowSize()
@@ -196,6 +209,55 @@ export function SimpleEditor({
   const toolbarRef = useRef<HTMLDivElement>(null)
 
   const markdownMode = initialMarkdown !== undefined
+
+  const meetingNoteRef = useRef(meetingNote)
+  meetingNoteRef.current = meetingNote
+
+  /** Stable identity: parent often passes a new object when `stampElapsedSecs` ticks; extension list must not rebuild or the editor remounts and focus is lost. */
+  const meetingNoteMode = meetingNote != null
+
+  /** Full-doc `getMarkdown()` is expensive; debounce so it does not run on the typing critical path. */
+  const markdownEmitDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const onMarkdownChangeRef = useRef(onMarkdownChange)
+  onMarkdownChangeRef.current = onMarkdownChange
+
+  const extensions = useMemo(() => {
+    const baseStarter = StarterKit.configure({
+      horizontalRule: false,
+      paragraph: meetingNoteMode ? false : undefined,
+      heading: meetingNoteMode ? false : undefined,
+      link: {
+        openOnClick: false,
+        enableClickSelection: true,
+      },
+    })
+
+    const meetingExtensions = meetingNoteMode
+      ? [
+          MeetingNoteParagraph,
+          MeetingNoteHeading,
+          MeetingNoteElapsed.configure({
+            getElapsedSecs: () => meetingNoteRef.current?.stampElapsedSecs ?? null,
+          }),
+        ]
+      : []
+
+    return [
+      baseStarter,
+      ...meetingExtensions,
+      HorizontalRule,
+      TextAlign.configure({ types: ["heading", "paragraph"] }),
+      TaskList,
+      TaskItem.configure({ nested: true }),
+      Highlight.configure({ multicolor: true }),
+      Image,
+      Typography,
+      Superscript,
+      Subscript,
+      Selection,
+      Markdown,
+    ]
+  }, [meetingNoteMode])
 
   const editor = useEditor(
     {
@@ -210,34 +272,36 @@ export function SimpleEditor({
           class: "simple-editor",
         },
       },
-      extensions: [
-        StarterKit.configure({
-          horizontalRule: false,
-          link: {
-            openOnClick: false,
-            enableClickSelection: true,
-          },
-        }),
-        HorizontalRule,
-        TextAlign.configure({ types: ["heading", "paragraph"] }),
-        TaskList,
-        TaskItem.configure({ nested: true }),
-        Highlight.configure({ multicolor: true }),
-        Image,
-        Typography,
-        Superscript,
-        Subscript,
-        Selection,
-        Markdown,
-      ],
+      extensions,
       content: markdownMode ? (initialMarkdown ?? "") : content,
       contentType: markdownMode ? "markdown" : "json",
       onUpdate: ({ editor: ed }) => {
-        onMarkdownChange?.(ed.getMarkdown())
+        const emit = onMarkdownChangeRef.current
+        if (!emit) return
+        if (markdownEmitDebounceRef.current) {
+          clearTimeout(markdownEmitDebounceRef.current)
+        }
+        markdownEmitDebounceRef.current = setTimeout(() => {
+          markdownEmitDebounceRef.current = null
+          emit(ed.getMarkdown())
+        }, 300)
       },
     },
-    [markdownMode],
+    [markdownMode, extensions],
   )
+
+  useEffect(() => {
+    return () => {
+      if (markdownEmitDebounceRef.current) {
+        clearTimeout(markdownEmitDebounceRef.current)
+        markdownEmitDebounceRef.current = null
+      }
+      const emit = onMarkdownChangeRef.current
+      if (editor && !editor.isDestroyed && emit) {
+        emit(editor.getMarkdown())
+      }
+    }
+  }, [editor])
 
   const rect = useCursorVisibility({
     editor,

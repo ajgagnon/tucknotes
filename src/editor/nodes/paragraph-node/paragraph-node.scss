@@ -33,13 +33,6 @@
   outline: none;
   caret-color: var(--tt-cursor-color);
 
-  // Paragraph spacing
-  p:not(:first-child):not(td p):not(th p) {
-    font-size: 1rem;
-    line-height: 1.6;
-    font-weight: normal;
-  }
-
   // Selection styles
   &:not(.readonly):not(.ProseMirror-hideselection) {
     ::selection {

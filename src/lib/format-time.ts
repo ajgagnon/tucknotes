@@ -7,3 +7,10 @@ export function formatTime(seconds: number): string {
   if (h > 0) return `${h}:${mm}:${ss}`;
   return `${mm}:${ss}`;
 }
+
+/** Elapsed meeting time for note lines: `m:ss` (e.g. `0:10`, `1:05`). */
+export function formatMeetingNoteElapsed(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}

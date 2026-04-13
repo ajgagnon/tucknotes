@@ -11,8 +11,6 @@ function getActivePageEditor(editor: Editor): Editor | null {
 
 export function useTiptapEditor(providedEditor?: Editor | null): {
   editor: Editor | null
-  editorState?: Editor["state"]
-  canCommand?: Editor["can"]
 } {
   const { editor: coreEditor } = useCurrentEditor()
   const mainEditor = providedEditor ?? coreEditor
@@ -54,14 +52,19 @@ export function useTiptapEditor(providedEditor?: Editor | null): {
     editor: storageEditor ?? mainEditor,
     selector(context) {
       if (!context.editor) {
-        return { editor: null, editorState: undefined, canCommand: undefined }
+        return { editor: null as Editor | null, txn: 0 }
       }
-
       return {
         editor: context.editor,
-        editorState: context.editor.state,
-        canCommand: context.editor.can,
+        txn: context.transactionNumber,
       }
+    },
+    equalityFn(a, b) {
+      if (a === b) return true
+      if (!a || !b) return a === b
+      if (!a.editor || !b.editor) return false
+      if (a.editor !== b.editor) return false
+      return a.txn === b.txn
     },
   })
 

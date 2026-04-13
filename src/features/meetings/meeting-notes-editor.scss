@@ -1,0 +1,37 @@
+/* Meeting notes: per-line elapsed timestamps rendered via CSS ::after pseudo-elements. */
+.meeting-notes-editor [data-elapsed] {
+  position: relative;
+  padding-right: 3.25rem;
+  border-radius: 0.375rem;
+  margin-left: -0.25rem;
+  margin-right: -0.25rem;
+  padding-left: 0.25rem;
+}
+
+.meeting-notes-editor [data-elapsed]::after {
+  content: attr(data-elapsed-display);
+  position: absolute;
+  right: 0.25rem;
+  top: 0;
+  font-size: 0.75rem;
+  line-height: inherit;
+  color: var(--muted-foreground);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.meeting-notes-editor [data-elapsed]:hover {
+  background-color: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+
+.meeting-notes-editor [data-elapsed]:hover::after {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.meeting-notes-editor [data-elapsed]::after:hover {
+  text-decoration: underline;
+}
