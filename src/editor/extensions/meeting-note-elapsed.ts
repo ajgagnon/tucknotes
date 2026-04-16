@@ -1,13 +1,15 @@
-import { mergeAttributes } from "@tiptap/core";
-import { Extension } from "@tiptap/core";
+import { Extension, mergeAttributes } from "@tiptap/core";
 import { Heading } from "@tiptap/extension-heading";
 import { Paragraph } from "@tiptap/extension-paragraph";
-import { isHistoryTransaction } from "@tiptap/pm/history";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import { ReplaceStep } from "@tiptap/pm/transform";
+import {
+  appendMeetingNoteElapsedTransaction,
+  MEETING_NOTE_ELAPSED_ATTR,
+} from "./meeting-note-elapsed-logic";
 
-const ATTR = "meetingElapsedSecs" as const;
-const STAMP_META = "meetingNoteStamp";
+export { MEETING_NOTE_ELAPSED_ATTR };
+
+const ATTR = MEETING_NOTE_ELAPSED_ATTR;
 const EMPTY_PARAGRAPH_MD = "&nbsp;";
 const NBSP = "\u00A0";
 
@@ -154,71 +156,13 @@ export const MeetingNoteElapsed = Extension.create<MeetingNoteElapsedOptions>({
       new Plugin({
         key: new PluginKey("meetingNoteElapsed"),
 
-        appendTransaction(transactions, _oldState, newState) {
-          if (transactions.some((t) => t.getMeta(STAMP_META))) return null;
-          if (transactions.some((t) => isHistoryTransaction(t))) return null;
-          if (!transactions.some((t) => t.docChanged)) return null;
-
-          const secs = getElapsedSecs();
-          if (secs == null || secs <= 0) return null;
-
-          // Skip if no step inserts block-level content (fast path for typing)
-          const hasBlockInsert = transactions.some((tr) =>
-            tr.steps.some((step) => {
-              if (!(step instanceof ReplaceStep)) return false;
-              let found = false;
-              step.slice.content.forEach((node) => {
-                if (node.isBlock) found = true;
-              });
-              return found;
-            }),
+        appendTransaction(transactions, oldState, newState) {
+          return appendMeetingNoteElapsedTransaction(
+            transactions,
+            oldState,
+            newState,
+            getElapsedSecs,
           );
-          if (!hasBlockInsert) return null;
-
-          // Collect all step maps, then find inserted ranges in newState coordinates
-          const maps = transactions.flatMap((tr) => [...tr.mapping.maps]);
-          const insertedRanges: [number, number][] = [];
-
-          for (let i = 0; i < maps.length; i++) {
-            maps[i].forEach((_oldFrom, _oldTo, newFrom, newTo) => {
-              let from = newFrom;
-              let to = newTo;
-              for (let j = i + 1; j < maps.length; j++) {
-                from = maps[j].map(from, 1);
-                to = maps[j].map(to, -1);
-              }
-              if (to > from) insertedRanges.push([from, to]);
-            });
-          }
-
-          if (insertedRanges.length === 0) return null;
-
-          // Stamp unstamped blocks within inserted ranges
-          const tr = newState.tr.setMeta(STAMP_META, true);
-          let changed = false;
-          const docSize = newState.doc.content.size;
-
-          for (const [from, to] of insertedRanges) {
-            newState.doc.nodesBetween(
-              Math.max(0, from),
-              Math.min(to, docSize),
-              (node, pos) => {
-                if (
-                  node.type.name !== "paragraph" &&
-                  node.type.name !== "heading"
-                )
-                  return;
-                if (node.attrs[ATTR] != null) return;
-                tr.setNodeMarkup(pos, undefined, {
-                  ...node.attrs,
-                  [ATTR]: secs,
-                });
-                changed = true;
-              },
-            );
-          }
-
-          return changed ? tr : null;
         },
       }),
     ];

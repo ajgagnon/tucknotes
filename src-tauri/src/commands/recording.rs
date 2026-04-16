@@ -286,8 +286,12 @@ mod macos {
         let paused = meeting_id.is_some()
             && !recording
             && !state.finalize_in_progress.load(Ordering::SeqCst);
+        let wall_offset_secs = *lock_or_err(&state.wall_time_offset_secs)?;
         let elapsed_secs = lock_or_err(&state.started_at)?
-            .map(|s| s.elapsed().as_secs())
+            .map(|s| {
+                let session_secs = s.elapsed().as_secs_f64();
+                (wall_offset_secs + session_secs).floor() as u64
+            })
             .unwrap_or(0);
         Ok(RecordingStateEvent {
             recording,
