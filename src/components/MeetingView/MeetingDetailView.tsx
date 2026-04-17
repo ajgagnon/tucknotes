@@ -28,7 +28,7 @@ import { LiveTranscript } from "./LiveTranscript";
 import { PersistedTranscript } from "./PersistedTranscript";
 import { RecordingErrorBanner } from "./RecordingErrorBanner";
 import { TranscriptFab } from "./TranscriptFab";
-import { MeetingNotesEditor } from "./MeetingNotesEditor";
+import { MeetingDocumentEditor } from "./MeetingDocumentEditor";
 import { cn } from "@/lib/utils";
 
 interface MeetingDetailViewProps {
@@ -232,32 +232,35 @@ export function MeetingDetailView({
     </p>
   );
 
-  const documentPanel =
-    selectedDoc?.kind === "minutes" ? (
-      <>
-        {minutesPanel}
-        {summaryError && !summarizing && (
-          <p className="mt-2 text-xs text-red-500 dark:text-red-400">
-            {summaryError}
-          </p>
-        )}
-      </>
-    ) : selectedDoc?.kind === "notes" ? (
-      <MeetingNotesEditor
-        documentId={selectedDoc.id}
-        meetingId={detail.meeting.id}
-        initialBody={selectedDoc.body}
-        onDocumentBodySaved={onMeetingDocumentBodyUpdated}
-      />
-    ) : selectedDoc ? (
-      selectedDoc.body ? (
-        <div className="prose prose-sm dark:prose-invert max-w-none">
-          <ReactMarkdown>{selectedDoc.body}</ReactMarkdown>
-        </div>
-      ) : (
-        <p className="text-sm text-neutral-400 italic">Empty document.</p>
-      )
-    ) : null;
+  const isMinutes = selectedDoc?.kind === "minutes";
+  const showMinutesStreaming = isMinutes && summarizing;
+  const showMinutesPlaceholder =
+    isMinutes && !summarizing && !currentSummary;
+  const isEditorPanel =
+    !!selectedDoc && !showMinutesStreaming && !showMinutesPlaceholder;
+  const editorInitialBody = isMinutes
+    ? currentSummary
+    : selectedDoc?.body ?? null;
+
+  const documentPanel = !selectedDoc ? null : showMinutesStreaming ? (
+    <>
+      {minutesPanel}
+      {summaryError && !summarizing && (
+        <p className="mt-2 text-xs text-red-500 dark:text-red-400">
+          {summaryError}
+        </p>
+      )}
+    </>
+  ) : showMinutesPlaceholder ? (
+    minutesPanel
+  ) : (
+    <MeetingDocumentEditor
+      key={selectedDoc.id}
+      documentId={selectedDoc.id}
+      initialBody={editorInitialBody}
+      onDocumentBodySaved={onMeetingDocumentBodyUpdated}
+    />
+  );
 
   const showSummarizeAction =
     selectedDoc?.kind === "minutes" &&
@@ -336,7 +339,7 @@ export function MeetingDetailView({
         <div
           className={cn(
             "min-h-0 flex-1",
-            selectedDoc?.kind === "notes"
+            isEditorPanel
               ? "flex min-h-0 flex-col overflow-hidden"
               : "overflow-y-auto",
           )}

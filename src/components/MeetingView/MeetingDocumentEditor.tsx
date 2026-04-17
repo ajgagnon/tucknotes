@@ -4,20 +4,18 @@ import { SimpleEditor } from "@/components/tiptap-templates/simple/simple-editor
 
 const DEBOUNCE_MS = 500;
 
-interface MeetingNotesEditorProps {
+interface MeetingDocumentEditorProps {
   documentId: string;
-  meetingId: string;
   initialBody: string | null;
   /** Keep parent meeting detail in sync after save so remounting (e.g. tab switch) hydrates fresh markdown. */
   onDocumentBodySaved?: (documentId: string, body: string) => void;
 }
 
-export function MeetingNotesEditor({
+export function MeetingDocumentEditor({
   documentId,
-  meetingId: _meetingId,
   initialBody,
   onDocumentBodySaved,
-}: MeetingNotesEditorProps) {
+}: MeetingDocumentEditorProps) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPersistedRef = useRef<string>(initialBody ?? "");
   const latestRef = useRef<string>(initialBody ?? "");
@@ -67,7 +65,7 @@ export function MeetingNotesEditor({
   );
 
   return (
-    <div className="meeting-notes-editor flex min-h-0 flex-1 flex-col">
+    <div className="meeting-document-editor flex min-h-0 flex-1 flex-col">
       <SimpleEditor
         key={documentId}
         initialMarkdown={initialBody}
