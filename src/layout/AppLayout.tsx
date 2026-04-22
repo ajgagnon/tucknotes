@@ -460,6 +460,20 @@ function AppLayout() {
     };
   }, [loadMeetings]);
 
+  // Keep sidebar in sync with recording start/stop (e.g. meeting-detected overlay)
+  useEffect(() => {
+    const unlistenStateChanged = listen("recording-state-changed", () => {
+      loadMeetings();
+    });
+    const unlistenFinalized = listen("recording-finalized", () => {
+      loadMeetings();
+    });
+    return () => {
+      unlistenStateChanged.then((fn) => fn());
+      unlistenFinalized.then((fn) => fn());
+    };
+  }, [loadMeetings]);
+
   const grouped = useMemo(() => groupMeetings(meetings), [meetings]);
 
   const handleStartRecording = useCallback(
