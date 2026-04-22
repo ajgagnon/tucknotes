@@ -6,9 +6,8 @@ import "./meeting-notes-editor.scss";
 
 const DEBOUNCE_MS = 500;
 
-interface MeetingNotesEditorProps {
+interface MeetingDocumentEditorProps {
   documentId: string;
-  meetingId: string;
   initialBody: string | null;
   /** Keep parent meeting detail in sync after save so remounting (e.g. tab switch) hydrates fresh markdown. */
   onDocumentBodySaved?: (documentId: string, body: string) => void;
@@ -18,14 +17,13 @@ interface MeetingNotesEditorProps {
   onSeekTranscript?: (timestampMs: number) => void;
 }
 
-export function MeetingNotesEditor({
+export function MeetingDocumentEditor({
   documentId,
-  meetingId: _meetingId,
   initialBody,
   onDocumentBodySaved,
   stampElapsedSecs,
   onSeekTranscript,
-}: MeetingNotesEditorProps) {
+}: MeetingDocumentEditorProps) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPersistedRef = useRef<string>(initialBody ?? "");
   const latestRef = useRef<string>(initialBody ?? "");

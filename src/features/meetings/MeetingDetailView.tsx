@@ -29,7 +29,7 @@ import { LiveTranscript } from "./LiveTranscript";
 import { PersistedTranscript } from "./PersistedTranscript";
 import { RecordingErrorBanner } from "./RecordingErrorBanner";
 import { TranscriptFab } from "./TranscriptFab";
-import { MeetingNotesEditor } from "./MeetingNotesEditor";
+import { MeetingDocumentEditor } from "./MeetingDocumentEditor";
 import { cn } from "@/lib/utils";
 
 interface MeetingDetailViewProps {
@@ -251,34 +251,32 @@ export function MeetingDetailView({
     </p>
   );
 
-  const documentPanel =
-    selectedDoc?.kind === "minutes" ? (
-      <>
-        {minutesPanel}
-        {summaryError && !summarizing && (
-          <p className="mt-2 text-xs text-red-500 dark:text-red-400">
-            {summaryError}
-          </p>
-        )}
-      </>
-    ) : selectedDoc?.kind === "notes" ? (
-      <MeetingNotesEditor
-        documentId={selectedDoc.id}
-        meetingId={detail.meeting.id}
-        initialBody={selectedDoc.body}
-        onDocumentBodySaved={onMeetingDocumentBodyUpdated}
-        stampElapsedSecs={stampElapsedSecs}
-        onSeekTranscript={handleSeekTranscript}
-      />
-    ) : selectedDoc ? (
-      selectedDoc.body ? (
-        <div className="prose prose-sm dark:prose-invert max-w-none">
-          <ReactMarkdown>{selectedDoc.body}</ReactMarkdown>
-        </div>
-      ) : (
-        <p className="text-sm text-neutral-400 italic">Empty document.</p>
-      )
-    ) : null;
+  const isMinutesTab = selectedDoc?.kind === "minutes";
+  const panelMode: "streaming" | "placeholder" | "editor" | null = !selectedDoc
+    ? null
+    : isMinutesTab && summarizing
+      ? "streaming"
+      : isMinutesTab && !currentSummary
+        ? "placeholder"
+        : "editor";
+  const editorInitialBody = isMinutesTab
+    ? currentSummary
+    : selectedDoc?.body ?? null;
+
+  const documentPanel = !selectedDoc
+    ? null
+    : panelMode === "editor"
+      ? (
+          <MeetingDocumentEditor
+            key={selectedDoc.id}
+            documentId={selectedDoc.id}
+            initialBody={editorInitialBody}
+            onDocumentBodySaved={onMeetingDocumentBodyUpdated}
+            stampElapsedSecs={isMinutesTab ? null : stampElapsedSecs}
+            onSeekTranscript={handleSeekTranscript}
+          />
+        )
+      : minutesPanel;
 
   const showSummarizeAction =
     selectedDoc?.kind === "minutes" &&
@@ -357,13 +355,19 @@ export function MeetingDetailView({
         <div
           className={cn(
             "min-h-0 flex-1",
-            selectedDoc?.kind === "notes"
+            panelMode === "editor"
               ? "flex min-h-0 flex-col overflow-hidden"
               : "overflow-y-auto",
           )}
         >
           {documentPanel}
         </div>
+
+        {isMinutesTab && !summarizing && summaryError && (
+          <p className="shrink-0 px-5 pb-2 text-xs text-red-500 dark:text-red-400">
+            {summaryError}
+          </p>
+        )}
 
         {!isLiveRecording && showSummarizeAction && (
           <Button
