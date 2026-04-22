@@ -232,35 +232,30 @@ export function MeetingDetailView({
     </p>
   );
 
-  const isMinutes = selectedDoc?.kind === "minutes";
-  const showMinutesStreaming = isMinutes && summarizing;
-  const showMinutesPlaceholder =
-    isMinutes && !summarizing && !currentSummary;
-  const isEditorPanel =
-    !!selectedDoc && !showMinutesStreaming && !showMinutesPlaceholder;
-  const editorInitialBody = isMinutes
+  const isMinutesTab = selectedDoc?.kind === "minutes";
+  const panelMode: "streaming" | "placeholder" | "editor" | null = !selectedDoc
+    ? null
+    : isMinutesTab && summarizing
+      ? "streaming"
+      : isMinutesTab && !currentSummary
+        ? "placeholder"
+        : "editor";
+  const editorInitialBody = isMinutesTab
     ? currentSummary
     : selectedDoc?.body ?? null;
 
-  const documentPanel = !selectedDoc ? null : showMinutesStreaming ? (
-    <>
-      {minutesPanel}
-      {summaryError && !summarizing && (
-        <p className="mt-2 text-xs text-red-500 dark:text-red-400">
-          {summaryError}
-        </p>
-      )}
-    </>
-  ) : showMinutesPlaceholder ? (
-    minutesPanel
-  ) : (
-    <MeetingDocumentEditor
-      key={selectedDoc.id}
-      documentId={selectedDoc.id}
-      initialBody={editorInitialBody}
-      onDocumentBodySaved={onMeetingDocumentBodyUpdated}
-    />
-  );
+  const documentPanel = !selectedDoc
+    ? null
+    : panelMode === "editor"
+      ? (
+          <MeetingDocumentEditor
+            key={selectedDoc.id}
+            documentId={selectedDoc.id}
+            initialBody={editorInitialBody}
+            onDocumentBodySaved={onMeetingDocumentBodyUpdated}
+          />
+        )
+      : minutesPanel;
 
   const showSummarizeAction =
     selectedDoc?.kind === "minutes" &&
@@ -339,13 +334,19 @@ export function MeetingDetailView({
         <div
           className={cn(
             "min-h-0 flex-1",
-            isEditorPanel
+            panelMode === "editor"
               ? "flex min-h-0 flex-col overflow-hidden"
               : "overflow-y-auto",
           )}
         >
           {documentPanel}
         </div>
+
+        {isMinutesTab && !summarizing && summaryError && (
+          <p className="shrink-0 px-5 pb-2 text-xs text-red-500 dark:text-red-400">
+            {summaryError}
+          </p>
+        )}
 
         {!isLiveRecording && showSummarizeAction && (
           <Button
