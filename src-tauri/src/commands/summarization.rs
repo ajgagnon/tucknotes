@@ -224,7 +224,7 @@ async fn do_summarize(
     // 4. Persist summary to database
     {
         let conn = lock_or_err(&db_state.conn)?;
-        database::set_minutes_body(&conn, meeting_id, &summary)?;
+        database::set_summary_body(&conn, meeting_id, &summary)?;
     }
 
     // 5. Signal summary completion (scoped to meeting_id)

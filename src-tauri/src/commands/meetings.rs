@@ -34,17 +34,6 @@ pub fn get_meeting(
 }
 
 #[tauri::command]
-pub fn create_meeting_document(
-    state: tauri::State<'_, DatabaseState>,
-    meeting_id: String,
-    title: Option<String>,
-) -> Result<MeetingDocumentRow, AppError> {
-    let conn = lock_or_err(&state.conn)?;
-    let title = title.unwrap_or_else(|| "New document".to_string());
-    database::create_meeting_document(&conn, &meeting_id, &title)
-}
-
-#[tauri::command]
 pub fn update_meeting_document_body(
     state: tauri::State<'_, DatabaseState>,
     document_id: String,

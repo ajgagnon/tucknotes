@@ -92,15 +92,15 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
         CREATE TABLE IF NOT EXISTS meeting_documents (
             id           TEXT PRIMARY KEY,
             meeting_id   TEXT NOT NULL,
-            kind         TEXT NOT NULL CHECK (kind IN ('minutes', 'notes', 'custom')),
+            kind         TEXT NOT NULL CHECK (kind IN ('summary', 'notes')),
             title        TEXT NOT NULL,
             body         TEXT,
             sort_order   INTEGER NOT NULL,
             created_at   INTEGER NOT NULL,
             FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
         );
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_minutes_notes
-            ON meeting_documents(meeting_id, kind) WHERE kind IN ('minutes', 'notes');
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_summary_notes
+            ON meeting_documents(meeting_id, kind) WHERE kind IN ('summary', 'notes');
         CREATE INDEX IF NOT EXISTS idx_documents_meeting_sort
             ON meeting_documents(meeting_id, sort_order, created_at);",
     )?;
@@ -112,7 +112,68 @@ fn migrate_database(conn: &Connection) -> Result<(), AppError> {
     if meetings_table_has_column(conn, "summary")? {
         conn.execute("ALTER TABLE meetings DROP COLUMN summary", [])?;
     }
+    migrate_meeting_documents_to_summary_schema(conn)?;
     backfill_default_documents(conn)?;
+    Ok(())
+}
+
+/// Rebuilds `meeting_documents` with `kind IN ('summary', 'notes')` and rewrites data from dev-era CHECKs.
+/// Always run (idempotent for DBs that are already on the new schema).
+///
+/// Rename the table *before* rewriting any rows: older dev DBs had a CHECK like
+/// `kind IN ('minutes','notes','custom','enhanced','enhanced_raw')` that rejects `'summary'`,
+/// so any UPDATE on the original table would fail. Remapping happens in the INSERT ... SELECT
+/// into the freshly created table, which has the new CHECK.
+fn migrate_meeting_documents_to_summary_schema(conn: &Connection) -> Result<(), AppError> {
+    // After RENAME, SQLite keeps the same index *names* on `meeting_documents_old`, so we must
+    // drop them before reusing those names (init_schema already created them on the pre-rename
+    // table).
+    conn.execute("ALTER TABLE meeting_documents RENAME TO meeting_documents_old", [])?;
+    conn.execute_batch(
+        "DROP INDEX IF EXISTS idx_meeting_summary_notes;
+         DROP INDEX IF EXISTS idx_meeting_minutes_notes;
+         DROP INDEX IF EXISTS idx_documents_meeting_sort;",
+    )?;
+    conn.execute_batch(
+        "CREATE TABLE meeting_documents (
+            id           TEXT PRIMARY KEY,
+            meeting_id   TEXT NOT NULL,
+            kind         TEXT NOT NULL CHECK (kind IN ('summary', 'notes')),
+            title        TEXT NOT NULL,
+            body         TEXT,
+            sort_order   INTEGER NOT NULL,
+            created_at   INTEGER NOT NULL,
+            FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX idx_meeting_summary_notes
+            ON meeting_documents(meeting_id, kind) WHERE kind IN ('summary', 'notes');
+        CREATE INDEX idx_documents_meeting_sort
+            ON meeting_documents(meeting_id, sort_order, created_at);",
+    )?;
+    // Drop dev-era kinds we no longer store (`custom`, `enhanced`, `enhanced_raw`, …).
+    conn.execute(
+        "DELETE FROM meeting_documents_old WHERE kind NOT IN ('minutes', 'notes', 'summary')",
+        [],
+    )?;
+    // If both `summary` and `minutes` exist for a meeting, keep the existing summary row.
+    conn.execute(
+        "DELETE FROM meeting_documents_old WHERE kind = 'minutes' AND meeting_id IN (
+            SELECT meeting_id FROM meeting_documents_old WHERE kind = 'summary'
+        )",
+        [],
+    )?;
+    conn.execute_batch(
+        "INSERT INTO meeting_documents (id, meeting_id, kind, title, body, sort_order, created_at)
+            SELECT id,
+                   meeting_id,
+                   CASE WHEN kind = 'minutes' THEN 'summary' ELSE kind END,
+                   CASE WHEN kind = 'minutes' THEN 'Summary' ELSE title END,
+                   body,
+                   sort_order,
+                   created_at
+              FROM meeting_documents_old;
+         DROP TABLE meeting_documents_old;",
+    )?;
     Ok(())
 }
 
@@ -152,12 +213,12 @@ fn insert_default_meeting_documents(
     meeting_id: &str,
     created_at: i64,
 ) -> Result<(), AppError> {
-    let minutes_id = Uuid::new_v4().to_string();
+    let summary_id = Uuid::new_v4().to_string();
     let notes_id = Uuid::new_v4().to_string();
     conn.execute(
         "INSERT INTO meeting_documents (id, meeting_id, kind, title, body, sort_order, created_at)
-         VALUES (?1, ?2, 'minutes', 'Minutes', NULL, 0, ?3)",
-        rusqlite::params![minutes_id, meeting_id, created_at],
+         VALUES (?1, ?2, 'summary', 'Summary', NULL, 0, ?3)",
+        rusqlite::params![summary_id, meeting_id, created_at],
     )?;
     conn.execute(
         "INSERT INTO meeting_documents (id, meeting_id, kind, title, body, sort_order, created_at)
@@ -237,14 +298,14 @@ pub fn meeting_recording_duration_ms(conn: &Connection, id: &str) -> Result<i64,
     .map_err(Into::into)
 }
 
-pub fn set_minutes_body(conn: &Connection, meeting_id: &str, body: &str) -> Result<(), AppError> {
+pub fn set_summary_body(conn: &Connection, meeting_id: &str, body: &str) -> Result<(), AppError> {
     let n = conn.execute(
-        "UPDATE meeting_documents SET body = ?1 WHERE meeting_id = ?2 AND kind = 'minutes'",
+        "UPDATE meeting_documents SET body = ?1 WHERE meeting_id = ?2 AND kind = 'summary'",
         rusqlite::params![body, meeting_id],
     )?;
     if n == 0 {
         return Err(AppError::DatabaseError(format!(
-            "No minutes document for meeting: {meeting_id}"
+            "No summary document for meeting: {meeting_id}"
         )));
     }
     Ok(())
@@ -346,32 +407,6 @@ pub fn list_meeting_documents(
     Ok(docs)
 }
 
-pub fn create_meeting_document(
-    conn: &Connection,
-    meeting_id: &str,
-    title: &str,
-) -> Result<MeetingDocumentRow, AppError> {
-    let sort_order: i64 = conn.query_row(
-        "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM meeting_documents WHERE meeting_id = ?1",
-        [meeting_id],
-        |r| r.get(0),
-    )?;
-    let id = Uuid::new_v4().to_string();
-    let now = now_unix_ms();
-    conn.execute(
-        "INSERT INTO meeting_documents (id, meeting_id, kind, title, body, sort_order, created_at)
-         VALUES (?1, ?2, 'custom', ?3, NULL, ?4, ?5)",
-        rusqlite::params![id, meeting_id, title, sort_order, now],
-    )?;
-    conn.query_row(
-        "SELECT id, meeting_id, kind, title, body, sort_order, created_at
-         FROM meeting_documents WHERE id = ?1",
-        [&id],
-        map_document_row,
-    )
-    .map_err(Into::into)
-}
-
 pub fn get_meeting_with_segments(
     conn: &Connection,
     meeting_id: &str,
@@ -457,7 +492,7 @@ mod tests {
         assert_eq!(segments[1].text, "How are you");
         assert_eq!(segments[1].prompt.as_deref(), Some("Hello world"));
         assert_eq!(docs.len(), 2);
-        assert_eq!(docs[0].kind, "minutes");
+        assert_eq!(docs[0].kind, "summary");
         assert_eq!(docs[1].kind, "notes");
     }
 
@@ -522,31 +557,19 @@ mod tests {
     }
 
     #[test]
-    fn minutes_body_persists_in_documents() {
+    fn summary_body_persists_in_documents() {
         let conn = open_db_memory().unwrap();
 
         create_meeting(&conn, "s1", "Meeting", 1708700000000).unwrap();
         let (_, _, docs) = get_meeting_with_segments(&conn, "s1").unwrap();
         assert_eq!(docs[0].body, None);
 
-        super::set_minutes_body(&conn, "s1", "This was a productive meeting.").unwrap();
+        super::set_summary_body(&conn, "s1", "This was a productive meeting.").unwrap();
         let (_, _, docs) = get_meeting_with_segments(&conn, "s1").unwrap();
         assert_eq!(
             docs[0].body.as_deref(),
             Some("This was a productive meeting.")
         );
-    }
-
-    #[test]
-    fn create_custom_document() {
-        let conn = open_db_memory().unwrap();
-        create_meeting(&conn, "s1", "M", 1).unwrap();
-        let doc = create_meeting_document(&conn, "s1", "Extra").unwrap();
-        assert_eq!(doc.kind, "custom");
-        assert_eq!(doc.title, "Extra");
-        let (_, _, docs) = get_meeting_with_segments(&conn, "s1").unwrap();
-        assert_eq!(docs.len(), 3);
-        assert_eq!(docs[2].title, "Extra");
     }
 
     #[test]
@@ -572,5 +595,48 @@ mod tests {
             crate::errors::AppError::NotFound(_) => {}
             _ => panic!("expected NotFound, got {err:?}"),
         }
+    }
+
+    #[test]
+    fn migration_upgrades_dev_era_check_constraint() {
+        // Simulate a pre-launch dev DB where `meeting_documents` had a CHECK that forbids
+        // `'summary'`. The migration must not run any UPDATE against the old table, since the
+        // old CHECK would reject the rewritten kind.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        conn.execute_batch(
+            "CREATE TABLE meetings (
+                id           TEXT PRIMARY KEY,
+                title        TEXT,
+                created_at   INTEGER NOT NULL,
+                ended_at     INTEGER,
+                duration_ms  INTEGER
+            );
+            CREATE TABLE meeting_documents (
+                id           TEXT PRIMARY KEY,
+                meeting_id   TEXT NOT NULL,
+                kind         TEXT NOT NULL CHECK (kind IN ('minutes', 'notes', 'custom', 'enhanced', 'enhanced_raw')),
+                title        TEXT NOT NULL,
+                body         TEXT,
+                sort_order   INTEGER NOT NULL,
+                created_at   INTEGER NOT NULL,
+                FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+            );
+            INSERT INTO meetings (id, title, created_at) VALUES ('m1', 'Old', 1);
+            INSERT INTO meeting_documents VALUES ('d1', 'm1', 'minutes', 'Minutes', 'body-a', 0, 1);
+            INSERT INTO meeting_documents VALUES ('d2', 'm1', 'notes', 'Notes', NULL, 1, 1);
+            INSERT INTO meeting_documents VALUES ('d3', 'm1', 'enhanced', 'X', 'drop-me', 2, 1);",
+        )
+        .unwrap();
+
+        init_schema(&conn).unwrap();
+        migrate_database(&conn).unwrap();
+
+        let docs = list_meeting_documents(&conn, "m1").unwrap();
+        let kinds: Vec<&str> = docs.iter().map(|d| d.kind.as_str()).collect();
+        assert_eq!(kinds, vec!["summary", "notes"]);
+        let summary = docs.iter().find(|d| d.kind == "summary").unwrap();
+        assert_eq!(summary.title, "Summary");
+        assert_eq!(summary.body.as_deref(), Some("body-a"));
     }
 }

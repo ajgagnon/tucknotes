@@ -9,12 +9,12 @@ import {
   type SummarizationQueue,
   type TokenPayload,
   type TitlePayload,
-  minutesBodyFromDocuments,
+  summaryBodyFromDocuments,
 } from "./types";
 
 export function useMeetingSummarization(
   meeting: MeetingRow,
-  minutesBody: string | null,
+  summaryBody: string | null,
   onTitleChange?: (info: MeetingTitleInfo) => void,
 ) {
   const [currentTitle, setCurrentTitle] = useState(meeting.title);
@@ -26,13 +26,13 @@ export function useMeetingSummarization(
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [llmModelReady, setLlmModelReady] = useState<boolean | null>(null);
   const [currentSummary, setCurrentSummary] = useState<string | null>(
-    minutesBody,
+    summaryBody,
   );
 
   const unlistenTokenRef = useRef<(() => void) | null>(null);
   const unlistenThinkingRef = useRef<(() => void) | null>(null);
-  const minutesBodyRef = useRef(minutesBody);
-  minutesBodyRef.current = minutesBody;
+  const summaryBodyRef = useRef(summaryBody);
+  summaryBodyRef.current = summaryBody;
 
   const registerStreamListeners = useCallback(async () => {
     const tokenUn = await listen<TokenPayload>("summary:token", (event) => {
@@ -80,8 +80,8 @@ export function useMeetingSummarization(
   }, []);
 
   useEffect(() => {
-    setCurrentSummary(minutesBody);
-  }, [minutesBody]);
+    setCurrentSummary(summaryBody);
+  }, [summaryBody]);
 
   useEffect(() => {
     setCurrentTitle(meeting.title);
@@ -120,12 +120,12 @@ export function useMeetingSummarization(
               meetingId: meeting.id,
             });
             if (cancelled) return;
-            const freshMinutes = minutesBodyFromDocuments(fresh.documents);
+            const freshSummary = summaryBodyFromDocuments(fresh.documents);
             if (
-              freshMinutes &&
-              freshMinutes !== minutesBodyRef.current
+              freshSummary &&
+              freshSummary !== summaryBodyRef.current
             ) {
-              setCurrentSummary(freshMinutes);
+              setCurrentSummary(freshSummary);
               setGeneratingTitle(true);
               return;
             }
@@ -160,7 +160,7 @@ export function useMeetingSummarization(
         const result = await invoke<MeetingDetail>("get_meeting", {
           meetingId: meeting.id,
         });
-        setCurrentSummary(minutesBodyFromDocuments(result.documents));
+        setCurrentSummary(summaryBodyFromDocuments(result.documents));
       } catch {
         // fall through — summary will appear on next navigation
       }

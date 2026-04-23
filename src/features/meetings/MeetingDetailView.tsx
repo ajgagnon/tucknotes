@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles, Settings2, PlusIcon } from "lucide-react";
+import { Sparkles, Settings2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -8,20 +8,12 @@ import {
   type AppError,
 } from "@/features/recording";
 import { Button } from "@/components/ui/button";
-import {
-  Sheet,
-  SheetContent,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   type MeetingDetail,
-  type MeetingDocument,
   type MeetingTitleInfo,
   type TranscriptScrollHandle,
-  minutesBodyFromDocuments,
+  summaryBodyFromDocuments,
 } from "./types";
 import { useMeetingSummarization } from "./useMeetingSummarization";
 import { ThinkingBlock } from "./ThinkingBlock";
@@ -32,6 +24,9 @@ import { TranscriptFab } from "./TranscriptFab";
 import { MeetingDocumentEditor } from "./MeetingDocumentEditor";
 import { cn } from "@/lib/utils";
 
+/** Sentinel value for the Transcript tab (not a `MeetingDocument` id). */
+const TRANSCRIPT_TAB = "__transcript__";
+
 interface MeetingDetailViewProps {
   detail: MeetingDetail;
   isLiveRecording: boolean;
@@ -41,7 +36,7 @@ interface MeetingDetailViewProps {
   onTitleChange?: (info: MeetingTitleInfo) => void;
   /** After starting capture for an existing meeting (resume completed). */
   onRecordingStarted?: (meetingId: string) => void;
-  /** Reload meeting detail from the backend (e.g. after adding a document). */
+  /** Reload meeting detail from the backend. */
   onRefreshMeeting?: () => void | Promise<void>;
   /** Merge persisted document body into local meeting detail (notes autosave). */
   onMeetingDocumentBodyUpdated?: (documentId: string, body: string) => void;
@@ -55,13 +50,13 @@ export function MeetingDetailView({
   error,
   onTitleChange,
   onRecordingStarted,
-  onRefreshMeeting,
+  onRefreshMeeting: _onRefreshMeeting,
   onMeetingDocumentBodyUpdated,
 }: MeetingDetailViewProps) {
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const transcriptScrollRef = useRef<TranscriptScrollHandle | null>(null);
   const wasLiveRecordingRef = useRef(false);
-  const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const lastNonTranscriptTabRef = useRef<string>("");
   const docIds = useMemo(
     () => detail.documents.map((d) => d.id).join(","),
     [detail.documents],
@@ -82,8 +77,7 @@ export function MeetingDetailView({
   const transcriptFinalizing =
     transcriptFinalizingMeetingId === detail.meeting.id;
 
-  const capturingThisMeeting =
-    isLiveRecording && recording && !paused;
+  const capturingThisMeeting = isLiveRecording && recording && !paused;
 
   const stampElapsedSecs =
     isLiveRecording &&
@@ -93,14 +87,33 @@ export function MeetingDetailView({
       ? elapsed
       : null;
 
+  const defaultDocumentTabId = useMemo(
+    () =>
+      detail.documents.find((d) => d.kind === "summary")?.id ??
+      detail.documents[0]?.id ??
+      "",
+    [docIds, detail.documents],
+  );
+
+  const effectiveTabId = useMemo(() => {
+    if (selectedDocId === TRANSCRIPT_TAB) return TRANSCRIPT_TAB;
+    if (detail.documents.some((d) => d.id === selectedDocId)) {
+      return selectedDocId;
+    }
+    if (defaultDocumentTabId) return defaultDocumentTabId;
+    return TRANSCRIPT_TAB;
+  }, [selectedDocId, defaultDocumentTabId, docIds, detail.documents]);
+
+  const isTranscriptTab = effectiveTabId === TRANSCRIPT_TAB;
+
   const handleSeekTranscript = useCallback((timestampMs: number) => {
-    setTranscriptOpen(true);
+    setSelectedDocId(TRANSCRIPT_TAB);
     requestAnimationFrame(() => {
       transcriptScrollRef.current?.scrollToTimeMs(timestampMs);
     });
   }, []);
 
-  const minutesBodyStored = minutesBodyFromDocuments(detail.documents);
+  const summaryBodyStored = summaryBodyFromDocuments(detail.documents);
 
   const {
     summarizing,
@@ -112,12 +125,53 @@ export function MeetingDetailView({
     handleSummarize,
   } = useMeetingSummarization(
     detail.meeting,
-    minutesBodyStored,
+    summaryBodyStored,
     onTitleChange,
+  );
+
+  const leaveTranscriptTab = useCallback(() => {
+    setSelectedDocId((prev) => {
+      if (prev !== TRANSCRIPT_TAB) return prev;
+      return (
+        lastNonTranscriptTabRef.current ||
+        defaultDocumentTabId
+      );
+    });
+  }, [defaultDocumentTabId]);
+
+  const handleTabValueChange = useCallback(
+    (v: string) => {
+      if (v === TRANSCRIPT_TAB) {
+        if (effectiveTabId !== TRANSCRIPT_TAB) {
+          lastNonTranscriptTabRef.current = effectiveTabId;
+        }
+      } else {
+        lastNonTranscriptTabRef.current = v;
+      }
+      setSelectedDocId(v);
+    },
+    [effectiveTabId],
+  );
+
+  const handleTranscriptOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        if (effectiveTabId !== TRANSCRIPT_TAB) {
+          lastNonTranscriptTabRef.current = effectiveTabId;
+        }
+        setSelectedDocId(TRANSCRIPT_TAB);
+      } else {
+        setSelectedDocId(
+          lastNonTranscriptTabRef.current || defaultDocumentTabId,
+        );
+      }
+    },
+    [defaultDocumentTabId, effectiveTabId],
   );
 
   useEffect(() => {
     setSelectedDocId((prev) => {
+      if (prev === TRANSCRIPT_TAB) return prev;
       if (detail.documents.some((d) => d.id === prev)) return prev;
       if (isLiveRecording) {
         return (
@@ -127,12 +181,12 @@ export function MeetingDetailView({
         );
       }
       return (
-        detail.documents.find((d) => d.kind === "minutes")?.id ??
+        detail.documents.find((d) => d.kind === "summary")?.id ??
         detail.documents[0]?.id ??
         ""
       );
     });
-  }, [detail.meeting.id, docIds, isLiveRecording]);
+  }, [detail.meeting.id, docIds, isLiveRecording, detail.documents]);
 
   useEffect(() => {
     if (isLiveRecording && !wasLiveRecordingRef.current) {
@@ -142,36 +196,28 @@ export function MeetingDetailView({
     wasLiveRecordingRef.current = isLiveRecording;
   }, [isLiveRecording, docIds, detail.documents]);
 
-  const effectiveTabId =
-    selectedDocId ||
-    detail.documents.find((d) => d.kind === "minutes")?.id ||
-    detail.documents[0]?.id ||
-    "";
-
   const selectedDoc =
-    detail.documents.find((d) => d.id === effectiveTabId) ??
-    detail.documents[0];
+    isTranscriptTab
+      ? undefined
+      : (detail.documents.find((d) => d.id === effectiveTabId) ??
+        detail.documents[0]);
 
   useEffect(() => {
-    if (isLiveRecording && transcriptOpen) {
+    if (isLiveRecording && isTranscriptTab) {
       transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [liveSegments, provisional, isLiveRecording, transcriptOpen]);
-
-  const handleTranscriptOpenChange = useCallback((open: boolean) => {
-    setTranscriptOpen(open);
-  }, []);
+  }, [liveSegments, provisional, isLiveRecording, isTranscriptTab]);
 
   const handleFooterPrimaryAction = useCallback(async () => {
     try {
       if (isLiveRecording && recording) {
         await stopRecording();
-        setTranscriptOpen(false);
+        leaveTranscriptTab();
         return;
       }
       if (isLiveRecording && paused) {
         await resumeRecording();
-        setTranscriptOpen(false);
+        leaveTranscriptTab();
         return;
       }
       if (!isLiveRecording && (recording || paused)) {
@@ -187,7 +233,7 @@ export function MeetingDetailView({
           is_provisional: false,
         })),
       );
-      setTranscriptOpen(false);
+      leaveTranscriptTab();
     } catch {
       /* error surfaced via context */
     }
@@ -195,6 +241,7 @@ export function MeetingDetailView({
     detail.meeting.id,
     detail.segments,
     isLiveRecording,
+    leaveTranscriptTab,
     onRecordingStarted,
     paused,
     recording,
@@ -212,20 +259,7 @@ export function MeetingDetailView({
     }
   }, [stopRecording]);
 
-  const handleAddDocument = useCallback(async () => {
-    try {
-      const doc = await invoke<MeetingDocument>("create_meeting_document", {
-        meetingId: detail.meeting.id,
-        title: null,
-      });
-      await onRefreshMeeting?.();
-      setSelectedDocId(doc.id);
-    } catch (e) {
-      console.error("create_meeting_document:", e);
-    }
-  }, [detail.meeting.id, onRefreshMeeting]);
-
-  const minutesPanel = summarizing ? (
+  const summaryPanel = summarizing ? (
     <div className="text-sm leading-relaxed p-5">
       {thinkingText && !streamedSummary && (
         <ThinkingBlock text={thinkingText} />
@@ -251,15 +285,15 @@ export function MeetingDetailView({
     </p>
   );
 
-  const isMinutesTab = selectedDoc?.kind === "minutes";
+  const isSummaryTab = selectedDoc?.kind === "summary";
   const panelMode: "streaming" | "placeholder" | "editor" | null = !selectedDoc
     ? null
-    : isMinutesTab && summarizing
+    : isSummaryTab && summarizing
       ? "streaming"
-      : isMinutesTab && !currentSummary
+      : isSummaryTab && !currentSummary
         ? "placeholder"
         : "editor";
-  const editorInitialBody = isMinutesTab
+  const editorInitialBody = isSummaryTab
     ? currentSummary
     : selectedDoc?.body ?? null;
 
@@ -272,17 +306,94 @@ export function MeetingDetailView({
             documentId={selectedDoc.id}
             initialBody={editorInitialBody}
             onDocumentBodySaved={onMeetingDocumentBodyUpdated}
-            stampElapsedSecs={isMinutesTab ? null : stampElapsedSecs}
+            stampElapsedSecs={isSummaryTab ? null : stampElapsedSecs}
             onSeekTranscript={handleSeekTranscript}
           />
         )
-      : minutesPanel;
+      : summaryPanel;
+
+  const transcriptPanel = (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        {isLiveRecording ? (
+          <div className="flex flex-col gap-3">
+            <LiveTranscript
+              ref={transcriptScrollRef}
+              segments={liveSegments}
+              provisional={provisional}
+              scrollRef={transcriptEndRef}
+            />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <PersistedTranscript
+              ref={transcriptScrollRef}
+              segments={detail.segments}
+            />
+          </div>
+        )}
+      </div>
+      <div className="mt-0 shrink-0 flex flex-row items-center justify-between gap-3 border-t px-4 py-3 sm:flex-row">
+        <div className="min-w-0 flex-1">
+          {isLiveRecording && recording && (
+            <button
+              type="button"
+              onClick={() => void handleFooterPrimaryAction()}
+              className="text-sm font-medium text-danger hover:underline"
+            >
+              Stop recording
+            </button>
+          )}
+          {isLiveRecording && paused && (
+            <button
+              type="button"
+              onClick={() => void handleFooterPrimaryAction()}
+              className="text-sm font-medium text-success hover:underline"
+            >
+              Resume
+            </button>
+          )}
+          {!isLiveRecording && !(recording || paused) && (
+            <button
+              type="button"
+              onClick={() => void handleFooterPrimaryAction()}
+              className="text-sm font-medium text-success hover:underline"
+            >
+              Resume
+            </button>
+          )}
+          {!isLiveRecording && (recording || paused) && (
+            <p className="text-xs text-muted-foreground">
+              Another meeting is being recorded.
+            </p>
+          )}
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="shrink-0 text-muted-foreground hover:text-foreground"
+          aria-label="Open Sound settings (macOS)"
+          title="Sound settings"
+          onClick={() => {
+            invoke("open_sound_settings").catch((e) =>
+              console.error("open_sound_settings:", e),
+            );
+          }}
+        >
+          <Settings2 className="size-4" />
+        </Button>
+      </div>
+    </div>
+  );
 
   const showSummarizeAction =
-    selectedDoc?.kind === "minutes" &&
+    isSummaryTab &&
     !summarizing &&
     llmModelReady &&
     !transcriptFinalizing;
+
+  const mainPanel = isTranscriptTab ? transcriptPanel : documentPanel;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -290,45 +401,46 @@ export function MeetingDetailView({
 
       <div className="p-3 border-b border-muted flex shrink-0 flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium">
-          {detail.documents.length > 0 ? (
-            <Tabs
-              value={effectiveTabId}
-              onValueChange={setSelectedDocId}
-              className="min-w-0 flex flex-row flex-wrap items-center gap-1.5"
-            >
-              <TabsList
-                variant="line"
-                className="h-auto min-h-8 flex-wrap gap-1 bg-transparent p-0"
-              >
-                {detail.documents.map((doc) => (
-                  <TabsTrigger
-                    key={doc.id}
-                    value={doc.id}
-                    className={cn(
-                      "h-8 shrink-0 rounded-full border px-3 text-muted-foreground text-xs",
-                      "border-muted data-active:border-muted data-active:text-foreground",
-                      "data-active:bg-muted",
-                      "group-data-[variant=line]/tabs-list:data-active:bg-muted",
-                      "dark:group-data-[variant=line]/tabs-list:data-active:bg-muted",
-                      "after:hidden",
-                    )}
-                  >
-                    {doc.title}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-          ) : null}
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="size-8 shrink-0 rounded-full p-0 text-muted-foreground"
-            aria-label="Add document"
-            onClick={() => void handleAddDocument()}
+          <Tabs
+            value={effectiveTabId}
+            onValueChange={handleTabValueChange}
+            className="min-w-0 flex flex-row flex-wrap items-center gap-1.5"
           >
-            <PlusIcon className="size-3.5" />
-          </Button>
+            <TabsList
+              variant="line"
+              className="h-auto min-h-8 flex-wrap gap-1 bg-transparent p-0"
+            >
+              {detail.documents.map((doc) => (
+                <TabsTrigger
+                  key={doc.id}
+                  value={doc.id}
+                  className={cn(
+                    "h-8 shrink-0 rounded-full border px-3 text-muted-foreground text-xs",
+                    "border-muted data-active:border-muted data-active:text-foreground",
+                    "data-active:bg-muted",
+                    "group-data-[variant=line]/tabs-list:data-active:bg-muted",
+                    "dark:group-data-[variant=line]/tabs-list:data-active:bg-muted",
+                    "after:hidden",
+                  )}
+                >
+                  {doc.title}
+                </TabsTrigger>
+              ))}
+              <TabsTrigger
+                value={TRANSCRIPT_TAB}
+                className={cn(
+                  "h-8 shrink-0 rounded-full border px-3 text-muted-foreground text-xs",
+                  "border-muted data-active:border-muted data-active:text-foreground",
+                  "data-active:bg-muted",
+                  "group-data-[variant=line]/tabs-list:data-active:bg-muted",
+                  "dark:group-data-[variant=line]/tabs-list:data-active:bg-muted",
+                  "after:hidden",
+                )}
+              >
+                Transcript
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
           {summarizing && (
             <span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground" />
           )}
@@ -341,7 +453,7 @@ export function MeetingDetailView({
           )}
           <TranscriptFab
             className="shrink-0"
-            open={transcriptOpen}
+            open={isTranscriptTab}
             onOpenChange={handleTranscriptOpenChange}
             capturing={capturingThisMeeting}
             onStopRecording={
@@ -355,15 +467,17 @@ export function MeetingDetailView({
         <div
           className={cn(
             "min-h-0 flex-1",
-            panelMode === "editor"
-              ? "flex min-h-0 flex-col overflow-hidden"
-              : "overflow-y-auto",
+            isTranscriptTab
+              ? "flex min-h-0 flex-col"
+              : panelMode === "editor"
+                ? "flex min-h-0 flex-col overflow-hidden"
+                : "overflow-y-auto",
           )}
         >
-          {documentPanel}
+          {mainPanel}
         </div>
 
-        {isMinutesTab && !summarizing && summaryError && (
+        {isSummaryTab && !summarizing && summaryError && (
           <p className="shrink-0 px-5 pb-2 text-xs text-red-500 dark:text-red-400">
             {summaryError}
           </p>
@@ -381,89 +495,6 @@ export function MeetingDetailView({
           </Button>
         )}
       </div>
-
-      <Sheet open={transcriptOpen} modal={false} onOpenChange={handleTranscriptOpenChange}>
-        <SheetContent
-          side="right"
-          showCloseButton
-          className="flex bg-background flex-col gap-0 rounded-t-2xl p-0"
-        >
-          <SheetHeader className="shrink-0 border-b px-4 py-3">
-            <SheetTitle>Transcript</SheetTitle>
-          </SheetHeader>
-
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-            {isLiveRecording ? (
-              <div className="flex flex-col gap-3">
-                <LiveTranscript
-                  ref={transcriptScrollRef}
-                  segments={liveSegments}
-                  provisional={provisional}
-                  scrollRef={transcriptEndRef}
-                />
-              </div>
-            ) : (
-              <div className="flex flex-col gap-3">
-                <PersistedTranscript
-                  ref={transcriptScrollRef}
-                  segments={detail.segments}
-                />
-              </div>
-            )}
-          </div>
-          <SheetFooter className="mt-0 shrink-0 flex-row items-center justify-between gap-3 border-t px-4 py-3 sm:flex-row">
-            <div className="min-w-0 flex-1">
-              {isLiveRecording && recording && (
-                <button
-                  type="button"
-                  onClick={() => void handleFooterPrimaryAction()}
-                  className="text-sm font-medium text-danger hover:underline"
-                >
-                  Stop recording
-                </button>
-              )}
-              {isLiveRecording && paused && (
-                <button
-                  type="button"
-                  onClick={() => void handleFooterPrimaryAction()}
-                  className="text-sm font-medium text-success hover:underline"
-                >
-                  Resume
-                </button>
-              )}
-              {!isLiveRecording && !(recording || paused) && (
-                <button
-                  type="button"
-                  onClick={() => void handleFooterPrimaryAction()}
-                  className="text-sm font-medium text-success hover:underline"
-                >
-                  Resume
-                </button>
-              )}
-              {!isLiveRecording && (recording || paused) && (
-                <p className="text-xs text-muted-foreground">
-                  Another meeting is being recorded.
-                </p>
-              )}
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="shrink-0 text-muted-foreground hover:text-foreground"
-              aria-label="Open Sound settings (macOS)"
-              title="Sound settings"
-              onClick={() => {
-                invoke("open_sound_settings").catch((e) =>
-                  console.error("open_sound_settings:", e),
-                );
-              }}
-            >
-              <Settings2 className="size-4" />
-            </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
     </div>
   );
 }

@@ -9,17 +9,17 @@ export interface MeetingRow {
 export interface MeetingDocument {
   id: string;
   meeting_id: string;
-  kind: string;
+  kind: "summary" | "notes";
   title: string;
   body: string | null;
   sort_order: number;
   created_at: number;
 }
 
-export function minutesBodyFromDocuments(
+export function summaryBodyFromDocuments(
   documents: MeetingDocument[],
 ): string | null {
-  return documents.find((d) => d.kind === "minutes")?.body ?? null;
+  return documents.find((d) => d.kind === "summary")?.body ?? null;
 }
 
 export interface SegmentRow {

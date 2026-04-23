@@ -2,6 +2,7 @@ import { forwardRef, useImperativeHandle, useRef } from "react";
 import { type TranscriptSegment } from "@/features/recording";
 import { type TranscriptScrollHandle } from "./types";
 import { SegmentBubble } from "./SegmentBubble";
+import { scrollAndHighlight } from "./transcriptScroll";
 
 export const LiveTranscript = forwardRef<
   TranscriptScrollHandle,
@@ -15,21 +16,7 @@ export const LiveTranscript = forwardRef<
 
   useImperativeHandle(ref, () => ({
     scrollToTimeMs(ms: number) {
-      const root = containerRef.current;
-      if (!root) return;
-      const rows = [...root.querySelectorAll("[data-timestamp-ms]")] as HTMLElement[];
-      const sorted = rows
-        .map((el) => ({
-          el,
-          t: parseInt(el.getAttribute("data-timestamp-ms") ?? "0", 10),
-        }))
-        .sort((a, b) => a.t - b.t);
-      let best: HTMLElement | null = null;
-      for (const { el, t } of sorted) {
-        if (t <= ms) best = el;
-        else break;
-      }
-      best?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      scrollAndHighlight(containerRef.current, ms);
     },
   }));
 
