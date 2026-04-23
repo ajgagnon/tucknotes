@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -7,7 +7,6 @@ import {
   FileText,
   Mic,
   Settings,
-  Clock,
   Trash2,
   MoreVertical,
   Search,
@@ -16,11 +15,7 @@ import {
   SidebarProvider,
   Sidebar,
   SidebarHeader,
-  SidebarContent,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
@@ -37,9 +32,9 @@ import {
   AudioVisualizer,
 } from "@/features/recording";
 import MeetingsView, {
+  MeetingsSidebar,
   type MeetingRow,
   type MeetingTitleInfo,
-  type SummarizationQueue,
 } from "@/features/meetings";
 import SettingsView from "@/features/settings/SettingsView";
 import { Button } from "@/components/ui/button";
@@ -52,51 +47,9 @@ import {
   CommandList,
 } from "@/components/ui/command";
 
-type ActiveView =
-  | { type: "meeting"; id: string }
-  | { type: "settings" }
-  | null;
+type ActiveView = { type: "meeting"; id: string } | { type: "settings" } | null;
 
 const appWindow = getCurrentWindow();
-
-// ---------------------------------------------------------------------------
-// Date grouping helpers
-// ---------------------------------------------------------------------------
-
-type DateBucket = "Today" | "Yesterday" | "Older";
-type SidebarGroupLabel = DateBucket | "Recents";
-
-function getDateGroup(ms: number): DateBucket {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterday = new Date(today.getTime() - 86400000);
-  const date = new Date(ms);
-  if (date >= today) return "Today";
-  if (date >= yesterday) return "Yesterday";
-  return "Older";
-}
-
-function groupMeetings(
-  meetings: MeetingRow[],
-): { label: SidebarGroupLabel; meetings: MeetingRow[] }[] {
-  const groups: Record<DateBucket, MeetingRow[]> = {
-    Today: [],
-    Yesterday: [],
-    Older: [],
-  };
-  for (const m of meetings) {
-    groups[getDateGroup(m.created_at)].push(m);
-  }
-  const order: DateBucket[] = ["Today", "Yesterday", "Older"];
-  const result: { label: SidebarGroupLabel; meetings: MeetingRow[] }[] = order
-    .filter((label) => groups[label].length > 0)
-    .map((label) => ({ label, meetings: groups[label] }));
-  // When "Older" is the only section, display it as "Recents"
-  if (result.length === 1 && result[0].label === "Older") {
-    result[0] = { ...result[0], label: "Recents" };
-  }
-  return result;
-}
 
 // ---------------------------------------------------------------------------
 // Header controls (global start / navigate-to-active-recording)
@@ -118,8 +71,7 @@ function HeaderControls({
 
   const activeTitle =
     meetingId != null
-      ? (meetings.find((m) => m.id === meetingId)?.title?.trim() ||
-          "Untitled")
+      ? meetings.find((m) => m.id === meetingId)?.title?.trim() || "Untitled"
       : "Untitled";
 
   const handleClick = async () => {
@@ -177,7 +129,10 @@ function PageHeader({
   const needsStoplightPadding = state === "collapsed";
 
   return (
-    <div className="min-h-[35px] shrink-0 border-b border-muted-foreground/10" onMouseDown={onDrag}>
+    <div
+      className="min-h-[35px] shrink-0 border-b border-muted-foreground/10"
+      onMouseDown={onDrag}
+    >
       <div className="flex items-center justify-between px-5 py-2 pr-2 h-full gap-2">
         <div
           className={cn(
@@ -214,10 +169,7 @@ function MeetingHeaderTitle({
 
   if (editing) {
     return (
-      <div
-        className="min-w-0 flex-1"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
+      <div className="min-w-0 flex-1" onMouseDown={(e) => e.stopPropagation()}>
         <input
           className="text-sm font-semibold bg-transparent border-b border-primary outline-none w-full"
           defaultValue={info.title || ""}
@@ -255,7 +207,9 @@ function MeetingHeaderTitle({
         >
           {info.generatingTitle ? (
             <span className="flex items-center gap-2">
-              <span className="text-muted-foreground">{info.title || "Generating title…"}</span>
+              <span className="text-muted-foreground">
+                {info.title || "Generating title…"}
+              </span>
               <span className="inline-block w-1.5 h-1.5 rounded-full bg-muted-foreground animate-pulse" />
             </span>
           ) : (
@@ -392,10 +346,6 @@ function AppLayout() {
   const [activeView, setActiveView] = useState<ActiveView>(null);
   const [meetings, setMeetings] = useState<MeetingRow[]>([]);
   const [meetingInfo, setMeetingInfo] = useState<MeetingTitleInfo | null>(null);
-  const [summaryQueue, setSummaryQueue] = useState<SummarizationQueue>({
-    active: null,
-    pending: [],
-  });
 
   // Only start window drag on primary-button single-click
   const onDrag = useCallback((e: React.MouseEvent) => {
@@ -426,30 +376,6 @@ function AppLayout() {
     setActiveView({ type: "meeting", id: meetings[0].id });
   }, [meetings, activeView]);
 
-  // Track summarization queue
-  useEffect(() => {
-    let cancelled = false;
-    async function check() {
-      try {
-        const queue = await invoke<SummarizationQueue>(
-          "get_summarization_queue",
-        );
-        if (!cancelled) setSummaryQueue(queue);
-      } catch {
-        /* ignore */
-      }
-    }
-    check();
-
-    const unlisten = listen<string>("summary:complete", () => {
-      if (!cancelled) check();
-    });
-    return () => {
-      cancelled = true;
-      unlisten.then((fn) => fn());
-    };
-  }, []);
-
   // Refresh meetings list when a title is generated (so sidebar shows it)
   useEffect(() => {
     const unlisten = listen("summary:title", () => {
@@ -460,10 +386,29 @@ function AppLayout() {
     };
   }, [loadMeetings]);
 
-  // Keep sidebar in sync with recording start/stop (e.g. meeting-detected overlay)
+  // Keep sidebar in sync with recording start/stop (e.g. meeting-detected overlay),
+  // and navigate to the recording page whenever a new recording session begins —
+  // including sessions started from other windows such as the meeting-detected overlay.
+  const lastRecordingMeetingIdRef = useRef<string | null>(null);
   useEffect(() => {
-    const unlistenStateChanged = listen("recording-state-changed", () => {
+    const unlistenStateChanged = listen<{
+      recording: boolean;
+      meeting_id: string | null;
+    }>("recording-state-changed", ({ payload: { recording, meeting_id } }) => {
+      // Load meetings list to update the sidebar.
       loadMeetings();
+
+      // No meeting attached — clear the tracker so the next session navigates.
+      if (meeting_id == null) {
+        lastRecordingMeetingIdRef.current = null;
+        return;
+      }
+      // Only navigate to meeting if we are recording and also the meeting
+      // is different from the last one we navigated to.
+      if (!recording || meeting_id === lastRecordingMeetingIdRef.current)
+        return;
+      lastRecordingMeetingIdRef.current = meeting_id;
+      setActiveView({ type: "meeting", id: meeting_id });
     });
     const unlistenFinalized = listen("recording-finalized", () => {
       loadMeetings();
@@ -473,8 +418,6 @@ function AppLayout() {
       unlistenFinalized.then((fn) => fn());
     };
   }, [loadMeetings]);
-
-  const grouped = useMemo(() => groupMeetings(meetings), [meetings]);
 
   const handleStartRecording = useCallback(
     (meetingId: string) => {
@@ -498,10 +441,7 @@ function AppLayout() {
       try {
         await invoke("delete_meeting", { meetingId });
         setMeetings((prev) => prev.filter((m) => m.id !== meetingId));
-        if (
-          activeView?.type === "meeting" &&
-          activeView.id === meetingId
-        ) {
+        if (activeView?.type === "meeting" && activeView.id === meetingId) {
           setActiveView(null);
           setMeetingInfo(null);
         }
@@ -519,7 +459,7 @@ function AppLayout() {
   const handleSaveTitle = useCallback(
     async (title: string) => {
       if (!activeView || activeView.type !== "meeting") return;
-      setMeetingInfo((prev) => prev ? { ...prev, title } : prev);
+      setMeetingInfo((prev) => (prev ? { ...prev, title } : prev));
       try {
         await invoke("update_meeting_title", {
           meetingId: activeView.id,
@@ -581,7 +521,9 @@ function AppLayout() {
                     <HeaderControls
                       meetings={meetings}
                       onStartRecording={handleStartRecording}
-                      onNavigateToActiveRecording={handleNavigateToActiveRecording}
+                      onNavigateToActiveRecording={
+                        handleNavigateToActiveRecording
+                      }
                     />
                   </div>
                   <button
@@ -594,14 +536,16 @@ function AppLayout() {
                     aria-label="Search meetings"
                     aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"}
                   >
-                    <Search className="size-3 shrink-0 opacity-70" aria-hidden />
+                    <Search
+                      className="size-3 shrink-0 opacity-70"
+                      aria-hidden
+                    />
                     <span className="min-w-0 flex-1 truncate text-xs">
                       Search...
                     </span>
                     <span className="pointer-events-none hidden shrink-0 items-center gap-0.5 sm:inline-flex">
                       <kbd className="text-muted-foreground rounded font-sans text-xs font-medium">
-                      {isMac ? "⌘" : "Ctrl"}
-                        K
+                        {isMac ? "⌘" : "Ctrl"}K
                       </kbd>
                     </span>
                   </button>
@@ -641,46 +585,16 @@ function AppLayout() {
                   </CommandDialog>
                 </div>
               </SidebarHeader>
-              <SidebarContent>
-                {grouped.map((group) => (
-                  <SidebarGroup key={group.label} className="px-3 py-0">
-                    <SidebarGroupLabel className="text-xs text-muted-foreground px-2">
-                      {group.label}
-                    </SidebarGroupLabel>
-                    <SidebarGroupContent>
-                      <SidebarMenu>
-                        {group.meetings.map((meeting) => (
-                          <SidebarMenuItem key={meeting.id}>
-                            <SidebarMenuButton
-                              isActive={
-                                activeView?.type === "meeting" &&
-                                activeView.id === meeting.id
-                              }
-                              onClick={() =>
-                                setActiveView({
-                                  type: "meeting",
-                                  id: meeting.id,
-                                })
-                              }
-                              tooltip={meeting.title || "Untitled"}
-                            >
-                              <span className="truncate flex items-center gap-1.5 text-xs">
-                                {meeting.title || "Untitled"}
-                                {summaryQueue.active === meeting.id && (
-                                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
-                                )}
-                                {summaryQueue.pending.includes(meeting.id) && (
-                                  <Clock className="w-3 h-3 text-muted-foreground shrink-0" />
-                                )}
-                              </span>
-                            </SidebarMenuButton>
-                          </SidebarMenuItem>
-                        ))}
-                      </SidebarMenu>
-                    </SidebarGroupContent>
-                  </SidebarGroup>
-                ))}
-              </SidebarContent>
+              <MeetingsSidebar
+                meetings={meetings}
+                activeMeetingId={
+                  activeView?.type === "meeting" ? activeView.id : null
+                }
+                onSelectMeeting={(id) =>
+                  setActiveView({ type: "meeting", id })
+                }
+              />
+
               <SidebarFooter className="px-3 pb-3">
                 <SidebarMenu>
                   <SidebarMenuItem>
