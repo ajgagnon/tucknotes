@@ -8,6 +8,7 @@ import {
   type AppError,
 } from "@/features/recording";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   type MeetingDetail,
@@ -77,6 +78,15 @@ export function MeetingDetailView({
   const transcriptFinalizing =
     transcriptFinalizingMeetingId === detail.meeting.id;
 
+  const summaryHidden = isLiveRecording;
+  const visibleDocuments = useMemo(
+    () =>
+      summaryHidden
+        ? detail.documents.filter((d) => d.kind !== "summary")
+        : detail.documents,
+    [detail.documents, summaryHidden],
+  );
+
   const capturingThisMeeting = isLiveRecording && recording && !paused;
 
   const stampElapsedSecs =
@@ -89,20 +99,20 @@ export function MeetingDetailView({
 
   const defaultDocumentTabId = useMemo(
     () =>
-      detail.documents.find((d) => d.kind === "summary")?.id ??
-      detail.documents[0]?.id ??
+      visibleDocuments.find((d) => d.kind === "summary")?.id ??
+      visibleDocuments[0]?.id ??
       "",
-    [docIds, detail.documents],
+    [docIds, visibleDocuments],
   );
 
   const effectiveTabId = useMemo(() => {
     if (selectedDocId === TRANSCRIPT_TAB) return TRANSCRIPT_TAB;
-    if (detail.documents.some((d) => d.id === selectedDocId)) {
+    if (visibleDocuments.some((d) => d.id === selectedDocId)) {
       return selectedDocId;
     }
     if (defaultDocumentTabId) return defaultDocumentTabId;
     return TRANSCRIPT_TAB;
-  }, [selectedDocId, defaultDocumentTabId, docIds, detail.documents]);
+  }, [selectedDocId, defaultDocumentTabId, docIds, visibleDocuments]);
 
   const isTranscriptTab = effectiveTabId === TRANSCRIPT_TAB;
 
@@ -172,21 +182,21 @@ export function MeetingDetailView({
   useEffect(() => {
     setSelectedDocId((prev) => {
       if (prev === TRANSCRIPT_TAB) return prev;
-      if (detail.documents.some((d) => d.id === prev)) return prev;
+      if (visibleDocuments.some((d) => d.id === prev)) return prev;
       if (isLiveRecording) {
         return (
-          detail.documents.find((d) => d.kind === "notes")?.id ??
-          detail.documents[0]?.id ??
+          visibleDocuments.find((d) => d.kind === "notes")?.id ??
+          visibleDocuments[0]?.id ??
           ""
         );
       }
       return (
-        detail.documents.find((d) => d.kind === "summary")?.id ??
-        detail.documents[0]?.id ??
+        visibleDocuments.find((d) => d.kind === "summary")?.id ??
+        visibleDocuments[0]?.id ??
         ""
       );
     });
-  }, [detail.meeting.id, docIds, isLiveRecording, detail.documents]);
+  }, [detail.meeting.id, docIds, isLiveRecording, visibleDocuments]);
 
   useEffect(() => {
     if (isLiveRecording && !wasLiveRecordingRef.current) {
@@ -199,8 +209,8 @@ export function MeetingDetailView({
   const selectedDoc =
     isTranscriptTab
       ? undefined
-      : (detail.documents.find((d) => d.id === effectiveTabId) ??
-        detail.documents[0]);
+      : (visibleDocuments.find((d) => d.id === effectiveTabId) ??
+        visibleDocuments[0]);
 
   useEffect(() => {
     if (isLiveRecording && isTranscriptTab) {
@@ -259,7 +269,25 @@ export function MeetingDetailView({
     }
   }, [stopRecording]);
 
-  const summaryPanel = summarizing ? (
+  const showSummarySkeleton =
+    transcriptFinalizing ||
+    (summarizing && !streamedSummary && !thinkingText);
+
+  const summaryPanel = showSummarySkeleton ? (
+    <div className="space-y-4 p-5" aria-busy="true" aria-live="polite">
+      <Skeleton className="h-5 w-1/3" />
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-11/12" />
+        <Skeleton className="h-4 w-4/5" />
+      </div>
+      <Skeleton className="h-5 w-1/4" />
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-5/6" />
+      </div>
+    </div>
+  ) : summarizing ? (
     <div className="text-sm leading-relaxed p-5">
       {thinkingText && !streamedSummary && (
         <ThinkingBlock text={thinkingText} />
@@ -410,7 +438,7 @@ export function MeetingDetailView({
               variant="line"
               className="h-auto min-h-8 flex-wrap gap-1 bg-transparent p-0"
             >
-              {detail.documents.map((doc) => (
+              {visibleDocuments.map((doc) => (
                 <TabsTrigger
                   key={doc.id}
                   value={doc.id}
