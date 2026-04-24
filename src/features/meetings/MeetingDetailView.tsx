@@ -89,6 +89,9 @@ export function MeetingDetailView({
   );
 
   const capturingThisMeeting = isLiveRecording && recording && !paused;
+  const canResume =
+    (isLiveRecording && paused) ||
+    (!isLiveRecording && !(recording || paused));
 
   const stampElapsedSecs =
     isLiveRecording &&
@@ -162,22 +165,6 @@ export function MeetingDetailView({
       setSelectedDocId(v);
     },
     [effectiveTabId],
-  );
-
-  const handleTranscriptOpenChange = useCallback(
-    (open: boolean) => {
-      if (open) {
-        if (effectiveTabId !== TRANSCRIPT_TAB) {
-          lastNonTranscriptTabRef.current = effectiveTabId;
-        }
-        setSelectedDocId(TRANSCRIPT_TAB);
-      } else {
-        setSelectedDocId(
-          lastNonTranscriptTabRef.current || defaultDocumentTabId,
-        );
-      }
-    },
-    [defaultDocumentTabId, effectiveTabId],
   );
 
   useEffect(() => {
@@ -269,6 +256,10 @@ export function MeetingDetailView({
       /* error surfaced via context */
     }
   }, [stopRecording]);
+
+  const handleFabResume = useCallback(() => {
+    void handleFooterPrimaryAction();
+  }, [handleFooterPrimaryAction]);
 
   const showSummarySkeleton =
     transcriptFinalizing ||
@@ -498,11 +489,10 @@ export function MeetingDetailView({
           )}
           <TranscriptFab
             className="shrink-0"
-            open={isTranscriptTab}
-            onOpenChange={handleTranscriptOpenChange}
             capturing={capturingThisMeeting}
+            onResume={canResume ? handleFabResume : undefined}
             onStopRecording={
-              isLiveRecording ? handleFabStopRecording : undefined
+              capturingThisMeeting ? handleFabStopRecording : undefined
             }
           />
         </div>
