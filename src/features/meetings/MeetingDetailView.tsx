@@ -23,6 +23,7 @@ import { PersistedTranscript } from "./PersistedTranscript";
 import { RecordingErrorBanner } from "./RecordingErrorBanner";
 import { TranscriptFab } from "./TranscriptFab";
 import { MeetingDocumentEditor } from "./MeetingDocumentEditor";
+import { StreamingSummaryToolbarPlaceholder } from "./StreamingSummaryToolbarPlaceholder";
 import { cn } from "@/lib/utils";
 
 /** Sentinel value for the Transcript tab (not a `MeetingDocument` id). */
@@ -288,20 +289,36 @@ export function MeetingDetailView({
       </div>
     </div>
   ) : summarizing ? (
-    <div className="text-sm leading-relaxed p-5">
-      {thinkingText && !streamedSummary && (
-        <ThinkingBlock text={thinkingText} />
-      )}
-      {streamedSummary && (
-        <div className="prose prose-sm dark:prose-invert max-w-none">
-          <ReactMarkdown>{streamedSummary}</ReactMarkdown>
-          <span className="inline-block w-1.5 h-4 bg-primary animate-pulse ml-0.5 align-text-bottom rounded-sm" />
+    <div className="simple-editor-wrapper">
+      <StreamingSummaryToolbarPlaceholder />
+      <div className="simple-editor-content">
+        <div
+          className="tiptap ProseMirror simple-editor"
+          style={{ whiteSpace: "normal" }}
+        >
+          {thinkingText && !streamedSummary && (
+            <ThinkingBlock text={thinkingText} />
+          )}
+          {streamedSummary && (
+            <>
+              <ReactMarkdown>{streamedSummary}</ReactMarkdown>
+              <span className="inline-block w-1.5 h-4 bg-primary animate-pulse ml-0.5 align-text-bottom rounded-sm" />
+            </>
+          )}
         </div>
-      )}
+      </div>
     </div>
   ) : currentSummary ? (
-    <div className="prose prose-sm dark:prose-invert max-w-none p-5">
-      <ReactMarkdown>{currentSummary}</ReactMarkdown>
+    <div className="simple-editor-wrapper">
+      <StreamingSummaryToolbarPlaceholder />
+      <div className="simple-editor-content">
+        <div
+          className="tiptap ProseMirror simple-editor"
+          style={{ whiteSpace: "normal" }}
+        >
+          <ReactMarkdown>{currentSummary}</ReactMarkdown>
+        </div>
+      </div>
     </div>
   ) : llmModelReady === false ? (
     <p className="text-sm text-neutral-400 italic p-5">
