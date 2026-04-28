@@ -36,6 +36,7 @@ import MeetingsView, {
   type MeetingRow,
   type MeetingTitleInfo,
 } from "@/features/meetings";
+import { MeetingDateBadge } from "@/features/meetings/MeetingDateBadge";
 import SettingsView from "@/features/settings/SettingsView";
 import { Button } from "@/components/ui/button";
 import {
@@ -195,7 +196,7 @@ function MeetingHeaderTitle({
   }
 
   return (
-    <div className="min-w-0 flex-1">
+    <div className="min-w-0 flex-1 flex items-center justify-between">
       <div className="flex items-center gap-2 min-w-0">
         <h1
           className="text-md font-semibold truncate cursor-text m-0"
@@ -216,13 +217,14 @@ function MeetingHeaderTitle({
             info.title || "Untitled"
           )}
         </h1>
-        {/* <span className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">
-          {formatDate(info.createdAt)}
-          {info.durationMs != null &&
-            ` · ${formatTime(Math.floor(info.durationMs / 1000))}`}
-        </span> */}
+
         <MeetingMenu onDelete={() => onDeleteMeeting(meetingId)} />
       </div>
+      <MeetingDateBadge
+        title={info.title}
+        createdAt={info.createdAt}
+        durationMs={info.durationMs}
+      />
     </div>
   );
 }
@@ -590,9 +592,7 @@ function AppLayout() {
                 activeMeetingId={
                   activeView?.type === "meeting" ? activeView.id : null
                 }
-                onSelectMeeting={(id) =>
-                  setActiveView({ type: "meeting", id })
-                }
+                onSelectMeeting={(id) => setActiveView({ type: "meeting", id })}
               />
 
               <SidebarFooter className="px-3 pb-3">
