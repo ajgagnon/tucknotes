@@ -865,3 +865,60 @@ pub fn debug_show_overlay(app: tauri::AppHandle, app_name: String) {
     #[cfg(not(target_os = "macos"))]
     let _ = (&app, &app_name);
 }
+
+#[tauri::command]
+pub fn show_auto_stop_overlay(app: tauri::AppHandle, app_name: Option<String>) {
+    #[cfg(target_os = "macos")]
+    crate::services::meeting_detector::show_auto_stop_overlay(&app, app_name.as_deref());
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = (&app, &app_name);
+}
+
+#[tauri::command]
+pub fn hide_auto_stop_overlay(app: tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    crate::services::meeting_detector::hide_auto_stop_overlay(&app);
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = &app;
+}
+
+/// Invoked by the auto-stop overlay's "Keep recording" button. Bridges the
+/// click into a Tauri event the main window's recording provider listens for.
+#[tauri::command]
+pub fn request_auto_stop_cancel(app: tauri::AppHandle) {
+    use tauri::Emitter;
+    let _ = app.emit("auto-stop-cancel-requested", ());
+}
+
+/// Returns the app name of the currently detected meeting, or `null` when
+/// the detector is idle. Used by the recording provider on session-start to
+/// recover from the case where a meeting was already detected before the
+/// recording began (otherwise no `meeting-detected` event arrives during the
+/// session, and auto-stop is never armed).
+#[tauri::command]
+pub fn get_current_meeting_app(
+    state: tauri::State<'_, crate::models::meeting_detection::MeetingDetectorState>,
+) -> Option<String> {
+    state
+        .current_app
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
+/// Diagnostic: returns "bundle.id: window title" for every on-screen window
+/// the meeting detector can see. Call from dev console:
+/// `await window.__TAURI__.core.invoke("debug_dump_windows")`
+#[tauri::command]
+pub fn debug_dump_windows() -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::services::meeting_detector::dump_windows()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        vec!["debug_dump_windows: macOS only".into()]
+    }
+}

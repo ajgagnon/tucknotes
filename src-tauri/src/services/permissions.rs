@@ -44,8 +44,15 @@ pub fn request_microphone_access() -> bool {
         .unwrap_or(false)
 }
 
+/// Check whether Screen Recording permission is granted (without prompting).
+/// The meeting detector uses ScreenCaptureKit to enumerate window titles, which
+/// requires this permission.
+pub fn check_screen_recording() -> bool {
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
 // ---------------------------------------------------------------------------
-// Accessibility permission (required for meeting detection AX tree scanning)
+// Accessibility permission
 // ---------------------------------------------------------------------------
 
 use core_foundation::base::TCFType;

@@ -191,24 +191,6 @@ export function useMeetingSummarization(
     };
   }, [meeting.id]);
 
-  useEffect(() => {
-    const unlisten = listen<{ meeting_id: string }>(
-      "recording-finalized",
-      (event) => {
-        if (event.payload.meeting_id !== meeting.id) return;
-        if (llmModelReady === false) return;
-        if (summaryBodyRef.current) return;
-        void handleSummarize();
-      },
-    );
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-    // handleSummarize is intentionally omitted: it's recreated each render
-    // but reads fresh state via closures, and summaryBodyRef is a ref.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meeting.id, llmModelReady]);
-
   async function handleSummarize() {
     if (currentSummary) {
       const confirmed = await ask("This will replace the existing summary.", {

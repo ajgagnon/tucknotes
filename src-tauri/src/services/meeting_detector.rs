@@ -1,376 +1,219 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use screencapturekit::shareable_content::SCShareableContent;
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::models::meeting_detection::{
-    CallSignal, DetectionPhase, MeetingAppProfile, MeetingDetectedEvent, MeetingDetectorState,
+    DetectionPhase, MeetingAppProfile, MeetingConfidence, MeetingDetectedEvent,
+    MeetingDetectorState, MeetingPattern,
 };
 
 // ---------------------------------------------------------------------------
 // Thresholds
 // ---------------------------------------------------------------------------
 
-const SCAN_INTERVAL: Duration = Duration::from_secs(5);
-const ENDING_TIMEOUT: Duration = Duration::from_secs(30);
-const AX_MAX_DEPTH: usize = 10;
-const AX_MAX_ELEMENTS: usize = 500;
+const SCAN_INTERVAL: Duration = Duration::from_secs(2);
+/// Time the meeting must remain undetected after entering `Ending` before we
+/// declare it ended. Window-presence is a clean signal so this can be short.
+const ENDING_TIMEOUT: Duration = Duration::from_secs(4);
+/// Consecutive missed scans required before transitioning `Active → Ending`.
+/// Guards against a single transient `SCShareableContent::get()` failure
+/// false-firing the end-of-meeting path.
+const REQUIRED_MISSES_BEFORE_ENDING: u32 = 2;
 
 // ---------------------------------------------------------------------------
-// App profiles
+// Per-app profiles (mirrors RecapAI/Recap's pattern lists)
 // ---------------------------------------------------------------------------
+
+const ZOOM_PATTERNS: &[MeetingPattern] = &[
+    MeetingPattern {
+        keyword: "zoom meeting",
+        confidence: MeetingConfidence::High,
+        case_sensitive: false,
+        exclude_patterns: &[],
+    },
+    MeetingPattern {
+        keyword: "zoom webinar",
+        confidence: MeetingConfidence::High,
+        case_sensitive: false,
+        exclude_patterns: &[],
+    },
+];
+
+const TEAMS_PATTERNS: &[MeetingPattern] = &[
+    MeetingPattern {
+        keyword: "microsoft teams meeting",
+        confidence: MeetingConfidence::High,
+        case_sensitive: false,
+        exclude_patterns: &[],
+    },
+    MeetingPattern {
+        keyword: "teams meeting",
+        confidence: MeetingConfidence::High,
+        case_sensitive: false,
+        exclude_patterns: &[],
+    },
+    MeetingPattern {
+        keyword: "meeting in \"",
+        confidence: MeetingConfidence::High,
+        case_sensitive: false,
+        exclude_patterns: &[],
+    },
+    MeetingPattern {
+        keyword: "call with",
+        confidence: MeetingConfidence::High,
+        case_sensitive: false,
+        exclude_patterns: &[],
+    },
+    MeetingPattern {
+        keyword: "| Microsoft Teams",
+        confidence: MeetingConfidence::High,
+        case_sensitive: true,
+        exclude_patterns: &["chat", "activity"],
+    },
+];
+
+// Meet's in-call tab title is "Meet - <code>" (en/em dash variants exist by
+// locale). The /landing and /new pages titled "Google Meet" — combined with
+// Chrome's " - Google Chrome" suffix on window titles — would also match a
+// bare "meet - " pattern, so we exclude any title containing "google meet"
+// to avoid pinning the detector in `Active` when the user is on a lobby page.
+const MEET_PATTERNS: &[MeetingPattern] = &[
+    MeetingPattern {
+        keyword: "meet - ",
+        confidence: MeetingConfidence::High,
+        case_sensitive: false,
+        exclude_patterns: &["google meet"],
+    },
+    MeetingPattern {
+        keyword: "meet \u{2013} ",
+        confidence: MeetingConfidence::High,
+        case_sensitive: false,
+        exclude_patterns: &["google meet"],
+    },
+    MeetingPattern {
+        keyword: "meet \u{2014} ",
+        confidence: MeetingConfidence::High,
+        case_sensitive: false,
+        exclude_patterns: &["google meet"],
+    },
+];
+
+const SLACK_PATTERNS: &[MeetingPattern] = &[
+    MeetingPattern {
+        keyword: "huddle",
+        confidence: MeetingConfidence::High,
+        case_sensitive: false,
+        exclude_patterns: &[],
+    },
+    MeetingPattern {
+        keyword: "slack call",
+        confidence: MeetingConfidence::High,
+        case_sensitive: false,
+        exclude_patterns: &[],
+    },
+];
 
 fn default_profiles() -> Vec<MeetingAppProfile> {
     vec![
         MeetingAppProfile {
             app_name: "Zoom",
             bundle_ids: &["us.zoom.xos"],
-            url_patterns: &[],
-            call_signals: vec![CallSignal::RoleWithName {
-                role: "AXButton",
-                name_contains: "Leave",
-            }],
+            patterns: ZOOM_PATTERNS,
         },
         MeetingAppProfile {
             app_name: "Microsoft Teams",
             bundle_ids: &["com.microsoft.teams2", "com.microsoft.teams"],
-            url_patterns: &["teams.microsoft.com"],
-            call_signals: vec![
-                CallSignal::RoleWithName {
-                    role: "AXButton",
-                    name_contains: "Leave",
-                },
-                CallSignal::RoleWithName {
-                    role: "AXButton",
-                    name_contains: "Hang up",
-                },
-            ],
+            patterns: TEAMS_PATTERNS,
         },
         MeetingAppProfile {
             app_name: "Google Meet",
+            // Browser-hosted — owning app is whatever browser is running.
             bundle_ids: &[],
-            url_patterns: &["meet.google.com"],
-            call_signals: vec![
-                CallSignal::RoleWithName {
-                    role: "AXButton",
-                    name_contains: "Leave call",
-                },
-                CallSignal::AutomationIdContains("call-leave"),
-            ],
+            patterns: MEET_PATTERNS,
         },
         MeetingAppProfile {
             app_name: "Slack",
             bundle_ids: &["com.tinyspeck.slackmacgap"],
-            url_patterns: &[],
-            call_signals: vec![CallSignal::RoleWithName {
-                role: "AXButton",
-                name_contains: "Leave",
-            }],
+            patterns: SLACK_PATTERNS,
         },
     ]
 }
 
 // ---------------------------------------------------------------------------
-// AX FFI bindings (ApplicationServices.framework)
+// Pattern matching
 // ---------------------------------------------------------------------------
 
-#[link(name = "ApplicationServices", kind = "framework")]
-extern "C" {
-    fn AXUIElementCreateApplication(pid: i32) -> *mut std::ffi::c_void;
-    fn AXUIElementCopyAttributeValue(
-        element: *const std::ffi::c_void,
-        attribute: *const std::ffi::c_void,
-        value: *mut *mut std::ffi::c_void,
-    ) -> i32;
-}
+/// Returns the highest-confidence match for `title` among `patterns`, or `None`.
+fn find_best_match(
+    title: &str,
+    patterns: &[MeetingPattern],
+) -> Option<MeetingConfidence> {
+    let title_lower = title.to_lowercase();
 
-use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
-use core_foundation::string::CFString;
-use core_foundation_sys::array::{CFArrayGetCount, CFArrayGetValueAtIndex};
-
-/// Read a string attribute from an AXUIElement. Returns `None` on failure.
-unsafe fn ax_string_attr(element: *const std::ffi::c_void, attr: &str) -> Option<String> {
-    let cf_attr = CFString::new(attr);
-    let mut value: *mut std::ffi::c_void = std::ptr::null_mut();
-    let err = AXUIElementCopyAttributeValue(
-        element,
-        cf_attr.as_concrete_TypeRef() as *const _,
-        &mut value,
-    );
-    if err != 0 || value.is_null() {
-        return None;
-    }
-    // Check that it's a CFString
-    let cf_type_id = core_foundation::base::CFGetTypeID(value as CFTypeRef);
-    if cf_type_id != core_foundation::string::CFStringGetTypeID() {
-        CFRelease(value as CFTypeRef);
-        return None;
-    }
-    let cf_str = CFString::wrap_under_get_rule(value as core_foundation::string::CFStringRef);
-    Some(cf_str.to_string())
-}
-
-/// Read an array attribute from an AXUIElement. Returns empty vec on failure.
-unsafe fn ax_array_attr(element: *const std::ffi::c_void, attr: &str) -> Vec<*mut std::ffi::c_void> {
-    let cf_attr = CFString::new(attr);
-    let mut value: *mut std::ffi::c_void = std::ptr::null_mut();
-    let err = AXUIElementCopyAttributeValue(
-        element,
-        cf_attr.as_concrete_TypeRef() as *const _,
-        &mut value,
-    );
-    if err != 0 || value.is_null() {
-        return Vec::new();
-    }
-    let cf_type_id = core_foundation::base::CFGetTypeID(value as CFTypeRef);
-    let array_type_id = core_foundation_sys::array::CFArrayGetTypeID();
-    if cf_type_id != array_type_id {
-        CFRelease(value as CFTypeRef);
-        return Vec::new();
-    }
-    let cf_array = value as core_foundation_sys::array::CFArrayRef;
-    let count = CFArrayGetCount(cf_array);
-    let mut result = Vec::with_capacity(count as usize);
-    for i in 0..count {
-        let item = CFArrayGetValueAtIndex(cf_array, i) as *mut std::ffi::c_void;
-        result.push(item);
-    }
-    // Don't release the array — the AX elements inside it are not retained by us,
-    // and the array itself was created by the AX call (we got ownership).
-    // We need the elements to remain valid while we walk them.
-    // Leak the array intentionally; elements are short-lived within the scan.
-    result
-}
-
-// ---------------------------------------------------------------------------
-// AX tree walking — check for call signals in a process
-// ---------------------------------------------------------------------------
-
-fn check_call_signals(pid: i32, signals: &[CallSignal]) -> bool {
-    std::panic::catch_unwind(|| unsafe { do_check_call_signals(pid, signals) }).unwrap_or(false)
-}
-
-unsafe fn do_check_call_signals(pid: i32, signals: &[CallSignal]) -> bool {
-    let app_element = AXUIElementCreateApplication(pid);
-    if app_element.is_null() {
-        return false;
-    }
-
-    let windows = ax_array_attr(app_element, "AXWindows");
-    let visited = AtomicUsize::new(0);
-
-    let mut found = false;
-    for window in &windows {
-        if walk_ax_tree(*window, signals, 0, &visited) {
-            found = true;
+    let mut best: Option<MeetingConfidence> = None;
+    for pattern in patterns {
+        let haystack = if pattern.case_sensitive { title } else { &title_lower };
+        let needle_owned;
+        let needle: &str = if pattern.case_sensitive {
+            pattern.keyword
+        } else {
+            needle_owned = pattern.keyword.to_lowercase();
+            &needle_owned
+        };
+        if !haystack.contains(needle) {
+            continue;
+        }
+        let excluded = pattern
+            .exclude_patterns
+            .iter()
+            .any(|ex| title_lower.contains(&ex.to_lowercase()));
+        if excluded {
+            continue;
+        }
+        match best {
+            Some(b) if b >= pattern.confidence => {}
+            _ => best = Some(pattern.confidence),
+        }
+        if best == Some(MeetingConfidence::High) {
             break;
         }
     }
-
-    CFRelease(app_element as CFTypeRef);
-    found
+    best
 }
 
-unsafe fn walk_ax_tree(
-    element: *const std::ffi::c_void,
-    signals: &[CallSignal],
-    depth: usize,
-    visited: &AtomicUsize,
-) -> bool {
-    if depth > AX_MAX_DEPTH {
-        return false;
-    }
-    if visited.fetch_add(1, Ordering::Relaxed) >= AX_MAX_ELEMENTS {
-        return false;
-    }
+/// Scan all on-screen windows and return the first matched profile's app name.
+fn scan_windows_for_meeting(profiles: &[MeetingAppProfile]) -> Option<String> {
+    let content = SCShareableContent::get().ok()?;
+    let windows = content.windows();
 
-    // Check this element against all signals
-    if element_matches_any_signal(element, signals) {
-        return true;
-    }
-
-    // Skip content-heavy subtrees
-    let role = ax_string_attr(element, "AXRole");
-    if let Some(ref r) = role {
-        match r.as_str() {
-            "AXTextArea" | "AXTable" | "AXOutline" | "AXList" => return false,
-            _ => {}
+    for window in windows {
+        if !window.is_on_screen() {
+            continue;
         }
-    }
-
-    // Recurse into children
-    let children = ax_array_attr(element, "AXChildren");
-    for child in &children {
-        if walk_ax_tree(*child, signals, depth + 1, visited) {
-            return true;
+        let Some(title) = window.title() else { continue };
+        if title.is_empty() {
+            continue;
         }
-    }
+        let owning_bundle = window
+            .owning_application()
+            .map(|app| app.bundle_identifier());
 
-    false
-}
-
-unsafe fn element_matches_any_signal(
-    element: *const std::ffi::c_void,
-    signals: &[CallSignal],
-) -> bool {
-    let role = ax_string_attr(element, "AXRole");
-    let title = ax_string_attr(element, "AXTitle");
-    let description = ax_string_attr(element, "AXDescription");
-    let identifier = ax_string_attr(element, "AXIdentifier");
-
-    for signal in signals {
-        match signal {
-            CallSignal::AutomationIdContains(substr) => {
-                if let Some(ref id) = identifier {
-                    if id.to_lowercase().contains(&substr.to_lowercase()) {
-                        return true;
-                    }
-                }
-            }
-            CallSignal::RoleWithName {
-                role: expected_role,
-                name_contains,
-            } => {
-                let role_matches = role
-                    .as_deref()
-                    .map(|r| r == *expected_role)
-                    .unwrap_or(false);
-                if !role_matches {
+        for profile in profiles {
+            if !profile.bundle_ids.is_empty() {
+                let Some(ref bid) = owning_bundle else { continue };
+                if !profile.bundle_ids.iter().any(|b| b.eq_ignore_ascii_case(bid)) {
                     continue;
                 }
-                let needle = name_contains.to_lowercase();
-                let name_matches = title
-                    .as_deref()
-                    .map(|t| t.to_lowercase().contains(&needle))
-                    .unwrap_or(false)
-                    || description
-                        .as_deref()
-                        .map(|d| d.to_lowercase().contains(&needle))
-                        .unwrap_or(false);
-                if name_matches {
-                    return true;
-                }
+            }
+            if find_best_match(&title, profile.patterns).is_some() {
+                return Some(profile.app_name.to_string());
             }
         }
     }
-
-    false
-}
-
-// ---------------------------------------------------------------------------
-// Process scanning via NSWorkspace
-// ---------------------------------------------------------------------------
-
-struct MatchedProcess {
-    profile_index: usize,
-    pid: i32,
-}
-
-fn find_meeting_processes(profiles: &[MeetingAppProfile]) -> Vec<MatchedProcess> {
-    use objc2_app_kit::NSWorkspace;
-
-    let mut matches = Vec::new();
-
-    let workspace = NSWorkspace::sharedWorkspace();
-    let apps = workspace.runningApplications();
-
-    // Known browser bundle IDs
-    let browser_ids: &[&str] = &[
-        "com.google.Chrome",
-        "com.apple.Safari",
-        "company.thebrowser.Browser",
-        "org.mozilla.firefox",
-        "com.microsoft.edgemac",
-        "com.brave.Browser",
-        "com.operasoftware.Opera",
-    ];
-
-    for app in &apps {
-        let bundle_id = app.bundleIdentifier();
-        let bundle_str = bundle_id.as_ref().map(|b| b.to_string());
-
-        if let Some(ref bid) = bundle_str {
-            let bid_lower = bid.to_lowercase();
-
-            // Check native app profiles
-            for (i, profile) in profiles.iter().enumerate() {
-                for expected_bid in profile.bundle_ids {
-                    if bid_lower == expected_bid.to_lowercase() {
-                        let pid = app.processIdentifier();
-                        matches.push(MatchedProcess {
-                            profile_index: i,
-                            pid: pid as i32,
-                        });
-                    }
-                }
-            }
-
-            // Check browser-based profiles
-            let is_browser = browser_ids.iter().any(|b| bid_lower == b.to_lowercase());
-            if is_browser {
-                let pid = app.processIdentifier() as i32;
-                // Check window titles for URL patterns
-                if let Some(profile_idx) = check_browser_for_meeting_urls(pid, profiles) {
-                    matches.push(MatchedProcess {
-                        profile_index: profile_idx,
-                        pid,
-                    });
-                }
-            }
-        }
-    }
-
-    matches
-}
-
-/// Check a browser's AX windows for titles/URLs matching meeting URL patterns.
-fn check_browser_for_meeting_urls(pid: i32, profiles: &[MeetingAppProfile]) -> Option<usize> {
-    std::panic::catch_unwind(|| unsafe { do_check_browser_urls(pid, profiles) })
-        .ok()
-        .flatten()
-}
-
-unsafe fn do_check_browser_urls(pid: i32, profiles: &[MeetingAppProfile]) -> Option<usize> {
-    let app_element = AXUIElementCreateApplication(pid);
-    if app_element.is_null() {
-        return None;
-    }
-
-    let windows = ax_array_attr(app_element, "AXWindows");
-    let mut result = None;
-
-    for window in &windows {
-        let title = ax_string_attr(*window, "AXTitle");
-        let doc = ax_string_attr(*window, "AXDocument");
-
-        for (i, profile) in profiles.iter().enumerate() {
-            for pattern in profile.url_patterns {
-                let pattern_lower = pattern.to_lowercase();
-                let title_match = title
-                    .as_deref()
-                    .map(|t| t.to_lowercase().contains(&pattern_lower))
-                    .unwrap_or(false);
-                let doc_match = doc
-                    .as_deref()
-                    .map(|d| d.to_lowercase().contains(&pattern_lower))
-                    .unwrap_or(false);
-                if title_match || doc_match {
-                    result = Some(i);
-                    break;
-                }
-            }
-            if result.is_some() {
-                break;
-            }
-        }
-        if result.is_some() {
-            break;
-        }
-    }
-
-    CFRelease(app_element as CFTypeRef);
-    result
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -381,6 +224,7 @@ struct DetectorStateMachine {
     phase: DetectionPhase,
     ending_since: Option<Instant>,
     detected_app: Option<String>,
+    consecutive_misses: u32,
 }
 
 impl DetectorStateMachine {
@@ -389,48 +233,49 @@ impl DetectorStateMachine {
             phase: DetectionPhase::Idle,
             ending_since: None,
             detected_app: None,
+            consecutive_misses: 0,
         }
     }
 
-    /// Advance the state machine given whether a meeting signal was found.
-    /// Returns `Some(phase)` if a phase transition occurred.
     fn tick(&mut self, signal_found: bool, app_name: Option<&str>) -> Option<DetectionPhase> {
         match self.phase {
             DetectionPhase::Idle => {
                 if signal_found {
                     self.phase = DetectionPhase::Active;
                     self.detected_app = app_name.map(String::from);
+                    self.consecutive_misses = 0;
                     Some(DetectionPhase::Active)
                 } else {
                     None
                 }
             }
             DetectionPhase::Active => {
-                if !signal_found {
-                    self.phase = DetectionPhase::Ending;
-                    self.ending_since = Some(Instant::now());
+                if signal_found {
+                    self.consecutive_misses = 0;
                     None
                 } else {
+                    self.consecutive_misses += 1;
+                    if self.consecutive_misses >= REQUIRED_MISSES_BEFORE_ENDING {
+                        self.phase = DetectionPhase::Ending;
+                        self.ending_since = Some(Instant::now());
+                    }
                     None
                 }
             }
             DetectionPhase::Ending => {
                 if signal_found {
-                    // Signal came back — return to active
                     self.phase = DetectionPhase::Active;
                     self.ending_since = None;
+                    self.consecutive_misses = 0;
                     None
                 } else if self
                     .ending_since
                     .map(|t| t.elapsed() >= ENDING_TIMEOUT)
                     .unwrap_or(false)
                 {
-                    // Grace period expired — meeting ended
                     self.phase = DetectionPhase::Idle;
                     self.ending_since = None;
-                    let prev_app = self.detected_app.take();
-                    // Return Idle to signal meeting ended (with app name still available)
-                    self.detected_app = prev_app; // keep for the event, cleared next tick
+                    self.consecutive_misses = 0;
                     Some(DetectionPhase::Idle)
                 } else {
                     None
@@ -444,28 +289,26 @@ impl DetectorStateMachine {
 // Overlay window helpers
 // ---------------------------------------------------------------------------
 
-pub fn show_overlay(app: &tauri::AppHandle, app_name: &str) {
-    // Don't create a second overlay
-    if app.get_webview_window("meeting-overlay").is_some() {
-        return;
-    }
-
-    let screen_w = app
-        .primary_monitor()
+fn primary_screen_width(app: &tauri::AppHandle) -> f64 {
+    app.primary_monitor()
         .ok()
         .flatten()
-        .map(|m| {
-            let scale = m.scale_factor();
-            m.size().width as f64 / scale
-        })
-        .unwrap_or(1440.0);
+        .map(|m| m.size().width as f64 / m.scale_factor())
+        .unwrap_or(1440.0)
+}
 
-    let url = WebviewUrl::App(format!("overlay.html?app={}", urlencoding(app_name)).into());
-
-    let builder = WebviewWindowBuilder::new(app, "meeting-overlay", url)
+fn build_overlay_window(
+    app: &tauri::AppHandle,
+    label: &str,
+    url: WebviewUrl,
+    width: f64,
+    right_margin: f64,
+) {
+    let screen_w = primary_screen_width(app);
+    let builder = WebviewWindowBuilder::new(app, label, url)
         .title("")
-        .inner_size(320.0, 80.0)
-        .position(screen_w - 340.0, 20.0)
+        .inner_size(width, 80.0)
+        .position(screen_w - (width + right_margin), 20.0)
         .always_on_top(true)
         .decorations(false)
         .transparent(true)
@@ -476,14 +319,61 @@ pub fn show_overlay(app: &tauri::AppHandle, app_name: &str) {
         .accept_first_mouse(true);
 
     if let Err(e) = builder.build() {
-        eprintln!("[meeting_detector] failed to create overlay window: {e}");
+        eprintln!("[meeting_detector] failed to create overlay window {label}: {e}");
     }
 }
 
-fn hide_overlay(app: &tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("meeting-overlay") {
+fn close_overlay_window(app: &tauri::AppHandle, label: &str) {
+    if let Some(w) = app.get_webview_window(label) {
         let _ = w.close();
     }
+}
+
+pub fn show_overlay(app: &tauri::AppHandle, app_name: &str) {
+    if app.get_webview_window("meeting-overlay").is_some() {
+        return;
+    }
+    let url = WebviewUrl::App(format!("overlay.html?app={}", urlencoding(app_name)).into());
+    build_overlay_window(app, "meeting-overlay", url, 320.0, 20.0);
+}
+
+fn hide_overlay(app: &tauri::AppHandle) {
+    close_overlay_window(app, "meeting-overlay");
+}
+
+pub fn show_auto_stop_overlay(app: &tauri::AppHandle, app_name: Option<&str>) {
+    if app.get_webview_window("auto-stop-overlay").is_some() {
+        return;
+    }
+    let app_param = app_name.map(urlencoding).unwrap_or_default();
+    let url = WebviewUrl::App(format!("overlay.html?mode=autostop&app={app_param}").into());
+    build_overlay_window(app, "auto-stop-overlay", url, 360.0, 20.0);
+}
+
+pub fn hide_auto_stop_overlay(app: &tauri::AppHandle) {
+    close_overlay_window(app, "auto-stop-overlay");
+}
+
+/// Diagnostic helper: returns one line per on-screen window with title +
+/// owning bundle id. Used by the `debug_dump_windows` Tauri command so a
+/// user can inspect what the detector sees after ending a meeting.
+pub fn dump_windows() -> Vec<String> {
+    let Some(content) = SCShareableContent::get().ok() else {
+        return vec!["[meeting_detector] SCShareableContent::get() failed".into()];
+    };
+    content
+        .windows()
+        .into_iter()
+        .filter(|w| w.is_on_screen())
+        .filter_map(|w| {
+            let title = w.title().filter(|t| !t.is_empty())?;
+            let bundle = w
+                .owning_application()
+                .map(|app| app.bundle_identifier())
+                .unwrap_or_default();
+            Some(format!("{bundle}: {title}"))
+        })
+        .collect()
 }
 
 fn urlencoding(s: &str) -> String {
@@ -496,7 +386,11 @@ fn urlencoding(s: &str) -> String {
 // Background detection loop
 // ---------------------------------------------------------------------------
 
-pub fn start_detection_loop(app: tauri::AppHandle, recording_active: Arc<AtomicBool>) {
+pub fn start_detection_loop(
+    app: tauri::AppHandle,
+    recording_active: Arc<AtomicBool>,
+    current_app: Arc<Mutex<Option<String>>>,
+) {
     let state: tauri::State<'_, MeetingDetectorState> = app.state();
     let cancel = tokio_util::sync::CancellationToken::new();
     {
@@ -514,27 +408,13 @@ pub fn start_detection_loop(app: tauri::AppHandle, recording_active: Arc<AtomicB
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    // Skip scanning while recording is active
-                    if recording_active.load(Ordering::Relaxed) {
+                    if !crate::services::permissions::check_screen_recording() {
                         continue;
                     }
 
-                    // Check accessibility permission
-                    if !crate::services::permissions::check_accessibility() {
-                        continue;
-                    }
-
-                    // Scan for meeting processes (blocking AX work)
                     let profiles_clone = profiles.clone();
                     let scan_result = tokio::task::spawn_blocking(move || {
-                        let matched = find_meeting_processes(&profiles_clone);
-                        for m in &matched {
-                            let profile = &profiles_clone[m.profile_index];
-                            if check_call_signals(m.pid, &profile.call_signals) {
-                                return Some(profile.app_name.to_string());
-                            }
-                        }
-                        None
+                        scan_windows_for_meeting(&profiles_clone)
                     }).await;
 
                     let (signal_found, app_name) = match scan_result {
@@ -542,8 +422,11 @@ pub fn start_detection_loop(app: tauri::AppHandle, recording_active: Arc<AtomicB
                         _ => (false, None),
                     };
 
-                    // Advance state machine
                     if let Some(new_phase) = sm.tick(signal_found, app_name.as_deref()) {
+                        eprintln!(
+                            "[meeting_detector] phase transition → {:?} (app: {:?})",
+                            new_phase, sm.detected_app
+                        );
                         let event = MeetingDetectedEvent {
                             phase: new_phase,
                             app_name: sm.detected_app.clone(),
@@ -551,12 +434,20 @@ pub fn start_detection_loop(app: tauri::AppHandle, recording_active: Arc<AtomicB
 
                         match new_phase {
                             DetectionPhase::Active => {
+                                if let Ok(mut guard) = current_app.lock() {
+                                    *guard = sm.detected_app.clone();
+                                }
                                 let _ = app.emit("meeting-detected", &event);
-                                if let Some(ref name) = sm.detected_app {
-                                    show_overlay(&app, name);
+                                if !recording_active.load(Ordering::Relaxed) {
+                                    if let Some(ref name) = sm.detected_app {
+                                        show_overlay(&app, name);
+                                    }
                                 }
                             }
                             DetectionPhase::Idle => {
+                                if let Ok(mut guard) = current_app.lock() {
+                                    *guard = None;
+                                }
                                 let _ = app.emit("meeting-ended", &event);
                                 hide_overlay(&app);
                                 sm.detected_app = None;
@@ -571,4 +462,88 @@ pub fn start_detection_loop(app: tauri::AppHandle, recording_active: Arc<AtomicB
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_zoom_meeting_window_title() {
+        // Real-world Zoom title from a host's screenshot.
+        assert!(find_best_match("Andre Gagnon's Zoom Meeting", ZOOM_PATTERNS).is_some());
+    }
+
+    #[test]
+    fn matches_zoom_when_participant_too() {
+        assert!(find_best_match("Zoom Meeting", ZOOM_PATTERNS).is_some());
+    }
+
+    #[test]
+    fn rejects_text_editor_meeting_notes() {
+        // Profiles only match high-specificity strings ("zoom meeting", not bare
+        // "meeting"), so a TextEdit doc called "Meeting Notes" never matches.
+        assert!(find_best_match("Meeting Notes.txt", ZOOM_PATTERNS).is_none());
+    }
+
+    #[test]
+    fn matches_google_meet_in_call_title() {
+        assert!(find_best_match(
+            "Meet - abc-defg-hij - Google Chrome",
+            MEET_PATTERNS
+        )
+        .is_some());
+        // En dash variant (some locales).
+        assert!(find_best_match("Meet \u{2013} abc-defg-hij", MEET_PATTERNS).is_some());
+        // Em dash variant.
+        assert!(find_best_match("Meet \u{2014} abc-defg-hij", MEET_PATTERNS).is_some());
+    }
+
+    #[test]
+    fn rejects_google_meet_landing_page() {
+        // The /landing page's title is just "Google Meet" — must NOT match,
+        // otherwise the detector stays Active forever and the auto-stop
+        // overlay never appears when a real meeting ends.
+        assert!(find_best_match("Google Meet", MEET_PATTERNS).is_none());
+        // The /new "create meeting" page also lands here.
+        assert!(find_best_match("Google Meet - Google Chrome", MEET_PATTERNS).is_none());
+    }
+
+    #[test]
+    fn teams_chat_window_excluded() {
+        // "| Microsoft Teams" with "chat" in title should be excluded.
+        assert!(find_best_match("Some Chat | Microsoft Teams", TEAMS_PATTERNS).is_none());
+    }
+
+    #[test]
+    fn slack_huddle_matches() {
+        assert!(find_best_match("Huddle in #engineering", SLACK_PATTERNS).is_some());
+    }
+
+    #[test]
+    fn empty_title_no_match() {
+        assert!(find_best_match("", ZOOM_PATTERNS).is_none());
+    }
+
+    #[test]
+    fn state_machine_requires_consecutive_misses() {
+        let mut sm = DetectorStateMachine::new();
+        assert_eq!(sm.tick(true, Some("Zoom")), Some(DetectionPhase::Active));
+        // First miss: no transition (consecutive_misses = 1).
+        assert_eq!(sm.tick(false, None), None);
+        assert_eq!(sm.phase, DetectionPhase::Active);
+        // Second miss: transitions to Ending (consecutive_misses = 2).
+        assert_eq!(sm.tick(false, None), None);
+        assert_eq!(sm.phase, DetectionPhase::Ending);
+    }
+
+    #[test]
+    fn state_machine_resets_misses_on_signal() {
+        let mut sm = DetectorStateMachine::new();
+        sm.tick(true, Some("Zoom"));
+        sm.tick(false, None); // 1 miss
+        sm.tick(true, Some("Zoom")); // resets
+        sm.tick(false, None); // 1 miss again
+        assert_eq!(sm.phase, DetectionPhase::Active);
+    }
 }

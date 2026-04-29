@@ -36,6 +36,10 @@ import MeetingsView, {
   type MeetingRow,
   type MeetingTitleInfo,
 } from "@/features/meetings";
+import {
+  type MeetingDetail,
+  summaryBodyFromDocuments,
+} from "@/features/meetings/types";
 import { MeetingDateBadge } from "@/features/meetings/MeetingDateBadge";
 import SettingsView from "@/features/settings/SettingsView";
 import { Button } from "@/components/ui/button";
@@ -51,6 +55,28 @@ import {
 type ActiveView = { type: "meeting"; id: string } | { type: "settings" } | null;
 
 const appWindow = getCurrentWindow();
+
+/// Kicks off summarization for a just-finalized recording when there's no
+/// existing summary and an LLM model is downloaded. Lives at the layout level
+/// so it fires regardless of which view (or window) is currently focused.
+async function autoSummarizeIfNeeded(meetingId: string): Promise<void> {
+  try {
+    const detail = await invoke<MeetingDetail>("get_meeting", { meetingId });
+    if (summaryBodyFromDocuments(detail.documents)) return;
+
+    const selected = await invoke<string | null>("get_selected_llm_model");
+    if (!selected) return;
+    const ready = await invoke<boolean>("get_llm_model_status", {
+      modelId: selected,
+    });
+    if (!ready) return;
+
+    await invoke<string>("summarize_meeting", { meetingId });
+  } catch (e) {
+    // Already in progress / queued — not an error worth surfacing here.
+    console.debug("autoSummarizeIfNeeded:", e);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Header controls (global start / navigate-to-active-recording)
@@ -412,9 +438,13 @@ function AppLayout() {
       lastRecordingMeetingIdRef.current = meeting_id;
       setActiveView({ type: "meeting", id: meeting_id });
     });
-    const unlistenFinalized = listen("recording-finalized", () => {
-      loadMeetings();
-    });
+    const unlistenFinalized = listen<{ meeting_id: string }>(
+      "recording-finalized",
+      (event) => {
+        loadMeetings();
+        void autoSummarizeIfNeeded(event.payload.meeting_id);
+      },
+    );
     return () => {
       unlistenStateChanged.then((fn) => fn());
       unlistenFinalized.then((fn) => fn());

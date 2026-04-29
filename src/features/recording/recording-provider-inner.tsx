@@ -26,6 +26,11 @@ interface RecordingFinalizedEvent {
   meeting_id: string;
 }
 
+interface MeetingDetectedEvent {
+  phase: "Idle" | "Detecting" | "Active" | "Ending";
+  app_name: string | null;
+}
+
 export function RecordingProviderInner({ children }: { children: ReactNode }) {
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -40,10 +45,27 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
   >({});
 
   const sessionActiveRef = useRef(false);
+  const matchedMeetingRef = useRef(false);
+  const matchedAppNameRef = useRef<string | null>(null);
+  // Once the user clicks "Keep" on the auto-stop prompt, suppress further
+  // prompts for the rest of this recording session — don't nag on repeated
+  // false positives from the AX-based detector.
+  const autoStopDismissedRef = useRef(false);
 
   useEffect(() => {
     sessionActiveRef.current = recording || paused;
   }, [recording, paused]);
+
+  const hideAutoStopOverlay = useCallback(() => {
+    void invoke("hide_auto_stop_overlay").catch(() => {});
+  }, []);
+
+  const resetAutoStopForNewSession = useCallback(() => {
+    matchedMeetingRef.current = false;
+    matchedAppNameRef.current = null;
+    autoStopDismissedRef.current = false;
+    hideAutoStopOverlay();
+  }, [hideAutoStopOverlay]);
 
   useEffect(() => {
     (async () => {
@@ -87,16 +109,32 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
           if (nowSession) {
             if (meeting_id != null) setMeetingId(meeting_id);
             startTimer(elapsed_secs);
-            if (
-              !wasSession &&
-              (resetTranscript === undefined || resetTranscript === true)
-            ) {
-              setSegments([]);
-              setProvisional({});
+            if (!wasSession) {
+              resetAutoStopForNewSession();
+              // Recover state when recording starts after a meeting was already
+              // detected — otherwise no `meeting-detected` event arrives during
+              // this session and auto-stop would never arm.
+              void invoke<string | null>("get_current_meeting_app")
+                .then((appName) => {
+                  if (!mounted) return;
+                  if (appName) {
+                    matchedMeetingRef.current = true;
+                    matchedAppNameRef.current = appName;
+                  }
+                })
+                .catch(() => {});
+              if (resetTranscript === undefined || resetTranscript === true) {
+                setSegments([]);
+                setProvisional({});
+              }
+            } else if (isPaused) {
+              // Pause is an explicit "I'm not done" — dismiss any open prompt.
+              hideAutoStopOverlay();
             }
           } else {
             setMeetingId(null);
             clearTimer();
+            resetAutoStopForNewSession();
           }
 
           sessionActiveRef.current = nowSession;
@@ -109,7 +147,7 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
       mounted = false;
       unlisten?.();
     };
-  }, [clearTimer, startTimer]);
+  }, [clearTimer, hideAutoStopOverlay, resetAutoStopForNewSession, startTimer]);
 
   useEffect(() => {
     let mounted = true;
@@ -164,6 +202,48 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+    let unlisten: UnlistenFn | null = null;
+    (async () => {
+      const fn_ = await listen<MeetingDetectedEvent>(
+        "meeting-detected",
+        (event) => {
+          if (!mounted) return;
+          if (!sessionActiveRef.current) return;
+          matchedMeetingRef.current = true;
+          matchedAppNameRef.current = event.payload.app_name;
+          // Detector saw the call again — close any stale prompt (false positive
+          // recovered, or user rejoined).
+          hideAutoStopOverlay();
+        },
+      );
+      if (mounted) unlisten = fn_;
+      else fn_();
+    })();
+    return () => {
+      mounted = false;
+      unlisten?.();
+    };
+  }, [hideAutoStopOverlay]);
+
+  useEffect(() => {
+    let mounted = true;
+    let unlisten: UnlistenFn | null = null;
+    (async () => {
+      const fn_ = await listen("auto-stop-cancel-requested", () => {
+        if (!mounted) return;
+        autoStopDismissedRef.current = true;
+      });
+      if (mounted) unlisten = fn_;
+      else fn_();
+    })();
+    return () => {
+      mounted = false;
+      unlisten?.();
+    };
+  }, []);
+
   const startRecording = useCallback(
     async (resumeMeetingId?: string | null): Promise<string> => {
       setError(null);
@@ -190,6 +270,29 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
     } catch (e: unknown) {
       setError(toAppError(e));
     }
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    let unlisten: UnlistenFn | null = null;
+    (async () => {
+      const fn_ = await listen<MeetingDetectedEvent>("meeting-ended", () => {
+        if (!mounted) return;
+        if (!sessionActiveRef.current) return;
+        if (!matchedMeetingRef.current) return;
+        if (autoStopDismissedRef.current) return;
+
+        void invoke("show_auto_stop_overlay", {
+          appName: matchedAppNameRef.current,
+        }).catch((e) => console.error("show_auto_stop_overlay:", e));
+      });
+      if (mounted) unlisten = fn_;
+      else fn_();
+    })();
+    return () => {
+      mounted = false;
+      unlisten?.();
+    };
   }, []);
 
   const pauseRecording = useCallback(async () => {

@@ -50,6 +50,7 @@ pub fn run() {
     let detector_state = MeetingDetectorState {
         cancel_token: Mutex::new(None),
         recording_active: Arc::clone(&recording_active),
+        current_app: Arc::new(Mutex::new(None)),
     };
 
     let summarization_state = SummarizationState {
@@ -103,9 +104,11 @@ pub fn run() {
             {
                 let det: tauri::State<'_, MeetingDetectorState> = app.state();
                 let recording_flag = Arc::clone(&det.recording_active);
+                let current_app = Arc::clone(&det.current_app);
                 services::meeting_detector::start_detection_loop(
                     app.handle().clone(),
                     recording_flag,
+                    current_app,
                 );
             }
 
@@ -139,6 +142,11 @@ pub fn run() {
             resume_recording,
             get_recording_state,
             debug_show_overlay,
+            show_auto_stop_overlay,
+            hide_auto_stop_overlay,
+            request_auto_stop_cancel,
+            get_current_meeting_app,
+            debug_dump_windows,
             list_meetings,
             get_meeting,
             update_meeting_document_body,
