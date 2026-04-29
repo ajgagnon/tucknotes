@@ -1,4 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -260,47 +266,19 @@ function MeetingHeaderTitle({
 // ---------------------------------------------------------------------------
 
 function MeetingMenu({ onDelete }: { onDelete: () => void }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  // Close menu on outside click
-  useEffect(() => {
-    if (!menuOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [menuOpen]);
-
   return (
-    <div
-      className="relative"
-      ref={menuRef}
-      onMouseDown={(e) => e.stopPropagation()}
-    >
-      <button
-        onClick={() => setMenuOpen((prev) => !prev)}
-        className="p-1.5 rounded-md text-neutral-400 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
-      >
-        <MoreVertical className="w-4 h-4" />
-      </button>
-      {menuOpen && (
-        <div className="absolute right-0 top-full mt-1 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg shadow-lg py-1 z-10 min-w-[140px]">
-          <button
-            onClick={() => {
-              setMenuOpen(false);
-              onDelete();
-            }}
-            className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
-          >
+    <div onMouseDown={(e) => e.stopPropagation()}>
+      <DropdownMenu>
+        <DropdownMenuTrigger className="p-1.5 rounded-md text-neutral-400 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer outline-none">
+          <MoreVertical className="w-4 h-4" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-[140px]">
+          <DropdownMenuItem onClick={onDelete} variant="destructive">
             <Trash2 className="w-3.5 h-3.5" />
             Delete
-          </button>
-        </div>
-      )}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
