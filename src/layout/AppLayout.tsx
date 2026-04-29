@@ -3,6 +3,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -16,6 +17,7 @@ import {
   Trash2,
   MoreVertical,
   Search,
+  Pencil,
 } from "lucide-react";
 import {
   SidebarProvider,
@@ -200,57 +202,58 @@ function MeetingHeaderTitle({
 
   if (!info) return null;
 
-  if (editing) {
-    return (
-      <div className="min-w-0 flex-1" onMouseDown={(e) => e.stopPropagation()}>
-        <input
-          className="text-sm font-semibold bg-transparent border-b border-primary outline-none w-full"
-          defaultValue={info.title || ""}
-          placeholder="Untitled"
-          autoFocus
-          onBlur={(e) => {
-            setEditing(false);
-            const trimmed = e.currentTarget.value.trim();
-            if (trimmed && trimmed !== (info.title ?? "")) {
-              onSave(trimmed);
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.currentTarget.blur();
-            } else if (e.key === "Escape") {
-              setEditing(false);
-            }
-          }}
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="min-w-0 flex-1 flex items-center justify-between">
-      <div className="flex items-center gap-2 min-w-0">
-        <h1
-          className="text-md font-semibold truncate cursor-text m-0"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={() => {
-            if (!info.generatingTitle) setEditing(true);
-          }}
-          title="Click to rename"
-        >
-          {info.generatingTitle ? (
-            <span className="flex items-center gap-2">
-              <span className="text-muted-foreground">
-                {info.title || "Generating title…"}
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        {editing ? (
+          <input
+            className="text-md font-semibold bg-transparent border-b border-primary outline-none min-w-0 flex-1 m-0 p-0"
+            defaultValue={info.title || ""}
+            placeholder="Untitled"
+            autoFocus
+            onMouseDown={(e) => e.stopPropagation()}
+            onBlur={(e) => {
+              setEditing(false);
+              const trimmed = e.currentTarget.value.trim();
+              if (trimmed && trimmed !== (info.title ?? "")) {
+                onSave(trimmed);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.currentTarget.blur();
+              } else if (e.key === "Escape") {
+                setEditing(false);
+              }
+            }}
+          />
+        ) : (
+          <h1
+            className="text-md font-semibold truncate cursor-text m-0"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => {
+              if (!info.generatingTitle) setEditing(true);
+            }}
+            title="Click to rename"
+          >
+            {info.generatingTitle ? (
+              <span className="flex items-center gap-2">
+                <span className="text-muted-foreground">
+                  {info.title || "Generating title…"}
+                </span>
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-muted-foreground animate-pulse" />
               </span>
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-muted-foreground animate-pulse" />
-            </span>
-          ) : (
-            info.title || "Untitled"
-          )}
-        </h1>
+            ) : (
+              info.title || "Untitled"
+            )}
+          </h1>
+        )}
 
-        <MeetingMenu onDelete={() => onDeleteMeeting(meetingId)} />
+        <MeetingMenu
+          onDelete={() => onDeleteMeeting(meetingId)}
+          onRename={() => setEditing(true)}
+          disableRename={info.generatingTitle}
+        />
       </div>
       <MeetingDateBadge
         title={info.title}
@@ -265,7 +268,15 @@ function MeetingHeaderTitle({
 // Meeting menu (three-dot dropdown with delete)
 // ---------------------------------------------------------------------------
 
-function MeetingMenu({ onDelete }: { onDelete: () => void }) {
+function MeetingMenu({
+  onDelete,
+  onRename,
+  disableRename,
+}: {
+  onDelete: () => void;
+  onRename: () => void;
+  disableRename: boolean;
+}) {
   return (
     <div onMouseDown={(e) => e.stopPropagation()}>
       <DropdownMenu>
@@ -273,6 +284,11 @@ function MeetingMenu({ onDelete }: { onDelete: () => void }) {
           <MoreVertical className="w-4 h-4" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-[140px]">
+          <DropdownMenuItem onClick={onRename} disabled={disableRename}>
+            <Pencil className="w-3.5 h-3.5" />
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={onDelete} variant="destructive">
             <Trash2 className="w-3.5 h-3.5" />
             Delete
