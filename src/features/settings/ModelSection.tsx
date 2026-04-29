@@ -18,11 +18,13 @@ export function ModelSection({
   config,
   radioIdPrefix,
   className,
+  disabled,
 }: {
   title: string;
   config: ModelManagerConfig;
   radioIdPrefix: string;
   className?: string;
+  disabled?: boolean;
 }) {
   const {
     models,
@@ -59,7 +61,7 @@ export function ModelSection({
         <RadioGroup
           value={selectedId ?? undefined}
           onValueChange={(id) => void selectModel(id)}
-          disabled={!!downloading}
+          disabled={!!downloading || !!disabled}
           className="flex flex-col gap-2 w-full"
         >
           {models.map((model) => {

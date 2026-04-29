@@ -139,6 +139,8 @@ pub async fn summarize_meeting(
         *active = Some(meeting_id.clone());
     }
 
+    let _ = app.emit("summary:started", &meeting_id);
+
     // We're the active summarization — run it
     match do_summarize(&app, &*db_state, &*summ_state, &meeting_id).await {
         Ok(_) => Ok("started".into()),
@@ -310,6 +312,8 @@ fn process_next_in_queue(app: &tauri::AppHandle) {
     if let Ok(mut active) = state.active_meeting_id.lock() {
         *active = Some(next_id.clone());
     }
+
+    let _ = app.emit("summary:started", &next_id);
 
     let app = app.clone();
     tokio::spawn(async move {

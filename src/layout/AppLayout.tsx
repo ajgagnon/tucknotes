@@ -199,6 +199,13 @@ function MeetingHeaderTitle({
   onDeleteMeeting: (meetingId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const {
+    recording,
+    paused,
+    meetingId: recordingMeetingId,
+  } = useRecording();
+  const disableDelete =
+    (recording || paused) && recordingMeetingId === meetingId;
 
   if (!info) return null;
 
@@ -253,6 +260,7 @@ function MeetingHeaderTitle({
           onDelete={() => onDeleteMeeting(meetingId)}
           onRename={() => setEditing(true)}
           disableRename={info.generatingTitle}
+          disableDelete={disableDelete}
         />
       </div>
       <MeetingDateBadge
@@ -272,10 +280,12 @@ function MeetingMenu({
   onDelete,
   onRename,
   disableRename,
+  disableDelete,
 }: {
   onDelete: () => void;
   onRename: () => void;
   disableRename: boolean;
+  disableDelete: boolean;
 }) {
   return (
     <div onMouseDown={(e) => e.stopPropagation()}>
@@ -289,7 +299,11 @@ function MeetingMenu({
             Rename
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={onDelete} variant="destructive">
+          <DropdownMenuItem
+            onClick={onDelete}
+            disabled={disableDelete}
+            variant="destructive"
+          >
             <Trash2 className="w-3.5 h-3.5" />
             Delete
           </DropdownMenuItem>
