@@ -90,8 +90,7 @@ export function MeetingDetailView({
 
   const capturingThisMeeting = isLiveRecording && recording && !paused;
   const canResume =
-    (isLiveRecording && paused) ||
-    (!isLiveRecording && !(recording || paused));
+    (isLiveRecording && paused) || (!isLiveRecording && !(recording || paused));
 
   const stampElapsedSecs =
     isLiveRecording &&
@@ -137,19 +136,12 @@ export function MeetingDetailView({
     llmModelReady,
     currentSummary,
     handleSummarize,
-  } = useMeetingSummarization(
-    detail.meeting,
-    summaryBodyStored,
-    onTitleChange,
-  );
+  } = useMeetingSummarization(detail.meeting, summaryBodyStored, onTitleChange);
 
   const leaveTranscriptTab = useCallback(() => {
     setSelectedDocId((prev) => {
       if (prev !== TRANSCRIPT_TAB) return prev;
-      return (
-        lastNonTranscriptTabRef.current ||
-        defaultDocumentTabId
-      );
+      return lastNonTranscriptTabRef.current || defaultDocumentTabId;
     });
   }, [defaultDocumentTabId]);
 
@@ -194,11 +186,10 @@ export function MeetingDetailView({
     wasLiveRecordingRef.current = isLiveRecording;
   }, [isLiveRecording, docIds, detail.documents]);
 
-  const selectedDoc =
-    isTranscriptTab
-      ? undefined
-      : (visibleDocuments.find((d) => d.id === effectiveTabId) ??
-        visibleDocuments[0]);
+  const selectedDoc = isTranscriptTab
+    ? undefined
+    : (visibleDocuments.find((d) => d.id === effectiveTabId) ??
+      visibleDocuments[0]);
 
   useEffect(() => {
     if (isLiveRecording && isTranscriptTab) {
@@ -262,8 +253,7 @@ export function MeetingDetailView({
   }, [handleFooterPrimaryAction]);
 
   const showSummarySkeleton =
-    transcriptFinalizing ||
-    (summarizing && !streamedSummary && !thinkingText);
+    transcriptFinalizing || (summarizing && !streamedSummary && !thinkingText);
 
   const summaryPanel = showSummarySkeleton ? (
     <div className="space-y-4 p-5" aria-busy="true" aria-live="polite">
@@ -331,22 +321,20 @@ export function MeetingDetailView({
         : "editor";
   const editorInitialBody = isSummaryTab
     ? currentSummary
-    : selectedDoc?.body ?? null;
+    : (selectedDoc?.body ?? null);
 
-  const documentPanel = !selectedDoc
-    ? null
-    : panelMode === "editor"
-      ? (
-          <MeetingDocumentEditor
-            key={selectedDoc.id}
-            documentId={selectedDoc.id}
-            initialBody={editorInitialBody}
-            onDocumentBodySaved={onMeetingDocumentBodyUpdated}
-            stampElapsedSecs={isSummaryTab ? null : stampElapsedSecs}
-            onSeekTranscript={handleSeekTranscript}
-          />
-        )
-      : summaryPanel;
+  const documentPanel = !selectedDoc ? null : panelMode === "editor" ? (
+    <MeetingDocumentEditor
+      key={selectedDoc.id}
+      documentId={selectedDoc.id}
+      initialBody={editorInitialBody}
+      onDocumentBodySaved={onMeetingDocumentBodyUpdated}
+      stampElapsedSecs={isSummaryTab ? null : stampElapsedSecs}
+      onSeekTranscript={handleSeekTranscript}
+    />
+  ) : (
+    summaryPanel
+  );
 
   const transcriptPanel = (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -424,10 +412,7 @@ export function MeetingDetailView({
   );
 
   const showSummarizeAction =
-    isSummaryTab &&
-    !summarizing &&
-    llmModelReady &&
-    !transcriptFinalizing;
+    isSummaryTab && !summarizing && llmModelReady && !transcriptFinalizing;
 
   const mainPanel = isTranscriptTab ? transcriptPanel : documentPanel;
 
@@ -460,6 +445,9 @@ export function MeetingDetailView({
                   )}
                 >
                   {doc.title}
+                  {summarizing && doc.kind === "summary" && (
+                    <span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground" />
+                  )}
                 </TabsTrigger>
               ))}
               <TabsTrigger
@@ -477,9 +465,6 @@ export function MeetingDetailView({
               </TabsTrigger>
             </TabsList>
           </Tabs>
-          {summarizing && (
-            <span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground" />
-          )}
         </div>
         <div className="flex items-center gap-2">
           {transcriptFinalizing && (
