@@ -291,14 +291,6 @@ pub fn list_whisper_models() -> Vec<ModelInfo<WhisperModel>> {
 pub fn list_llm_models() -> Vec<ModelInfo<LlmModel>> {
     vec![
         ModelInfo {
-            id: LlmModel::Qwen3_5_4B_Q4KM,
-            name: "Qwen3.5 4B (Q4_K_M)".into(),
-            description: "Compact 4-bit quantized model for meeting summarization.".into(),
-            size_bytes: 2_740_000_000,
-            filename: LlmModel::Qwen3_5_4B_Q4KM.filename().into(),
-            recommended: None,
-        },
-        ModelInfo {
             id: LlmModel::Gemma4_E2B_Q8,
             name: "Gemma 4 E2B (Q8_0)".into(),
             description: "Google's Gemma 4 model, 8-bit quantized. Higher quality, larger download."
@@ -306,6 +298,14 @@ pub fn list_llm_models() -> Vec<ModelInfo<LlmModel>> {
             size_bytes: 5_050_000_000,
             filename: LlmModel::Gemma4_E2B_Q8.filename().into(),
             recommended: Some(true),
+        },
+        ModelInfo {
+            id: LlmModel::Qwen3_5_4B_Q4KM,
+            name: "Qwen3.5 4B (Q4_K_M)".into(),
+            description: "Compact 4-bit quantized model for meeting summarization.".into(),
+            size_bytes: 2_740_000_000,
+            filename: LlmModel::Qwen3_5_4B_Q4KM.filename().into(),
+            recommended: None,
         },
     ]
 }

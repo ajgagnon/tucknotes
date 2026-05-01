@@ -120,7 +120,9 @@ pub fn run() {
 
     #[cfg(target_os = "macos")]
     {
-        builder = builder.manage(transcription_state);
+        builder = builder
+            .plugin(tauri_plugin_accent_color::init())
+            .manage(transcription_state);
     }
 
     builder

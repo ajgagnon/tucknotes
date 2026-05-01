@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/macOS-schema.json",
+  "identifier": "accent-color",
+  "description": "Read the macOS system accent color so the UI can match it.",
+  "platforms": ["macOS"],
+  "windows": ["main", "meeting-overlay"],
+  "permissions": ["accent-color:allow-get-accent-color"]
+}

@@ -50,6 +50,7 @@ import {
 } from "@/features/meetings/types";
 import { MeetingDateBadge } from "@/features/meetings/MeetingDateBadge";
 import SettingsView from "@/features/settings/SettingsView";
+import { LlmDownloadIndicator } from "@/features/models";
 import { Button } from "@/components/ui/button";
 import {
   CommandDialog,
@@ -634,6 +635,7 @@ function AppLayout() {
               />
 
               <SidebarFooter className="px-3 pb-3">
+                <LlmDownloadIndicator />
                 <SidebarMenu>
                   <SidebarMenuItem>
                     <SidebarMenuButton

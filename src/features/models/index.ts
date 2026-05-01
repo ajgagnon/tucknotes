@@ -6,3 +6,8 @@ export {
   LLM_MODEL_CONFIG,
   type ModelManagerConfig,
 } from "./use-model-manager";
+export {
+  useLlmDownloadProgress,
+  type LlmDownloadStatus,
+} from "./use-llm-download-progress";
+export { LlmDownloadIndicator } from "./LlmDownloadIndicator";
