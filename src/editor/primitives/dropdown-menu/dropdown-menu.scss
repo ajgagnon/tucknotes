@@ -1,4 +1,4 @@
-/* Match Grain popover tokens (portaled content inherits from html; avoid `.dark :root` which never matches). */
+/* Match TuckNotes popover tokens (portaled content inherits from html; avoid `.dark :root` which never matches). */
 .tiptap-dropdown-menu-content,
 .tiptap-dropdown-menu-sub-content {
   --tt-dropdown-menu-bg-color: var(--popover);

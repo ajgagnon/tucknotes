@@ -79,7 +79,7 @@ pub fn run() {
 
             let win_builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                    .title("Grain")
+                    .title("TuckNotes")
                     .inner_size(1024.0, 768.0)
                     .min_inner_size(600.0, 400.0)
                     .transparent(true);

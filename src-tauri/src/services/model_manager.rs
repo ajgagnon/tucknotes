@@ -7,7 +7,7 @@ use tokio::io::AsyncWriteExt;
 use crate::errors::AppError;
 use crate::models::{AppSettings, DownloadProgress, LlmModel, Model, ModelInfo, WhisperModel};
 
-/// Resolve the Tauri app data directory (e.g. ~/Library/Application Support/com.grain.app).
+/// Resolve the Tauri app data directory (e.g. ~/Library/Application Support/com.andre.tucknotes).
 /// This is the only place we depend on the Tauri runtime for path resolution.
 fn resolve_data_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
     app.path()
@@ -329,7 +329,7 @@ mod tests {
     impl TempDir {
         fn new() -> Self {
             let id = COUNTER.fetch_add(1, Ordering::SeqCst);
-            let dir = std::env::temp_dir().join(format!("grain_test_{}_{id}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!("tucknotes_test_{}_{id}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
             TempDir(dir)
