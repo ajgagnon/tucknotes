@@ -269,20 +269,20 @@ pub async fn download<M: Model>(app: &AppHandle, model: &M) -> Result<(), AppErr
 pub fn list_whisper_models() -> Vec<ModelInfo<WhisperModel>> {
     vec![
         ModelInfo {
-            id: WhisperModel::BaseEn,
-            name: "Base (English Only)".into(),
-            description: "Fast and lightweight. Best for English-only meetings.".into(),
-            size_bytes: 148_000_000,
-            filename: WhisperModel::BaseEn.filename().into(),
-            recommended: None,
-        },
-        ModelInfo {
             id: WhisperModel::LargeV3TurboQ5,
             name: "Large v3 Turbo (Quantized)".into(),
             description: "Higher accuracy, multilingual support. Larger download.".into(),
             size_bytes: 547_000_000,
             filename: WhisperModel::LargeV3TurboQ5.filename().into(),
             recommended: Some(true),
+        },
+        ModelInfo {
+            id: WhisperModel::BaseEn,
+            name: "Base (English Only)".into(),
+            description: "Smallest download — choose only when storage is limited.".into(),
+            size_bytes: 148_000_000,
+            filename: WhisperModel::BaseEn.filename().into(),
+            recommended: None,
         },
     ]
 }
