@@ -166,7 +166,7 @@ function PageHeader({
 
   return (
     <div
-      className="min-h-[35px] shrink-0 border-b border-muted-foreground/10"
+      className="min-h-[48px] shrink-0 border-b border-muted-foreground/10"
       onMouseDown={onDrag}
     >
       <div className="flex items-center justify-between px-5 py-2 pr-2 h-full gap-2">
@@ -326,6 +326,7 @@ function LayoutContent({
   onTitleChange,
   meetingInfo,
   onSaveTitle,
+  onOpenSettings,
 }: {
   activeView: ActiveView;
   onDrag: (e: React.MouseEvent) => void;
@@ -334,6 +335,7 @@ function LayoutContent({
   onTitleChange: (info: MeetingTitleInfo) => void;
   meetingInfo: MeetingTitleInfo | null;
   onSaveTitle: (title: string) => void;
+  onOpenSettings: () => void;
 }) {
   // Build header left content based on active view
   const headerLeft =
@@ -345,7 +347,7 @@ function LayoutContent({
         onDeleteMeeting={onDeleteMeeting}
       />
     ) : activeView?.type === "settings" ? (
-      <h1 className="text-sm font-semibold px-2 m-0">Settings</h1>
+      <h1 className="text-md font-semibold m-0">Settings</h1>
     ) : null;
 
   return (
@@ -358,6 +360,7 @@ function LayoutContent({
               meetingId={activeView.id}
               onTitleChange={onTitleChange}
               onRecordingStarted={onStartRecording}
+              onOpenSettings={onOpenSettings}
             />
           )}
           {activeView?.type === "settings" && <SettingsView />}
@@ -658,6 +661,7 @@ function AppLayout() {
               onTitleChange={handleTitleChange}
               meetingInfo={meetingInfo}
               onSaveTitle={handleSaveTitle}
+              onOpenSettings={() => setActiveView({ type: "settings" })}
             />
           </SidebarProvider>
         </RecordingProvider>
