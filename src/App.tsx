@@ -2,11 +2,19 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import PermissionSetup from "@/features/onboarding/PermissionSetup";
 import ModelSetup from "@/features/onboarding/ModelSetup";
+import SummarizationSetup from "@/features/onboarding/SummarizationSetup";
 import AppLayout from "@/layout/AppLayout";
+import { useSystemAccentColor } from "@/hooks/use-system-accent-color";
 
-type OnboardingStep = "loading" | "permissions" | "model-setup" | "ready";
+type OnboardingStep =
+  | "loading"
+  | "permissions"
+  | "model-setup"
+  | "summarization-setup"
+  | "ready";
 
 function App() {
+  useSystemAccentColor();
   const [step, setStep] = useState<OnboardingStep>("loading");
 
   useEffect(() => {
@@ -23,8 +31,7 @@ function App() {
         return;
       }
 
-      const modelReady = await checkModelReady();
-      setStep(modelReady ? "ready" : "model-setup");
+      setStep(await nextStepAfterPermissions());
     }
 
     checkOnboarding().catch(() => setStep("permissions"));
@@ -36,9 +43,24 @@ function App() {
     return invoke<boolean>("get_model_status", { modelId: selected });
   }
 
+  async function checkSummarizationReady(): Promise<boolean> {
+    const selected = await invoke<string | null>("get_selected_llm_model");
+    return selected !== null;
+  }
+
+  async function nextStepAfterPermissions(): Promise<OnboardingStep> {
+    if (!(await checkModelReady())) return "model-setup";
+    if (!(await checkSummarizationReady())) return "summarization-setup";
+    return "ready";
+  }
+
   async function handlePermissionsComplete() {
-    const modelReady = await checkModelReady();
-    setStep(modelReady ? "ready" : "model-setup");
+    setStep(await nextStepAfterPermissions());
+  }
+
+  async function handleModelSetupComplete() {
+    const summReady = await checkSummarizationReady();
+    setStep(summReady ? "ready" : "summarization-setup");
   }
 
   if (step === "loading") return null;
@@ -46,7 +68,10 @@ function App() {
     return <PermissionSetup onComplete={handlePermissionsComplete} />;
   }
   if (step === "model-setup") {
-    return <ModelSetup onComplete={() => setStep("ready")} />;
+    return <ModelSetup onComplete={handleModelSetupComplete} />;
+  }
+  if (step === "summarization-setup") {
+    return <SummarizationSetup onComplete={() => setStep("ready")} />;
   }
   return <AppLayout />;
 }

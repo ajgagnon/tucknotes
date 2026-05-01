@@ -3,8 +3,8 @@
 <plist version="1.0">
 <dict>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>Grain needs screen recording permission to capture meeting audio. No video is ever recorded or stored.</string>
+	<string>TuckNotes needs screen recording permission to capture meeting audio. No video is ever recorded or stored.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Grain needs microphone access to capture your voice during meetings.</string>
+	<string>TuckNotes needs microphone access to capture your voice during meetings.</string>
 </dict>
 </plist>

@@ -49,9 +49,9 @@ pub fn now_unix_ms() -> i64 {
         .as_millis() as i64
 }
 
-/// Open (or create) the database at `<base_dir>/grain.db` and initialise the schema.
+/// Open (or create) the database at `<base_dir>/tucknotes.db` and initialise the schema.
 pub fn open_db(base_dir: &Path) -> Result<Connection, AppError> {
-    let db_path = base_dir.join("grain.db");
+    let db_path = base_dir.join("tucknotes.db");
     let conn = Connection::open(&db_path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
     init_schema(&conn)?;

@@ -1,5 +1,5 @@
 [package]
-name = "grain"
+name = "tucknotes"
 version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
@@ -11,8 +11,14 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "grain_lib"
+name = "tucknotes_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Explicit bin name controls the dev-mode dock label on macOS,
+# since `tauri dev` runs the raw binary without an .app bundle.
+[[bin]]
+name = "TuckNotes"
+path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -47,4 +53,5 @@ block2 = "0.6"
 core-foundation = "0.10"
 core-foundation-sys = "0.8"
 objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication"] }
+tauri-plugin-accent-color = { git = "https://github.com/freethinkel/tauri-plugin-accent-color" }
 

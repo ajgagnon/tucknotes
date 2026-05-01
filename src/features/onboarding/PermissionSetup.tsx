@@ -83,7 +83,7 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
           </div>
           <h1 className="text-2xl font-bold mb-2">You're all set!</h1>
           <p className="text-neutral-500 dark:text-neutral-400 text-[0.95rem] mb-7 leading-relaxed">
-            All permissions are granted. Grain can capture meeting audio.
+            All permissions are granted. TuckNotes can capture meeting audio.
           </p>
           <button
             className="w-full border-none rounded-xl py-3 px-8 text-[0.95rem] font-semibold cursor-pointer bg-primary text-white shadow-[0_2px_8px_rgba(67,97,238,0.25)] transition-all duration-200 hover:bg-primary-hover hover:shadow-[0_4px_12px_rgba(67,97,238,0.35)] hover:-translate-y-px active:translate-y-0"
@@ -102,7 +102,7 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
         <div className="text-4xl mb-3 leading-none">🎙️</div>
         <h1 className="text-2xl font-bold mb-2">Before we get started</h1>
         <p className="text-neutral-500 dark:text-neutral-400 text-[0.95rem] mb-7 leading-relaxed">
-          Grain needs a few macOS permissions to capture audio and detect
+          TuckNotes needs a few macOS permissions to capture audio and detect
           meetings automatically.
         </p>
 
@@ -144,7 +144,7 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
               </button>
               {screenRequested && (
                 <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-4 leading-relaxed">
-                  Find <strong>Grain</strong> in the list and toggle it on.
+                  Find <strong>TuckNotes</strong> in the list and toggle it on.
                 </p>
               )}
             </>
@@ -194,7 +194,7 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
               </button>
               {micStatus === "denied" && (
                 <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-4 leading-relaxed">
-                  Toggle <strong>Grain</strong> on in System Settings &gt;
+                  Toggle <strong>TuckNotes</strong> on in System Settings &gt;
                   Privacy &amp; Security &gt; Microphone.
                 </p>
               )}
@@ -228,7 +228,7 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
           {!accessibilityGranted && (
             <>
               <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-400 mb-3">
-                Accessibility access lets Grain detect when you join a meeting
+                Accessibility access lets TuckNotes detect when you join a meeting
                 so it can prompt you to start recording automatically.
               </p>
               <button
@@ -241,7 +241,7 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
               </button>
               {accessibilityRequested && (
                 <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-4 leading-relaxed">
-                  Find <strong>Grain</strong> in the list and toggle it on.
+                  Find <strong>TuckNotes</strong> in the list and toggle it on.
                 </p>
               )}
             </>

@@ -9,12 +9,14 @@ interface MeetingsViewProps {
   meetingId: string;
   onTitleChange?: (info: MeetingTitleInfo) => void;
   onRecordingStarted?: (meetingId: string) => void;
+  onOpenSettings?: () => void;
 }
 
 export default function MeetingsView({
   meetingId,
   onTitleChange,
   onRecordingStarted,
+  onOpenSettings,
 }: MeetingsViewProps) {
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -108,6 +110,7 @@ export default function MeetingsView({
       onRecordingStarted={onRecordingStarted}
       onRefreshMeeting={() => openMeeting(detail.meeting.id)}
       onMeetingDocumentBodyUpdated={handleMeetingDocumentBodyUpdated}
+      onOpenSettings={onOpenSettings}
     />
   );
 }
