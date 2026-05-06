@@ -51,6 +51,11 @@ import {
 import { MeetingDateBadge } from "@/features/meetings/MeetingDateBadge";
 import SettingsView from "@/features/settings/SettingsView";
 import { LlmDownloadIndicator } from "@/features/models";
+import {
+  TrialBanner,
+  useLicenseStatus,
+  allowsPaidFeatures,
+} from "@/features/licensing";
 import { Button } from "@/components/ui/button";
 import {
   CommandDialog,
@@ -95,15 +100,19 @@ function HeaderControls({
   meetings,
   onStartRecording,
   onNavigateToActiveRecording,
+  onOpenSettings,
 }: {
   meetings: MeetingRow[];
   onStartRecording: (meetingId: string) => void;
   onNavigateToActiveRecording: (meetingId: string) => void;
+  onOpenSettings: () => void;
 }) {
   const { recording, paused, startRecording, meetingId } = useRecording();
   const { systemLevel, micLevel } = useAudioLevels();
+  const { status: licenseStatus } = useLicenseStatus();
   const sessionActive = recording || paused;
   const levelsInButton = recording && !paused;
+  const entitled = allowsPaidFeatures(licenseStatus);
 
   const activeTitle =
     meetingId != null
@@ -115,6 +124,12 @@ function HeaderControls({
       if (meetingId != null) {
         onNavigateToActiveRecording(meetingId);
       }
+      return;
+    }
+    if (!entitled) {
+      // Trial expired or license invalid — route to settings instead of
+      // failing silently when start_recording rejects.
+      onOpenSettings();
       return;
     }
     try {
@@ -568,6 +583,9 @@ function AppLayout() {
                       onNavigateToActiveRecording={
                         handleNavigateToActiveRecording
                       }
+                      onOpenSettings={() =>
+                        setActiveView({ type: "settings" })
+                      }
                     />
                   </div>
                   <button
@@ -639,6 +657,9 @@ function AppLayout() {
 
               <SidebarFooter className="px-3 pb-3">
                 <LlmDownloadIndicator />
+                <TrialBanner
+                  onOpenSettings={() => setActiveView({ type: "settings" })}
+                />
                 <SidebarMenu>
                   <SidebarMenuItem>
                     <SidebarMenuButton

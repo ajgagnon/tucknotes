@@ -3,7 +3,9 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
+use crate::commands::licensing::require_paid_entitlement;
 use crate::errors::{lock_or_err, AppError};
+use crate::models::licensing::LicensingState;
 use crate::models::llm::LlmModel;
 use crate::models::{Model, ModelInfo};
 use crate::services::database::{self, DatabaseState};
@@ -119,8 +121,11 @@ pub async fn summarize_meeting(
     app: tauri::AppHandle,
     db_state: tauri::State<'_, DatabaseState>,
     summ_state: tauri::State<'_, SummarizationState>,
+    licensing: tauri::State<'_, LicensingState>,
     meeting_id: String,
 ) -> Result<String, AppError> {
+    require_paid_entitlement(&licensing)?;
+
     // Single lock scope: check for duplicates and either start or enqueue atomically.
     {
         let mut active = lock_or_err(&summ_state.active_meeting_id)?;

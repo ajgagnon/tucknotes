@@ -15,6 +15,8 @@ pub enum AppError {
     PermissionDenied(String),
     SummarizationFailed(String),
     NotFound(String),
+    LicenseRequired(String),
+    LicenseValidationFailed(String),
 }
 
 impl std::fmt::Display for AppError {
@@ -32,6 +34,8 @@ impl std::fmt::Display for AppError {
             AppError::PermissionDenied(msg) => write!(f, "Permission denied: {}", msg),
             AppError::SummarizationFailed(msg) => write!(f, "Summarization failed: {}", msg),
             AppError::NotFound(msg) => write!(f, "Not found: {}", msg),
+            AppError::LicenseRequired(msg) => write!(f, "License required: {}", msg),
+            AppError::LicenseValidationFailed(msg) => write!(f, "License validation failed: {}", msg),
         }
     }
 }
