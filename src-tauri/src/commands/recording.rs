@@ -1,6 +1,8 @@
 use tauri::Emitter;
 
+use crate::commands::licensing::require_paid_entitlement;
 use crate::errors::AppError;
+use crate::models::licensing::LicensingState;
 use crate::models::{RecordingState, RecordingStateEvent};
 
 // ---------------------------------------------------------------------------
@@ -737,9 +739,12 @@ mod macos {
 #[tauri::command]
 pub async fn start_recording(
     state: tauri::State<'_, RecordingState>,
+    licensing: tauri::State<'_, LicensingState>,
     app: tauri::AppHandle,
     resume_meeting_id: Option<String>,
 ) -> Result<String, AppError> {
+    require_paid_entitlement(&licensing)?;
+
     #[cfg(target_os = "macos")]
     {
         let reset_live_transcript = resume_meeting_id.as_ref().map_or(true, |s| s.is_empty());
@@ -836,8 +841,11 @@ pub async fn pause_recording(
 #[tauri::command]
 pub async fn resume_recording(
     state: tauri::State<'_, RecordingState>,
+    licensing: tauri::State<'_, LicensingState>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
+    require_paid_entitlement(&licensing)?;
+
     #[cfg(target_os = "macos")]
     {
         macos::do_resume_recording(&state, app.clone()).await?;

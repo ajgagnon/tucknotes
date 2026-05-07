@@ -11,6 +11,7 @@ import {
   type TitlePayload,
   summaryBodyFromDocuments,
 } from "./types";
+import type { DownloadProgress } from "@/features/models";
 
 export function useMeetingSummarization(
   meeting: MeetingRow,
@@ -60,24 +61,44 @@ export function useMeetingSummarization(
     unlistenThinkingRef.current = null;
   }, []);
 
-  useEffect(() => {
-    async function checkLlmModel() {
-      try {
-        const selected = await invoke<string | null>("get_selected_llm_model");
-        if (!selected) {
-          setLlmModelReady(false);
-          return;
-        }
-        const ready = await invoke<boolean>("get_llm_model_status", {
-          modelId: selected,
-        });
-        setLlmModelReady(ready);
-      } catch {
+  const checkLlmModel = useCallback(async () => {
+    try {
+      const selected = await invoke<string | null>("get_selected_llm_model");
+      if (!selected) {
         setLlmModelReady(false);
+        return;
       }
+      const ready = await invoke<boolean>("get_llm_model_status", {
+        modelId: selected,
+      });
+      setLlmModelReady(ready);
+    } catch {
+      setLlmModelReady(false);
     }
-    checkLlmModel();
   }, []);
+
+  useEffect(() => {
+    void checkLlmModel();
+  }, [checkLlmModel]);
+
+  // Re-check model readiness when an LLM download finishes so the UI flips
+  // out of the "Download a summarization model in Settings…" state without a
+  // remount. The progress event fires before the atomic rename completes, so
+  // checkLlmModel may briefly still see false; re-poll once on a short delay.
+  useEffect(() => {
+    const unlisten = listen<DownloadProgress>(
+      "llm-model:download-progress",
+      (event) => {
+        const { downloaded_bytes, total_bytes } = event.payload;
+        if (total_bytes <= 0 || downloaded_bytes < total_bytes) return;
+        void checkLlmModel();
+        setTimeout(() => void checkLlmModel(), 250);
+      },
+    );
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [checkLlmModel]);
 
   useEffect(() => {
     setCurrentSummary(summaryBody);

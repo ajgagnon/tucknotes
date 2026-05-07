@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import type { ModelInfo, DownloadProgress } from "@/features/models";
 import { formatSize } from "@/features/models";
 
@@ -18,7 +20,8 @@ function ModelSetup({ onComplete }: ModelSetupProps) {
   useEffect(() => {
     invoke<ModelInfo[]>("list_available_models").then((list) => {
       setModels(list);
-      if (list.length > 0) setSelectedId(list[0].id);
+      const initial = list.find((m) => m.recommended) ?? list[0];
+      if (initial) setSelectedId(initial.id);
     });
   }, []);
 
@@ -121,7 +124,14 @@ function ModelSetup({ onComplete }: ModelSetupProps) {
                 }`}
               >
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-[0.95rem] font-semibold">{model.name}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-[0.95rem] font-semibold">
+                      {model.name}
+                    </h3>
+                    {model.recommended && (
+                      <Badge variant="outline">Recommended</Badge>
+                    )}
+                  </div>
                   <div
                     className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
                       isSelected
@@ -145,13 +155,13 @@ function ModelSetup({ onComplete }: ModelSetupProps) {
           })}
         </div>
 
-        <button
-          className="w-full border-none rounded-xl py-3 px-8 text-[0.95rem] font-semibold cursor-pointer bg-primary text-white shadow-[0_2px_8px_rgba(67,97,238,0.25)] transition-all duration-200 hover:bg-primary-hover hover:shadow-[0_4px_12px_rgba(67,97,238,0.35)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:cursor-default disabled:hover:translate-y-0 disabled:hover:shadow-[0_2px_8px_rgba(67,97,238,0.25)]"
+        <Button
+          className="w-full h-11 rounded-xl text-[0.95rem] font-semibold"
           onClick={handleDownload}
           disabled={!selectedId}
         >
           Download & Continue
-        </button>
+        </Button>
       </div>
     </div>
   );

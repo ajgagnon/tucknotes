@@ -6,13 +6,10 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/source-serif-4";
 
 @custom-variant dark (&:is(.dark *));
 
-@theme {
-  --color-success: #06d6a0;
-  --color-danger: #e53e3e;
-}
 
 @keyframes pulse-ring {
   0% {
@@ -31,75 +28,121 @@
 }
 
 :root {
+  /* Paper neutrals — light, faintly warm greys */
+  --paper-0: #ffffff;
+  --paper-1: #f7f5f1;
+  --paper-2: #efece5;
+  --paper-3: #e2dfd7;
+  --paper-4: #b9b4a7;
+  /* Ink — warm near-black */
+  --ink-0: #1c1a16;
+  --ink-1: #3a362d;
+  --ink-2: #6b6453;
+  --ink-3: #948a72;
+  /* Sage — brand primary, 500 is the signature */
+  --sage-50:  #eef0e7;
+  --sage-100: #d8ddc7;
+  --sage-200: #b9c39d;
+  --sage-300: #94a373;
+  --sage-400: #6f8253;
+  --sage-500: #556a3e;
+  --sage-600: #43562f;
+  --sage-700: #344324;
+  --sage-800: #26321a;
+  --sage-900: #1a2412;
+  /* Accents — used sparingly. 500 on light surfaces, 200 on dark. */
+  --ochre-200:  #f1d99c;
+  --ochre-500:  #c8923a;
+  --rust-200:   #efc6b3;
+  --rust-500:   #b35a3a;
+  --indigo-200: #c8d2e8;
+  --indigo-500: #3e4f7a;
+}
+
+:root {
   --titlebar-height: 48px;
-  --canvas: oklch(0.965 0 0);
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --canvas: var(--paper-0);
+  --background: var(--paper-0);
+  --foreground: var(--ink-0);
+  --card: var(--paper-0);
+  --card-foreground: var(--ink-0);
+  --popover: var(--paper-0);
+  --popover-foreground: var(--ink-0);
+  --primary: var(--sage-500);
+  --primary-foreground: var(--paper-0);
+  --secondary: var(--paper-2);
+  --secondary-foreground: var(--ink-0);
+  --muted: var(--paper-2);
+  --muted-foreground: var(--ink-2);
+  --accent: var(--paper-2);
+  --accent-foreground: var(--ink-0);
   --destructive: oklch(0.58 0.22 27);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --border: var(--paper-3);
+  --input: var(--paper-3);
+  --ring: var(--sage-500);
   --chart-1: oklch(0.809 0.105 251.813);
   --chart-2: oklch(0.623 0.214 259.815);
   --chart-3: oklch(0.546 0.245 262.881);
   --chart-4: oklch(0.488 0.243 264.376);
   --chart-5: oklch(0.424 0.199 265.638);
   --radius: 0.5rem;
-  --sidebar: oklch(0.965 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(1 0 0);
-  --sidebar-accent-foreground: oklch(0.25 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar: var(--paper-1);
+  --sidebar-foreground: var(--ink-0);
+  --sidebar-primary: var(--sage-500);
+  --sidebar-primary-foreground: var(--paper-0);
+  --sidebar-accent: var(--paper-0);
+  --sidebar-accent-foreground: var(--ink-0);
+  --sidebar-border: var(--paper-3);
+  --sidebar-ring: var(--sage-500);
+  /* Semantic accents — light mode uses 500 on paper */
+  --highlight: var(--ochre-500);
+  --danger: var(--rust-500);
+  --link: var(--indigo-500);
+  --ochre: var(--ochre-500);
+  --rust: var(--rust-500);
+  --indigo: var(--indigo-500);
 }
 
 .dark {
-  --canvas: oklch(0.155 0 0);
-  --background: oklch(0.185 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.87 0.00 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.371 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --canvas: var(--ink-0);
+  --background: var(--ink-0);
+  --foreground: var(--paper-1);
+  --card: var(--ink-0);
+  --card-foreground: var(--paper-1);
+  --popover: var(--ink-1);
+  --popover-foreground: var(--paper-1);
+  --primary: var(--sage-400);
+  --primary-foreground: var(--paper-0);
+  --secondary: var(--ink-1);
+  --secondary-foreground: var(--paper-1);
+  --muted: var(--ink-1);
+  --muted-foreground: var(--paper-4);
+  --accent: var(--ink-1);
+  --accent-foreground: var(--paper-1);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --ring: var(--sage-400);
   --chart-1: oklch(0.809 0.105 251.813);
   --chart-2: oklch(0.623 0.214 259.815);
   --chart-3: oklch(0.546 0.245 262.881);
   --chart-4: oklch(0.488 0.243 264.376);
   --chart-5: oklch(0.424 0.199 265.638);
-  --sidebar: oklch(0.155 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.185 0 0);
-  --sidebar-accent-foreground: oklch(0.92 0 0);
+  --sidebar: var(--ink-0);
+  --sidebar-foreground: var(--paper-1);
+  --sidebar-primary: var(--sage-400);
+  --sidebar-primary-foreground: var(--paper-0);
+  --sidebar-accent: var(--ink-1);
+  --sidebar-accent-foreground: var(--paper-1);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-ring: var(--sage-400);
+  /* Semantic accents — dark mode flips to 200 for legibility on ink */
+  --highlight: var(--ochre-200);
+  --danger: var(--rust-200);
+  --link: var(--indigo-200);
+  --ochre: var(--ochre-200);
+  --rust: var(--rust-200);
+  --indigo: var(--indigo-200);
 }
 
 /* In Tauri, use transparent backgrounds so native vibrancy shows through */
@@ -114,7 +157,21 @@
 
 @theme inline {
   --breakpoint-md: 600px;
-  --font-sans: 'Geist Variable', sans-serif;
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-serif: 'Source Serif 4 Variable', ui-serif, Georgia, serif;
+  --color-success: var(--primary);
+  --color-ochre-200: var(--ochre-200);
+  --color-ochre-500: var(--ochre-500);
+  --color-rust-200: var(--rust-200);
+  --color-rust-500: var(--rust-500);
+  --color-indigo-200: var(--indigo-200);
+  --color-indigo-500: var(--indigo-500);
+  --color-highlight: var(--highlight);
+  --color-danger: var(--danger);
+  --color-link: var(--link);
+  --color-ochre: var(--ochre);
+  --color-rust: var(--rust);
+  --color-indigo: var(--indigo);
   --color-canvas: var(--canvas);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -174,6 +231,9 @@
   }
   html {
     @apply font-sans bg-canvas;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-serif;
   }
 }
 

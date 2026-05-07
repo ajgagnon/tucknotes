@@ -10,14 +10,17 @@ use std::sync::{Arc, Mutex};
 use tauri::{Manager, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
 
 use commands::appearance::*;
+use commands::licensing::*;
 use commands::meetings::*;
 use commands::models::*;
 use commands::permissions::*;
 use commands::recording::*;
 use commands::summarization::*;
+use models::licensing::LicensingState;
 use models::meeting_detection::MeetingDetectorState;
 use models::{PcmAccumulator, RecordingState};
 use services::database::DatabaseState;
+use services::licensing as licensing_svc;
 use services::summarization::{SummarizationService, SummarizationState};
 #[cfg(target_os = "macos")]
 use services::transcription::{TranscriptionService, TranscriptionState};
@@ -64,6 +67,8 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Initialize database
             let base_dir = app
@@ -77,9 +82,15 @@ pub fn run() {
                 conn: Mutex::new(conn),
             });
 
+            // Initialize licensing storage (creates license.json on first launch
+            // so the trial clock starts now).
+            let license_storage = licensing_svc::init_storage(app.handle())
+                .expect("failed to init license storage");
+            app.manage(LicensingState::new(license_storage));
+
             let win_builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                    .title("Grain")
+                    .title("TuckNotes")
                     .inner_size(1024.0, 768.0)
                     .min_inner_size(600.0, 400.0)
                     .transparent(true);
@@ -168,6 +179,10 @@ pub fn run() {
             summarize_meeting,
             get_summarization_queue,
             update_meeting_title,
+            get_license_status,
+            activate_license_key,
+            deactivate_license,
+            revalidate_license,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

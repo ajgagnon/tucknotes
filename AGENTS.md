@@ -1,8 +1,8 @@
-# Grain - Agent Guidelines
+# TuckNotes - Agent Guidelines
 
 ## Project Overview
 
-Grain is a macOS desktop app that captures meeting audio (system + microphone) for local AI-powered note-taking. Built with Tauri (Rust backend, React/TypeScript frontend). Audio capture uses Apple's ScreenCaptureKit via the `screencapturekit` crate.
+TuckNotes is a macOS desktop app that captures meeting audio (system + microphone) for local AI-powered note-taking. Built with Tauri (Rust backend, React/TypeScript frontend). Audio capture uses Apple's ScreenCaptureKit via the `screencapturekit` crate.
 
 ## Rust Backend Architecture (`src-tauri/src/`)
 

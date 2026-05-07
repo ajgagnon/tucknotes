@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod licensing;
 pub mod llm;
 pub mod meeting_detection;
 pub mod settings;

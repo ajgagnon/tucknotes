@@ -50,6 +50,12 @@ import {
 } from "@/features/meetings/types";
 import { MeetingDateBadge } from "@/features/meetings/MeetingDateBadge";
 import SettingsView from "@/features/settings/SettingsView";
+import { LlmDownloadIndicator } from "@/features/models";
+import {
+  TrialBanner,
+  useLicenseStatus,
+  allowsPaidFeatures,
+} from "@/features/licensing";
 import { Button } from "@/components/ui/button";
 import {
   CommandDialog,
@@ -94,15 +100,19 @@ function HeaderControls({
   meetings,
   onStartRecording,
   onNavigateToActiveRecording,
+  onOpenSettings,
 }: {
   meetings: MeetingRow[];
   onStartRecording: (meetingId: string) => void;
   onNavigateToActiveRecording: (meetingId: string) => void;
+  onOpenSettings: () => void;
 }) {
   const { recording, paused, startRecording, meetingId } = useRecording();
   const { systemLevel, micLevel } = useAudioLevels();
+  const { status: licenseStatus } = useLicenseStatus();
   const sessionActive = recording || paused;
   const levelsInButton = recording && !paused;
+  const entitled = allowsPaidFeatures(licenseStatus);
 
   const activeTitle =
     meetingId != null
@@ -114,6 +124,12 @@ function HeaderControls({
       if (meetingId != null) {
         onNavigateToActiveRecording(meetingId);
       }
+      return;
+    }
+    if (!entitled) {
+      // Trial expired or license invalid — route to settings instead of
+      // failing silently when start_recording rejects.
+      onOpenSettings();
       return;
     }
     try {
@@ -165,7 +181,7 @@ function PageHeader({
 
   return (
     <div
-      className="min-h-[35px] shrink-0 border-b border-muted-foreground/10"
+      className="min-h-[48px] shrink-0 border-b border-muted-foreground/10"
       onMouseDown={onDrag}
     >
       <div className="flex items-center justify-between px-5 py-2 pr-2 h-full gap-2">
@@ -199,11 +215,7 @@ function MeetingHeaderTitle({
   onDeleteMeeting: (meetingId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const {
-    recording,
-    paused,
-    meetingId: recordingMeetingId,
-  } = useRecording();
+  const { recording, paused, meetingId: recordingMeetingId } = useRecording();
   const disableDelete =
     (recording || paused) && recordingMeetingId === meetingId;
 
@@ -214,7 +226,7 @@ function MeetingHeaderTitle({
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {editing ? (
           <input
-            className="text-md font-semibold bg-transparent border-b border-primary outline-none min-w-0 flex-1 m-0 p-0"
+            className="text-lg font-semibold font-serif bg-transparent border-b border-primary outline-none min-w-0 flex-1 m-0 p-0"
             defaultValue={info.title || ""}
             placeholder="Untitled"
             autoFocus
@@ -236,7 +248,7 @@ function MeetingHeaderTitle({
           />
         ) : (
           <h1
-            className="text-md font-semibold truncate cursor-text m-0"
+            className="text-lg font-semibold truncate cursor-text m-0"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={() => {
               if (!info.generatingTitle) setEditing(true);
@@ -325,6 +337,7 @@ function LayoutContent({
   onTitleChange,
   meetingInfo,
   onSaveTitle,
+  onOpenSettings,
 }: {
   activeView: ActiveView;
   onDrag: (e: React.MouseEvent) => void;
@@ -333,6 +346,7 @@ function LayoutContent({
   onTitleChange: (info: MeetingTitleInfo) => void;
   meetingInfo: MeetingTitleInfo | null;
   onSaveTitle: (title: string) => void;
+  onOpenSettings: () => void;
 }) {
   // Build header left content based on active view
   const headerLeft =
@@ -344,7 +358,7 @@ function LayoutContent({
         onDeleteMeeting={onDeleteMeeting}
       />
     ) : activeView?.type === "settings" ? (
-      <h1 className="text-sm font-semibold px-2 m-0">Settings</h1>
+      <h1 className="text-lg font-semibold m-0">Settings</h1>
     ) : null;
 
   return (
@@ -357,6 +371,7 @@ function LayoutContent({
               meetingId={activeView.id}
               onTitleChange={onTitleChange}
               onRecordingStarted={onStartRecording}
+              onOpenSettings={onOpenSettings}
             />
           )}
           {activeView?.type === "settings" && <SettingsView />}
@@ -564,6 +579,7 @@ function AppLayout() {
                       onNavigateToActiveRecording={
                         handleNavigateToActiveRecording
                       }
+                      onOpenSettings={() => setActiveView({ type: "settings" })}
                     />
                   </div>
                   <button
@@ -634,6 +650,10 @@ function AppLayout() {
               />
 
               <SidebarFooter className="px-3 pb-3">
+                <LlmDownloadIndicator />
+                <TrialBanner
+                  onOpenSettings={() => setActiveView({ type: "settings" })}
+                />
                 <SidebarMenu>
                   <SidebarMenuItem>
                     <SidebarMenuButton
@@ -656,6 +676,7 @@ function AppLayout() {
               onTitleChange={handleTitleChange}
               meetingInfo={meetingInfo}
               onSaveTitle={handleSaveTitle}
+              onOpenSettings={() => setActiveView({ type: "settings" })}
             />
           </SidebarProvider>
         </RecordingProvider>

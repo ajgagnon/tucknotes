@@ -12,7 +12,7 @@ export function AppearanceSection() {
   const [theme, setTheme] = useState<Theme>(getStoredTheme);
 
   return (
-    <section className="mb-8">
+    <section>
       <h2 className="text-sm font-medium text-muted-foreground mb-4">
         Appearance
       </h2>

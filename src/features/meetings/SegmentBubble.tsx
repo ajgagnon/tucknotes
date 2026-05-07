@@ -11,7 +11,7 @@ export function SegmentBubble({
     <div className={`flex flex-col gap-0.5 ${provisional ? "opacity-50" : ""}`}>
       <span
         className={`text-[0.65rem] font-semibold uppercase tracking-wider ${
-          source === "system" ? "text-primary" : "text-success"
+          source === "system" ? "text-primary" : "text-indigo"
         }`}
       >
         {source === "system" ? "Them" : "You"}

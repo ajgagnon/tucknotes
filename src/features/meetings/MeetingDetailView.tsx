@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles, Settings2 } from "lucide-react";
+import { Sparkles, Settings, Settings2, Play } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -42,6 +42,8 @@ interface MeetingDetailViewProps {
   onRefreshMeeting?: () => void | Promise<void>;
   /** Merge persisted document body into local meeting detail (notes autosave). */
   onMeetingDocumentBodyUpdated?: (documentId: string, body: string) => void;
+  /** Switch the app to the settings view (e.g. to change the LLM model). */
+  onOpenSettings?: () => void;
 }
 
 export function MeetingDetailView({
@@ -54,6 +56,7 @@ export function MeetingDetailView({
   onRecordingStarted,
   onRefreshMeeting: _onRefreshMeeting,
   onMeetingDocumentBodyUpdated,
+  onOpenSettings,
 }: MeetingDetailViewProps) {
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const transcriptScrollRef = useRef<TranscriptScrollHandle | null>(null);
@@ -368,21 +371,13 @@ export function MeetingDetailView({
               Stop recording
             </button>
           )}
-          {isLiveRecording && paused && (
+          {canResume && (
             <button
               type="button"
               onClick={() => void handleFooterPrimaryAction()}
-              className="text-sm font-medium text-success hover:underline"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:underline"
             >
-              Resume
-            </button>
-          )}
-          {!isLiveRecording && !(recording || paused) && (
-            <button
-              type="button"
-              onClick={() => void handleFooterPrimaryAction()}
-              className="text-sm font-medium text-success hover:underline"
-            >
+              <Play className="size-3 shrink-0" />
               Resume
             </button>
           )}
@@ -497,22 +492,39 @@ export function MeetingDetailView({
           {mainPanel}
         </div>
 
-        {isSummaryTab && !summarizing && summaryError && (
-          <p className="shrink-0 px-5 pb-2 text-xs text-red-500 dark:text-red-400">
-            {summaryError}
-          </p>
-        )}
-
         {!isLiveRecording && showSummarizeAction && (
-          <Button
-            type="button"
-            onClick={() => void handleSummarize()}
-            variant="secondary"
-            className="absolute bottom-1 right-0 z-10 rounded-full text-xs"
-          >
-            {currentSummary ? "Resummarize" : "Summarize"}
-            <Sparkles className="size-3 shrink-0 text-muted-foreground" />
-          </Button>
+          <div className="mt-0 shrink-0 flex flex-row items-center justify-between gap-3 border-t px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <button
+                type="button"
+                onClick={() => void handleSummarize()}
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:underline"
+              >
+                <Sparkles className="size-3 shrink-0" />
+                {currentSummary ? "Resummarize" : "Summarize"}
+              </button>
+            </div>
+            <div className="flex min-w-0 shrink-0 items-center gap-2">
+              {summaryError && (
+                <p className="min-w-0 truncate text-xs text-red-500 dark:text-red-400">
+                  {summaryError}
+                </p>
+              )}
+              {onOpenSettings && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                  aria-label="Change summarization model"
+                  title="Change summarization model"
+                  onClick={onOpenSettings}
+                >
+                  <Settings className="size-4" />
+                </Button>
+              )}
+            </div>
+          </div>
         )}
       </div>
     </div>

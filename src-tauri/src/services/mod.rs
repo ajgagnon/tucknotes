@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod database;
+pub mod licensing;
 pub mod model_manager;
 pub mod summarization;
 pub mod vad;
