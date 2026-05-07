@@ -215,11 +215,7 @@ function MeetingHeaderTitle({
   onDeleteMeeting: (meetingId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const {
-    recording,
-    paused,
-    meetingId: recordingMeetingId,
-  } = useRecording();
+  const { recording, paused, meetingId: recordingMeetingId } = useRecording();
   const disableDelete =
     (recording || paused) && recordingMeetingId === meetingId;
 
@@ -230,7 +226,7 @@ function MeetingHeaderTitle({
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {editing ? (
           <input
-            className="text-md font-semibold bg-transparent border-b border-primary outline-none min-w-0 flex-1 m-0 p-0"
+            className="text-lg font-semibold font-serif bg-transparent border-b border-primary outline-none min-w-0 flex-1 m-0 p-0"
             defaultValue={info.title || ""}
             placeholder="Untitled"
             autoFocus
@@ -252,7 +248,7 @@ function MeetingHeaderTitle({
           />
         ) : (
           <h1
-            className="text-md font-semibold truncate cursor-text m-0"
+            className="text-lg font-semibold truncate cursor-text m-0"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={() => {
               if (!info.generatingTitle) setEditing(true);
@@ -362,7 +358,7 @@ function LayoutContent({
         onDeleteMeeting={onDeleteMeeting}
       />
     ) : activeView?.type === "settings" ? (
-      <h1 className="text-md font-semibold m-0">Settings</h1>
+      <h1 className="text-lg font-semibold m-0">Settings</h1>
     ) : null;
 
   return (
@@ -583,9 +579,7 @@ function AppLayout() {
                       onNavigateToActiveRecording={
                         handleNavigateToActiveRecording
                       }
-                      onOpenSettings={() =>
-                        setActiveView({ type: "settings" })
-                      }
+                      onOpenSettings={() => setActiveView({ type: "settings" })}
                     />
                   </div>
                   <button

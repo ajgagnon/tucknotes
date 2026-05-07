@@ -121,7 +121,7 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
               <span
                 className={`text-[0.7rem] font-semibold px-2 py-0.5 rounded-full inline-block tracking-tight ${
                   screenGranted
-                    ? "bg-green-100 text-green-800 dark:bg-success/15 dark:text-success"
+                    ? "bg-success/15 text-success"
                     : "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
                 }`}
               >
@@ -166,7 +166,7 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
               <span
                 className={`text-[0.7rem] font-semibold px-2 py-0.5 rounded-full inline-block tracking-tight ${
                   micStatus === "authorized"
-                    ? "bg-green-100 text-green-800 dark:bg-success/15 dark:text-success"
+                    ? "bg-success/15 text-success"
                     : "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
                 }`}
               >
@@ -217,7 +217,7 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
               <span
                 className={`text-[0.7rem] font-semibold px-2 py-0.5 rounded-full inline-block tracking-tight ${
                   accessibilityGranted
-                    ? "bg-green-100 text-green-800 dark:bg-success/15 dark:text-success"
+                    ? "bg-success/15 text-success"
                     : "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
                 }`}
               >

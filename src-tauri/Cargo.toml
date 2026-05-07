@@ -55,5 +55,4 @@ block2 = "0.6"
 core-foundation = "0.10"
 core-foundation-sys = "0.8"
 objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication"] }
-tauri-plugin-accent-color = { git = "https://github.com/freethinkel/tauri-plugin-accent-color" }
 

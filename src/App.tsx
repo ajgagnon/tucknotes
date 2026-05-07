@@ -4,7 +4,6 @@ import PermissionSetup from "@/features/onboarding/PermissionSetup";
 import ModelSetup from "@/features/onboarding/ModelSetup";
 import SummarizationSetup from "@/features/onboarding/SummarizationSetup";
 import AppLayout from "@/layout/AppLayout";
-import { useSystemAccentColor } from "@/hooks/use-system-accent-color";
 
 type OnboardingStep =
   | "loading"
@@ -14,7 +13,6 @@ type OnboardingStep =
   | "ready";
 
 function App() {
-  useSystemAccentColor();
   const [step, setStep] = useState<OnboardingStep>("loading");
 
   useEffect(() => {
