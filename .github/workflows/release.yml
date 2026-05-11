@@ -4,23 +4,25 @@ on:
   push:
     tags:
       - "v*.*.*"
+  # Allow `gh workflow run release.yml --ref vX.Y.Z` to invoke this on a tag.
+  # bump.yml uses this because tag pushes made via GITHUB_TOKEN don't trigger
+  # downstream workflows on their own.
+  workflow_dispatch:
 
 jobs:
   build:
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            runner: macos-14
-          - target: x86_64-apple-darwin
-            runner: macos-13
-
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14
 
     steps:
+      - name: Require tag ref
+        run: |
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "::error::release.yml must be triggered on a tag ref (got ${GITHUB_REF})"
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -31,7 +33,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-apple-darwin
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -77,4 +79,4 @@ jobs:
           releaseBody: "See the assets to download and install."
           releaseDraft: true
           prerelease: false
-          args: --target ${{ matrix.target }}
+          args: --target aarch64-apple-darwin
