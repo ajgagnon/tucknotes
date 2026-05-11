@@ -61,7 +61,7 @@ The private key file (`~/.tauri/tucknotes-updater.key`) and its password go into
 
 1. Bump `version` in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` to the same value (e.g. `0.1.1`).
 2. Commit and tag: `git tag v0.1.1 && git push --tags`.
-3. The `release.yml` workflow runs on the tag, builds for both `aarch64-apple-darwin` (M-series) and `x86_64-apple-darwin` (Intel), signs and notarizes each, and uploads the `.dmg`, `.app.tar.gz`, and signed `latest.json` to a draft GitHub Release.
+3. The `release.yml` workflow runs on the tag, builds for `aarch64-apple-darwin` (Apple Silicon only — Intel is unsupported because the bundled inference stack requires Metal on M-series GPUs), signs and notarizes the artifact, and uploads the `.dmg`, `.app.tar.gz`, and signed `latest.json` to a draft GitHub Release.
 4. Open the draft release on GitHub, edit the notes, and publish. The Tauri updater in shipped builds will pick up `latest.json` automatically.
 
 ## End-to-end smoke test

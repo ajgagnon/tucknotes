@@ -1,0 +1,99 @@
+name: Bump version & tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "New version, no v prefix (e.g. 0.1.0)"
+        required: true
+        type: string
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Skip submodules — we only touch top-level files.
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Validate version
+        env:
+          V: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+            echo "::error::Invalid version: $V (expected x.y.z or x.y.z-pre)"
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then
+            echo "::error::Tag v$V already exists"
+            exit 1
+          fi
+
+      - name: Bump versions in package.json, tauri.conf.json, Cargo.toml, Cargo.lock
+        env:
+          V: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          # package.json
+          jq --arg v "$V" '.version = $v' package.json > package.json.tmp
+          mv package.json.tmp package.json
+
+          # src-tauri/tauri.conf.json
+          jq --arg v "$V" '.version = $v' src-tauri/tauri.conf.json > src-tauri/tauri.conf.json.tmp
+          mv src-tauri/tauri.conf.json.tmp src-tauri/tauri.conf.json
+
+          # src-tauri/Cargo.toml — first `version = "..."` (under [package])
+          CARGO_LINE=$(grep -n '^version = ' src-tauri/Cargo.toml | head -1 | cut -d: -f1)
+          sed -i "${CARGO_LINE}s/^version = \"[^\"]*\"$/version = \"$V\"/" src-tauri/Cargo.toml
+
+          # src-tauri/Cargo.lock — version line immediately after `name = "tucknotes"`
+          LOCK_LINE=$(grep -n '^name = "tucknotes"$' src-tauri/Cargo.lock | head -1 | cut -d: -f1)
+          sed -i "$((LOCK_LINE + 1))s/^version = \"[^\"]*\"$/version = \"$V\"/" src-tauri/Cargo.lock
+
+          # Refresh package-lock.json without running install scripts
+          npm install --package-lock-only --ignore-scripts
+
+      - name: Sanity-check the bumps
+        env:
+          V: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          PKG=$(jq -r .version package.json)
+          CONF=$(jq -r .version src-tauri/tauri.conf.json)
+          CARGO=$(grep -m1 '^version = ' src-tauri/Cargo.toml | sed -E 's/^version = "([^"]+)"$/\1/')
+          for got in "$PKG" "$CONF" "$CARGO"; do
+            if [ "$got" != "$V" ]; then
+              echo "::error::Version mismatch — expected $V, got $got"
+              exit 1
+            fi
+          done
+          echo "All four files at v$V."
+
+      - name: Commit and tag
+        env:
+          V: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
+          git commit -m "Release v$V"
+          git tag "v$V"
+          git push origin HEAD
+          git push origin "v$V"
+
+      - name: Trigger release.yml on the new tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          V: ${{ inputs.version }}
+        run: gh workflow run release.yml --ref "v$V"
