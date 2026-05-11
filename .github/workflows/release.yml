@@ -9,10 +9,14 @@ on:
   # downstream workflows on their own.
   workflow_dispatch:
 
+# Workflow-level permissions — required because job-level scopes are not
+# always honored for the release-creation API call when this workflow is
+# invoked via workflow_dispatch from another workflow.
+permissions:
+  contents: write
+
 jobs:
   build:
-    permissions:
-      contents: write
     runs-on: macos-14
 
     steps:

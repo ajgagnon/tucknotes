@@ -92,6 +92,20 @@ jobs:
           git push origin HEAD
           git push origin "v$V"
 
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          V: ${{ inputs.version }}
+        # Creating the draft here (rather than letting tauri-action create it
+        # downstream) sidesteps a permission bug where the workflow_dispatch
+        # token can't create releases. tauri-action will upload to this
+        # existing draft.
+        run: |
+          gh release create "v$V" \
+            --draft \
+            --title "TuckNotes v$V" \
+            --notes "See the assets to download and install."
+
       - name: Trigger release.yml on the new tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
