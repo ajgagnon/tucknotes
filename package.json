@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "icon": "tauri icon app-icon.png && rm -rf src-tauri/icons/ios src-tauri/icons/android && rm -f src-tauri/icons/Square*.png src-tauri/icons/StoreLogo.png src-tauri/icons/icon.ico",
     "test": "vitest run && cd src-tauri && cargo test",
     "test:frontend": "vitest run",
     "test:rust": "cd src-tauri && cargo test"

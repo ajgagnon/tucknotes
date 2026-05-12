@@ -91,3 +91,21 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: --target aarch64-apple-darwin
+
+      - name: Upload versionless DMG for stable download URL
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # The versioned DMG (e.g. TuckNotes_0.1.0_aarch64.dmg) is uploaded by
+        # tauri-action above. Copy it to a version-stable filename so the URL
+        # https://github.com/<owner>/<repo>/releases/latest/download/TuckNotes-arm64.dmg
+        # always points at the newest published build.
+        run: |
+          set -euo pipefail
+          DMG=$(ls src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/TuckNotes_*_aarch64.dmg | head -1)
+          if [ -z "$DMG" ]; then
+            echo "::error::No DMG artifact found in the bundle directory"
+            exit 1
+          fi
+          STABLE="$RUNNER_TEMP/TuckNotes-arm64.dmg"
+          cp "$DMG" "$STABLE"
+          gh release upload "${{ github.ref_name }}" "$STABLE" --clobber
