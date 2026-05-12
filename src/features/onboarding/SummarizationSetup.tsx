@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { DownloadCloud } from "lucide-react";
+import { DownloadCloud, Sparkles } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ModelInfo } from "@/features/models";
 import { formatSize } from "@/features/models";
+import OnboardingShell from "./OnboardingShell";
 
 interface SummarizationSetupProps {
   onComplete: () => void;
@@ -45,80 +46,75 @@ function SummarizationSetup({ onComplete }: SummarizationSetupProps) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-8">
-      <div className="max-w-[460px] w-full text-center grid gap-4">
-        <h1 className="text-2xl font-bold mb-2">
-          Choose a summarization model
-        </h1>
-        <p className="text-neutral-500 dark:text-neutral-400 text-[0.95rem] mb-7 leading-relaxed">
-          Used to summarize and title your meeting transcripts.
-        </p>
-
-        <div className="flex flex-col gap-3 mb-6">
-          {models.map((model) => {
-            const isSelected = selectedId === model.id;
-            return (
-              <button
-                key={model.id}
-                onClick={() => setSelectedId(model.id)}
-                className={`rounded-xl p-5 px-6 text-left transition-all duration-200 cursor-pointer ${
-                  isSelected
-                    ? "border-2 border-primary bg-primary/5 dark:bg-primary/10"
-                    : "border border-black/8 bg-black/3 dark:bg-white/5 dark:border-white/10 hover:border-black/15 dark:hover:border-white/20"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-[0.95rem] font-semibold">
-                      {model.name}
-                    </h3>
-                    {model.recommended && (
-                      <Badge variant="outline">Recommended</Badge>
-                    )}
-                  </div>
-                  <div
-                    className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
-                      isSelected
-                        ? "border-primary bg-primary"
-                        : "border-neutral-300 dark:border-neutral-600"
-                    }`}
-                  >
-                    {isSelected && (
-                      <div className="w-2 h-2 rounded-full bg-white" />
-                    )}
-                  </div>
+    <OnboardingShell
+      icon={<Sparkles strokeWidth={1.75} />}
+      title="Choose a summarization model"
+      description="Used to summarize and title your meeting transcripts."
+    >
+      <div className="flex flex-col gap-3 w-full text-left">
+        {models.map((model) => {
+          const isSelected = selectedId === model.id;
+          return (
+            <button
+              key={model.id}
+              onClick={() => setSelectedId(model.id)}
+              className={`rounded-xl p-5 px-6 text-left transition-all duration-200 cursor-pointer ${
+                isSelected
+                  ? "border-2 border-primary bg-primary/5 dark:bg-primary/10"
+                  : "border border-border bg-muted/40 hover:border-foreground/20"
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-[0.95rem] font-semibold">
+                    {model.name}
+                  </h3>
+                  {model.recommended && (
+                    <Badge variant="outline">Recommended</Badge>
+                  )}
                 </div>
-                <p className="text-sm text-neutral-600 dark:text-neutral-400 leading-relaxed mb-2">
-                  {model.description}
-                </p>
-                <span className="text-xs font-medium text-neutral-400 dark:text-neutral-500">
-                  {formatSize(model.size_bytes)}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {error && <p className="text-sm text-destructive mb-3">{error}</p>}
-
-        <Button
-          className="w-full h-11 rounded-xl text-[0.95rem] font-semibold"
-          onClick={handleContinue}
-          disabled={!selectedId || submitting}
-        >
-          Choose & Continue
-        </Button>
-
-        <Alert className="text-left p-4">
-          <DownloadCloud />
-          <AlertTitle>Downloads in the background</AlertTitle>
-          <AlertDescription>
-            You can start using the app right away — summarization will be
-            available once the download finishes.
-          </AlertDescription>
-        </Alert>
+                <div
+                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                    isSelected
+                      ? "border-primary bg-primary"
+                      : "border-border"
+                  }`}
+                >
+                  {isSelected && (
+                    <div className="w-2 h-2 rounded-full bg-primary-foreground" />
+                  )}
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground leading-relaxed mb-2">
+                {model.description}
+              </p>
+              <span className="text-xs font-medium text-muted-foreground">
+                {formatSize(model.size_bytes)}
+              </span>
+            </button>
+          );
+        })}
       </div>
-    </div>
+
+      {error && <p className="text-sm text-destructive">{error}</p>}
+
+      <Button
+        className="w-full h-11 rounded-xl text-[0.95rem] font-semibold"
+        onClick={handleContinue}
+        disabled={!selectedId || submitting}
+      >
+        Choose & Continue
+      </Button>
+
+      <Alert className="text-left">
+        <DownloadCloud />
+        <AlertTitle>Downloads in the background</AlertTitle>
+        <AlertDescription>
+          You can start using the app right away — summarization will be
+          available once the download finishes.
+        </AlertDescription>
+      </Alert>
+    </OnboardingShell>
   );
 }
 

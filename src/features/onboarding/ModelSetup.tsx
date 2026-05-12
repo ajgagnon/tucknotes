@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { Mic } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ModelInfo, DownloadProgress } from "@/features/models";
 import { formatSize } from "@/features/models";
+import OnboardingShell from "./OnboardingShell";
 
 interface ModelSetupProps {
   onComplete: () => void;
@@ -62,108 +64,102 @@ function ModelSetup({ onComplete }: ModelSetupProps) {
   if (downloading) {
     const selectedModel = models.find((m) => m.id === selectedId);
     return (
-      <div className="min-h-screen flex items-center justify-center p-8">
-        <div className="max-w-[460px] w-full text-center">
-          <h1 className="text-2xl font-bold mb-2">Downloading model</h1>
-          <p className="text-neutral-500 dark:text-neutral-400 text-[0.95rem] mb-7 leading-relaxed">
+      <OnboardingShell
+        icon={<Mic strokeWidth={1.75} />}
+        title="Downloading model"
+        description={
+          <>
             {selectedModel?.name ?? "Model"} —{" "}
             {formatSize(selectedModel?.size_bytes ?? 0)}
-          </p>
-
-          <div className="w-full bg-neutral-200 dark:bg-neutral-700 rounded-full h-3 mb-3 overflow-hidden">
+          </>
+        }
+      >
+        <div className="w-full flex flex-col gap-3">
+          <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
             <div
               className="bg-primary h-full rounded-full transition-all duration-300 ease-out"
               style={{ width: `${progressPercent}%` }}
             />
           </div>
 
-          <p className="text-sm text-neutral-500 dark:text-neutral-400 tabular-nums">
+          <p className="text-sm text-muted-foreground tabular-nums">
             {progress
               ? `${formatSize(progress.downloaded_bytes)} / ${formatSize(progress.total_bytes)}`
               : "Starting download…"}
           </p>
 
           {error && (
-            <div className="mt-5">
-              <p className="text-sm text-danger mb-3">{error}</p>
-              <button
-                className="border-[1.5px] border-primary dark:border-blue-400 text-primary dark:text-blue-400 bg-transparent rounded-xl py-2 px-6 text-sm font-semibold cursor-pointer transition-all duration-200 hover:bg-primary/8 dark:hover:bg-blue-400/10"
-                onClick={handleDownload}
-              >
+            <div className="flex flex-col gap-3 items-center mt-2">
+              <p className="text-sm text-destructive">{error}</p>
+              <Button variant="outline" onClick={handleDownload}>
                 Retry
-              </button>
+              </Button>
             </div>
           )}
         </div>
-      </div>
+      </OnboardingShell>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-8">
-      <div className="max-w-[460px] w-full text-center">
-        <h1 className="text-2xl font-bold mb-2">
-          Choose a transcription model
-        </h1>
-        <p className="text-neutral-500 dark:text-neutral-400 text-[0.95rem] mb-7 leading-relaxed">
-          Select a Whisper model to power your meeting notes. You can change
-          this later in settings.
-        </p>
-
-        <div className="flex flex-col gap-3 mb-6">
-          {models.map((model) => {
-            const isSelected = selectedId === model.id;
-            return (
-              <button
-                key={model.id}
-                onClick={() => setSelectedId(model.id)}
-                className={`rounded-xl p-5 px-6 text-left transition-all duration-200 cursor-pointer ${
-                  isSelected
-                    ? "border-2 border-primary bg-primary/5 dark:bg-primary/10"
-                    : "border border-black/8 bg-black/3 dark:bg-white/5 dark:border-white/10 hover:border-black/15 dark:hover:border-white/20"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-[0.95rem] font-semibold">
-                      {model.name}
-                    </h3>
-                    {model.recommended && (
-                      <Badge variant="outline">Recommended</Badge>
-                    )}
-                  </div>
-                  <div
-                    className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
-                      isSelected
-                        ? "border-primary bg-primary"
-                        : "border-neutral-300 dark:border-neutral-600"
-                    }`}
-                  >
-                    {isSelected && (
-                      <div className="w-2 h-2 rounded-full bg-white" />
-                    )}
-                  </div>
+    <OnboardingShell
+      icon={<Mic strokeWidth={1.75} />}
+      title="Choose a transcription model"
+      description="Select a Whisper model to power your meeting notes. You can change this later in settings."
+    >
+      <div className="flex flex-col gap-3 w-full text-left">
+        {models.map((model) => {
+          const isSelected = selectedId === model.id;
+          return (
+            <button
+              key={model.id}
+              onClick={() => setSelectedId(model.id)}
+              className={`rounded-xl p-5 px-6 text-left transition-all duration-200 cursor-pointer ${
+                isSelected
+                  ? "border-2 border-primary bg-primary/5 dark:bg-primary/10"
+                  : "border border-border bg-muted/40 hover:border-foreground/20"
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-[0.95rem] font-semibold">
+                    {model.name}
+                  </h3>
+                  {model.recommended && (
+                    <Badge variant="outline">Recommended</Badge>
+                  )}
                 </div>
-                <p className="text-sm text-neutral-600 dark:text-neutral-400 leading-relaxed mb-2">
-                  {model.description}
-                </p>
-                <span className="text-xs font-medium text-neutral-400 dark:text-neutral-500">
-                  {formatSize(model.size_bytes)}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        <Button
-          className="w-full h-11 rounded-xl text-[0.95rem] font-semibold"
-          onClick={handleDownload}
-          disabled={!selectedId}
-        >
-          Download & Continue
-        </Button>
+                <div
+                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                    isSelected
+                      ? "border-primary bg-primary"
+                      : "border-border"
+                  }`}
+                >
+                  {isSelected && (
+                    <div className="w-2 h-2 rounded-full bg-primary-foreground" />
+                  )}
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground leading-relaxed mb-2">
+                {model.description}
+              </p>
+              <span className="text-xs font-medium text-muted-foreground">
+                {formatSize(model.size_bytes)}
+              </span>
+            </button>
+          );
+        })}
       </div>
-    </div>
+
+      <Button
+        className="w-full h-11 rounded-xl text-[0.95rem] font-semibold"
+        onClick={handleDownload}
+        disabled={!selectedId}
+      >
+        Download & Continue
+      </Button>
+    </OnboardingShell>
   );
 }
 
