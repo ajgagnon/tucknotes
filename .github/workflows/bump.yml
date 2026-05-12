@@ -1,12 +1,11 @@
 name: Bump version & tag
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "New version, no v prefix (e.g. 0.1.0)"
-        required: true
-        type: string
+  # Fires when a GitHub Release is published (web UI or `gh release create`).
+  # We then bump the four version files to match the release's tag, force-move
+  # the tag onto the bump commit, and dispatch release.yml to build artifacts.
+  release:
+    types: [published]
 
 jobs:
   bump:
@@ -15,32 +14,34 @@ jobs:
       contents: write
       actions: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out the released tag
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.release.tag_name }}
           # Skip submodules — we only touch top-level files.
 
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
 
-      - name: Validate version
+      - name: Validate tag name
         env:
-          V: ${{ inputs.version }}
+          TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
+          if [[ "$TAG" != v* ]]; then
+            echo "::error::Release tag must start with 'v' (got $TAG)"
+            exit 1
+          fi
+          V="${TAG#v}"
           if ! [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
             echo "::error::Invalid version: $V (expected x.y.z or x.y.z-pre)"
             exit 1
           fi
-          if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then
-            echo "::error::Tag v$V already exists"
-            exit 1
-          fi
+          echo "V=$V" >> "$GITHUB_ENV"
 
       - name: Bump versions in package.json, tauri.conf.json, Cargo.toml, Cargo.lock
-        env:
-          V: ${{ inputs.version }}
         run: |
           set -euo pipefail
 
@@ -64,8 +65,6 @@ jobs:
           npm install --package-lock-only --ignore-scripts
 
       - name: Sanity-check the bumps
-        env:
-          V: ${{ inputs.version }}
         run: |
           set -euo pipefail
           PKG=$(jq -r .version package.json)
@@ -79,35 +78,27 @@ jobs:
           done
           echo "All four files at v$V."
 
-      - name: Commit and tag
+      - name: Commit, force-move tag, push
         env:
-          V: ${{ inputs.version }}
+          TAG: ${{ github.event.release.tag_name }}
+        # The release event fired against a tag whose commit doesn't have the
+        # bump applied. We commit the bump on top of the released commit and
+        # force-move the tag to that new commit, then fast-forward master.
+        # If master has diverged from the released commit, the master push will
+        # be rejected — that's intentional, it surfaces a misuse (tagging
+        # something that's not master HEAD) as a workflow failure.
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
-          git commit -m "Release v$V"
-          git tag "v$V"
-          git push origin HEAD
-          git push origin "v$V"
+          git commit -m "Release $TAG"
+          git tag -f "$TAG"
+          git push origin HEAD:master
+          git push origin "$TAG" --force
 
-      - name: Create draft release
+      - name: Trigger release.yml on the moved tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          V: ${{ inputs.version }}
-        # Creating the draft here (rather than letting tauri-action create it
-        # downstream) sidesteps a permission bug where the workflow_dispatch
-        # token can't create releases. tauri-action will upload to this
-        # existing draft.
-        run: |
-          gh release create "v$V" \
-            --draft \
-            --title "TuckNotes v$V" \
-            --notes "See the assets to download and install."
-
-      - name: Trigger release.yml on the new tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          V: ${{ inputs.version }}
-        run: gh workflow run release.yml --ref "v$V"
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh workflow run release.yml --ref "$TAG"

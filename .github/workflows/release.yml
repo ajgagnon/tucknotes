@@ -1,12 +1,10 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
-  # Allow `gh workflow run release.yml --ref vX.Y.Z` to invoke this on a tag.
-  # bump.yml uses this because tag pushes made via GITHUB_TOKEN don't trigger
-  # downstream workflows on their own.
+  # release.yml is invoked by bump.yml via `gh workflow run release.yml --ref vX.Y.Z`
+  # once bump.yml has bumped the version files and force-moved the tag. Direct
+  # tag pushes intentionally do NOT trigger this workflow — that path was the
+  # source of the v0.1.1 broken-manifest bug, because it skipped the bump step.
   workflow_dispatch:
 
 # Workflow-level permissions — required because job-level scopes are not
