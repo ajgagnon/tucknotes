@@ -24,11 +24,17 @@ export const PersistedTranscript = forwardRef<
   }
 
   return (
-    <div ref={containerRef} className="flex flex-col gap-3">
+    <div
+      ref={containerRef}
+      className="grid grid-cols-[auto_auto_1fr] gap-x-6"
+    >
       {segments.map((seg) => (
-        <div key={seg.id} data-timestamp-ms={seg.timestamp_ms}>
-          <SegmentBubble source={seg.source} text={seg.text} />
-        </div>
+        <SegmentBubble
+          key={seg.id}
+          timestampMs={seg.timestamp_ms}
+          source={seg.source}
+          text={seg.text}
+        />
       ))}
     </div>
   );

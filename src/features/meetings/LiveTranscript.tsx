@@ -31,17 +31,26 @@ export const LiveTranscript = forwardRef<
   }
 
   return (
-    <div ref={containerRef} className="flex flex-col gap-3">
-      {segments.map((seg, i) => (
-        <div key={i} data-timestamp-ms={seg.timestamp_ms}>
-          <SegmentBubble source={seg.source} text={seg.text} />
-        </div>
-      ))}
-      {Object.values(provisional).map((seg) => (
-        <div key={`provisional-${seg.source}`} data-timestamp-ms={seg.timestamp_ms}>
-          <SegmentBubble source={seg.source} text={seg.text} provisional />
-        </div>
-      ))}
+    <div ref={containerRef}>
+      <div className="grid grid-cols-[auto_auto_1fr] gap-x-6">
+        {segments.map((seg, i) => (
+          <SegmentBubble
+            key={i}
+            timestampMs={seg.timestamp_ms}
+            source={seg.source}
+            text={seg.text}
+          />
+        ))}
+        {Object.values(provisional).map((seg) => (
+          <SegmentBubble
+            key={`provisional-${seg.source}`}
+            timestampMs={seg.timestamp_ms}
+            source={seg.source}
+            text={seg.text}
+            provisional
+          />
+        ))}
+      </div>
       <div ref={scrollRef} />
     </div>
   );

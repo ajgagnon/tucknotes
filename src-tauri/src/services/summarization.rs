@@ -32,15 +32,15 @@ Never emit a heading with no body beneath it. Never emit body content without it
 Section bodies:\n\
 - ## Summary — 2 to 4 sentences of prose (no bullets, no bold). Factual, terse, scannable. What happened, what was decided, and the immediate next steps in plain language. The Summary section is always present.\n\
 - ## Decisions — bullet list (`- `) of choices the group made. Fragments, not full sentences. No \"Decision:\" prefix.\n\
-- ## Action items — GitHub-flavored task list. Every line starts with `- [ ] ` (unchecked square brackets, never `- [x]`). Format each as `- [ ] **Owner:** action.` with the owner name wrapped in `**bold**` and followed by a colon. When the transcript explicitly mentions a concrete deadline (a date, weekday, or relative day like \"tomorrow\"), append a space then an inline-code span containing an em dash and the date, like `` `— Wed` ``. Do NOT invent or guess deadlines, and do NOT emit `` `— TBD` `` or similar placeholders — if there's no real deadline, just omit the suffix. If no clear owner was named, drop the `**Owner:**` prefix and write only the action.\n\
+- ## Action items — GitHub-flavored task list. Every line is exactly `- [ ] action.` (unchecked square brackets, never `- [x]`). NEVER prefix the action with an owner, assignee, name, or role — no `**Name:**`, `Speaker:`, `Owner:`, `Team:`, or similar. The action stands on its own. When the transcript explicitly mentions a concrete deadline (a date, weekday, or relative day like \"tomorrow\"), append a space then an inline-code span containing an em dash and the date, like `` `— Wed` ``. NEVER invent or guess deadlines, and NEVER emit `` `— TBD` ``, `` `— soon` ``, or similar placeholders — if there's no real deadline, just omit the suffix.\n\
 - ## Open questions — bullet list (`- `) of unresolved items, each phrased as a question ending with `?`. If you have any open question to list, you MUST emit the `## Open questions` heading line directly above the bullets.\n\
 \n\
 Rules:\n\
 - Use the em dash character `—` (not `--`) before due dates.\n\
-- Name people only when the transcript clearly assigns work or attributes a decision to them.\n\
+- Name people only in the Summary and Decisions sections, and only when the transcript clearly attributes the work or decision to them. Action items never carry a name.\n\
 - Skip filler, chit-chat, repeated points, and pleasantries.\n\
 - No editorializing, no summarizing importance, no meta-commentary.\n\
-- Do not invent labels beyond the four section headings and the `Owner:` prefix on action items.\n\
+- Do not invent labels beyond the four section headings.\n\
 - Do not give the output a title — the title is generated separately.\n\
 \n\
 Example shape (illustrative only, do not copy the content):\n\
@@ -52,9 +52,9 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
 - Hold the redesigned empty state for v2.1 — not a launch blocker.\n\
 \n\
 ## Action items\n\
-- [ ] **Dev:** Cut the release branch tonight.\n\
-- [ ] **Priya:** Draft the launch email. `— Wed`\n\
-- [ ] **Maya:** Walk QA through edge cases. `— Thu`\n\
+- [ ] Cut the release branch tonight.\n\
+- [ ] Draft the launch email. `— Wed`\n\
+- [ ] Publish the updated dark-mode docs.\n\
 \n\
 ## Open questions\n\
 - Announce in-app, or just over email?";

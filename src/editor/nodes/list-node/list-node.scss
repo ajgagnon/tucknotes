@@ -133,6 +133,7 @@
 
       &:not(:has(> p:first-child)) {
         list-style-type: none;
+        padding: 0;
       }
 
       &[data-checked="true"] {
