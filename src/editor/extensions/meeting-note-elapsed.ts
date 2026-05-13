@@ -128,10 +128,18 @@ export const MeetingNoteHeading = Heading.extend({
   },
 
   parseMarkdown: (token, helpers) => {
+    let inline = helpers.parseInline(token.tokens || []);
+    // Workaround for a marked/@tiptap/markdown lexer quirk: a `## heading`
+    // that immediately follows a task list ends up with `tokens: []` even
+    // though `text` is correct. Without this fallback, the heading renders
+    // as empty in the editor (the cursor lands inside an invisible <h2>).
+    if (inline.length === 0 && token.text) {
+      inline = [{ type: "text", text: token.text }];
+    }
     return helpers.createNode(
       "heading",
       { level: token.depth || 1 },
-      helpers.parseInline(token.tokens || []),
+      inline,
     );
   },
 });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles, Settings, Settings2, Play } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { invoke } from "@tauri-apps/api/core";
 import {
   useRecording,
@@ -273,7 +274,7 @@ export function MeetingDetailView({
       </div>
     </div>
   ) : summarizing ? (
-    <div className="simple-editor-wrapper">
+    <div className="simple-editor-wrapper meeting-summary-prose">
       <StreamingSummaryToolbarPlaceholder />
       <div className="simple-editor-content">
         <div
@@ -285,7 +286,9 @@ export function MeetingDetailView({
           )}
           {streamedSummary && (
             <>
-              <ReactMarkdown>{streamedSummary}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {streamedSummary}
+              </ReactMarkdown>
               <span className="inline-block w-1.5 h-4 bg-primary animate-pulse ml-0.5 align-text-bottom rounded-sm" />
             </>
           )}
@@ -293,14 +296,16 @@ export function MeetingDetailView({
       </div>
     </div>
   ) : currentSummary ? (
-    <div className="simple-editor-wrapper">
+    <div className="simple-editor-wrapper meeting-summary-prose">
       <StreamingSummaryToolbarPlaceholder />
       <div className="simple-editor-content">
         <div
           className="tiptap ProseMirror simple-editor"
           style={{ whiteSpace: "normal" }}
         >
-          <ReactMarkdown>{currentSummary}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {currentSummary}
+          </ReactMarkdown>
         </div>
       </div>
     </div>
@@ -334,6 +339,7 @@ export function MeetingDetailView({
       onDocumentBodySaved={onMeetingDocumentBodyUpdated}
       stampElapsedSecs={isSummaryTab ? null : stampElapsedSecs}
       onSeekTranscript={handleSeekTranscript}
+      className={isSummaryTab ? "meeting-summary-prose" : undefined}
     />
   ) : (
     summaryPanel

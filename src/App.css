@@ -159,6 +159,7 @@
   --breakpoint-md: 600px;
   --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
   --font-serif: 'Source Serif 4 Variable', ui-serif, Georgia, serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   --color-success: var(--primary);
   --color-ochre-200: var(--ochre-200);
   --color-ochre-500: var(--ochre-500);
@@ -244,4 +245,171 @@
   --tw-prose-body: var(--foreground);
   --tw-prose-headings: var(--foreground);
   --tw-prose-bold: var(--foreground);
+}
+
+/* Meeting summary view — serif typography, em-dash markers, task-list checkboxes,
+   monospace inline code (used for due-date suffixes like `— Wed`). Scoped tightly
+   so it overrides simple-editor styles without affecting the notes editor. */
+.meeting-summary-prose .tiptap.ProseMirror.simple-editor {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--foreground);
+}
+
+.meeting-summary-prose .tiptap.ProseMirror h2 {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: 1.05rem;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  margin: 1.5rem 0 0.5rem;
+}
+
+.meeting-summary-prose .tiptap.ProseMirror h2:first-child {
+  margin-top: 0;
+}
+
+.meeting-summary-prose .tiptap.ProseMirror p {
+  margin: 0.5rem 0;
+}
+
+/* Tiptap wraps list-item content in `<p>` (or `<div><p>` for task items);
+   remark-gfm doesn't. Zero those inner margins so tiptap spacing matches. */
+.meeting-summary-prose .tiptap.ProseMirror li > p,
+.meeting-summary-prose .tiptap.ProseMirror li > div > p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+/* Plain bullet list — covers both react-markdown (`ul`) and tiptap
+   (`ul:not([data-type="taskList"])`). Em-dash marker, no disc. */
+.meeting-summary-prose .tiptap.ProseMirror ul,
+.meeting-summary-prose .tiptap.ProseMirror ul:not([data-type="taskList"]) {
+  list-style: none;
+  padding-left: 0;
+  margin: 0.25rem 0;
+}
+
+.meeting-summary-prose .tiptap.ProseMirror ul:not([data-type="taskList"]) > li,
+.meeting-summary-prose .tiptap.ProseMirror ul:not(.contains-task-list) > li {
+  position: relative;
+  padding-left: 1.5rem;
+  margin: 0.35rem 0;
+  list-style: none;
+}
+
+.meeting-summary-prose .tiptap.ProseMirror ul:not([data-type="taskList"]) > li::before,
+.meeting-summary-prose .tiptap.ProseMirror ul:not(.contains-task-list) > li::before {
+  content: "—";
+  position: absolute;
+  left: 0;
+  color: var(--ink-2);
+}
+
+/* React-markdown task lists (`ul.contains-task-list`) — native disabled checkbox. */
+.meeting-summary-prose .tiptap.ProseMirror ul.contains-task-list > li {
+  padding-left: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.meeting-summary-prose .tiptap.ProseMirror ul.contains-task-list > li::before {
+  content: none;
+}
+
+.meeting-summary-prose .tiptap.ProseMirror ul.contains-task-list input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 0.95em;
+  height: 0.95em;
+  border: 1.25px solid var(--ink-2);
+  border-radius: 2px;
+  background: transparent;
+  flex-shrink: 0;
+  margin: 0;
+  position: relative;
+  top: 0.15em;
+  cursor: default;
+}
+
+.meeting-summary-prose .tiptap.ProseMirror ul.contains-task-list input[type="checkbox"]:checked {
+  background-color: var(--sage-500);
+  border-color: var(--sage-500);
+}
+
+.meeting-summary-prose .tiptap.ProseMirror ul.contains-task-list input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 0.22em;
+  top: 0.02em;
+  width: 0.22em;
+  height: 0.5em;
+  border-right: 2px solid var(--paper-0);
+  border-bottom: 2px solid var(--paper-0);
+  transform: rotate(45deg);
+}
+
+/* Tiptap task lists (`ul[data-type="taskList"]`) — re-skin the existing
+   <label><input><span></span></label> structure to match the read view. */
+.meeting-summary-prose .tiptap.ProseMirror ul[data-type="taskList"] {
+  padding-left: 0;
+}
+
+.meeting-summary-prose .tiptap.ProseMirror ul[data-type="taskList"] > li {
+  list-style: none;
+  align-items: baseline;
+  margin: 0.35rem 0;
+}
+
+.meeting-summary-prose .tiptap.ProseMirror ul[data-type="taskList"] > li::before {
+  content: none;
+}
+
+.meeting-summary-prose .tiptap.ProseMirror ul[data-type="taskList"] > li > label {
+  padding-top: 0;
+  padding-right: 0.5rem;
+  padding-bottom: 0;
+  position: relative;
+  top: 0.18em;
+}
+
+.meeting-summary-prose .tiptap.ProseMirror ul[data-type="taskList"] > li > div {
+  margin: 0;
+  padding: 0;
+}
+
+.meeting-summary-prose .tiptap.ProseMirror ul[data-type="taskList"] > li > label > span {
+  width: 0.95em;
+  height: 0.95em;
+  border: 1.25px solid var(--ink-2);
+  border-radius: 2px;
+  background-color: transparent;
+}
+
+.meeting-summary-prose .tiptap.ProseMirror ul[data-type="taskList"] > li > label > input[type="checkbox"]:checked + span {
+  background-color: var(--sage-500);
+  border-color: var(--sage-500);
+}
+
+.meeting-summary-prose .tiptap.ProseMirror ul[data-type="taskList"] > li[data-checked="true"] > div > p {
+  opacity: 0.55;
+}
+
+.meeting-summary-prose .tiptap.ProseMirror code {
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  color: var(--ochre-500);
+  background: transparent;
+  padding: 0;
+  font-weight: 400;
+}
+
+.dark .meeting-summary-prose .tiptap.ProseMirror code {
+  color: var(--ochre-200);
+}
+
+.meeting-summary-prose .tiptap.ProseMirror strong {
+  font-weight: 700;
 }

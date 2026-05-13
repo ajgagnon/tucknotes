@@ -15,6 +15,8 @@ interface MeetingDocumentEditorProps {
   stampElapsedSecs: number | null;
   /** Jump transcript to this meeting time (ms). */
   onSeekTranscript?: (timestampMs: number) => void;
+  /** Extra className applied to the outer wrapper (e.g. `meeting-summary-prose`). */
+  className?: string;
 }
 
 export function MeetingDocumentEditor({
@@ -23,6 +25,7 @@ export function MeetingDocumentEditor({
   onDocumentBodySaved,
   stampElapsedSecs,
   onSeekTranscript,
+  className,
 }: MeetingDocumentEditorProps) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPersistedRef = useRef<string>(initialBody ?? "");
@@ -96,7 +99,7 @@ export function MeetingDocumentEditor({
   return (
     <div
       ref={containerRef}
-      className="meeting-notes-editor flex min-h-0 flex-1 flex-col"
+      className={`meeting-notes-editor flex min-h-0 flex-1 flex-col${className ? ` ${className}` : ""}`}
     >
       <SimpleEditor
         key={documentId}
