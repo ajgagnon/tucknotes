@@ -681,7 +681,13 @@ function AppLayout() {
             />
           </SidebarProvider>
         </RecordingProvider>
-        <Chatbot />
+        <Chatbot
+          activeMeeting={
+            activeView?.type === "meeting"
+              ? meetings.find((m) => m.id === activeView.id) ?? null
+              : null
+          }
+        />
       </TooltipProvider>
     </div>
   );

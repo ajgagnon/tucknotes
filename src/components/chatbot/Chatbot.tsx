@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MessageCircle, X } from "lucide-react";
+import { FileText, Fullscreen, MessageCircle, X } from "lucide-react";
 import type { ChatStatus } from "ai";
 
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import {
 import {
   PromptInput,
   PromptInputBody,
+  PromptInputButton,
   PromptInputFooter,
   PromptInputSubmit,
   PromptInputTextarea,
@@ -38,15 +39,21 @@ const newId = () =>
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2);
 
-export function Chatbot() {
+type ChatbotProps = {
+  activeMeeting?: { id: string; title: string | null } | null;
+};
+
+export function Chatbot({ activeMeeting }: ChatbotProps = {}) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatStatus | undefined>(undefined);
+  const [dismissedContext, setDismissedContext] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { streamReply, stop } = useMockStream();
 
   useEffect(() => {
     if (!open) return;
+    setDismissedContext(false);
     const raf = requestAnimationFrame(() => textareaRef.current?.focus());
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -57,6 +64,8 @@ export function Chatbot() {
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
+
+  const showContextChip = open && !!activeMeeting && !dismissedContext;
 
   const appendChunk = useCallback((id: string, chunk: string) => {
     setMessages((prev) =>
@@ -155,7 +164,26 @@ export function Chatbot() {
             <ConversationScrollButton />
           </Conversation>
 
-          <div className="border-t border-border p-2">
+          <div className="flex flex-col gap-1.5 border-t border-border p-2">
+            {showContextChip && activeMeeting && (
+              <div className="flex w-full min-w-0 items-center gap-1.5 px-1 text-xs">
+                <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate text-foreground">
+                  {activeMeeting.title || "Untitled meeting"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDismissedContext(true);
+                    textareaRef.current?.focus();
+                  }}
+                  aria-label="Remove meeting context"
+                  className="-mr-0.5 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            )}
             <PromptInput onSubmit={handleSubmit}>
               <PromptInputBody>
                 <PromptInputTextarea
@@ -164,7 +192,26 @@ export function Chatbot() {
                 />
               </PromptInputBody>
               <PromptInputFooter>
-                <PromptInputTools />
+                <PromptInputTools>
+                  <PromptInputButton
+                    type="button"
+                    variant={showContextChip ? "secondary" : "ghost"}
+                    onClick={() =>
+                      setDismissedContext((prev) => !prev)
+                    }
+                    disabled={!activeMeeting}
+                    aria-pressed={showContextChip}
+                    tooltip={
+                      activeMeeting
+                        ? showContextChip
+                          ? "Remove meeting context"
+                          : "Use current meeting as context"
+                        : "No active meeting"
+                    }
+                  >
+                    <Fullscreen className="size-4" />
+                  </PromptInputButton>
+                </PromptInputTools>
                 <PromptInputSubmit status={status} onStop={handleStop} />
               </PromptInputFooter>
             </PromptInput>
