@@ -130,7 +130,10 @@ function CommandShortcut({
   )
 }
 
+const Command = CommandPrimitive
+
 export {
+  Command,
   CommandDialog,
   CommandInput,
   CommandList,

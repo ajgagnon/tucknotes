@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Chatbot } from "@/components/chatbot/Chatbot";
 import {
   RecordingProvider,
   useRecording,
@@ -680,6 +681,7 @@ function AppLayout() {
             />
           </SidebarProvider>
         </RecordingProvider>
+        <Chatbot />
       </TooltipProvider>
     </div>
   );
