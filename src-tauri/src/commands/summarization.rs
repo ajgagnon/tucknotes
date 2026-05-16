@@ -149,6 +149,18 @@ pub async fn summarize_meeting(
     // We're the active summarization — run it
     match do_summarize(&app, &*db_state, &*summ_state, &meeting_id).await {
         Ok(_) => Ok("started".into()),
+        Err(AppError::Interrupted) => {
+            // Chat preempted us. Re-queue at the front so we resume after
+            // chat releases the model lock.
+            if let Ok(mut active) = summ_state.active_meeting_id.lock() {
+                *active = None;
+            }
+            if let Ok(mut queue) = summ_state.pending_queue.lock() {
+                queue.push_front(meeting_id);
+            }
+            process_next_in_queue(&app);
+            Ok("preempted".into())
+        }
         Err(e) => {
             // Clear active and try to process queue
             if let Ok(mut active) = summ_state.active_meeting_id.lock() {
@@ -203,14 +215,17 @@ async fn do_summarize(
         AppError::SummarizationFailed("No LLM model selected or downloaded".into())
     })?;
 
-    // 3. Run summarization with streaming (events scoped to meeting_id)
+    // 3. Run summarization with streaming (events scoped to meeting_id).
+    // The interrupt flag is shared with the chatbot; if chat sets it, we exit
+    // early with AppError::Interrupted and the caller re-queues this meeting.
     let service = Arc::clone(&summ_state.service);
+    let interrupt = Arc::clone(&summ_state.llm_interrupt);
     let app_clone = app.clone();
     let model_path_clone = model_path.clone();
     let mid_owned = meeting_id.to_owned();
 
     let summary = tokio::task::spawn_blocking(move || {
-        service.summarize(&model_path, &transcript, |token, is_thinking| {
+        service.summarize(&model_path, &transcript, &interrupt, |token, is_thinking| {
             let event_name = if is_thinking {
                 "summary:thinking"
             } else {
@@ -340,16 +355,29 @@ fn process_next_in_queue(app: &tauri::AppHandle) {
         };
 
         eprintln!("[queue] Processing next meeting: {}", next_id);
-        if let Err(e) = do_summarize(&app, &*db_state, &*summ_state, &next_id).await {
-            eprintln!("[queue] Summarization failed for {}: {:?}", next_id, e);
-            // Clear active and try next
-            if let Ok(mut active) = summ_state.active_meeting_id.lock() {
-                *active = None;
+        match do_summarize(&app, &*db_state, &*summ_state, &next_id).await {
+            Ok(_) => {
+                // do_summarize spawns title gen which clears
+                // active_meeting_id and calls process_next_in_queue.
             }
-            process_next_in_queue(&app);
+            Err(AppError::Interrupted) => {
+                eprintln!("[queue] Summarization preempted for {}, re-queueing", next_id);
+                if let Ok(mut active) = summ_state.active_meeting_id.lock() {
+                    *active = None;
+                }
+                if let Ok(mut queue) = summ_state.pending_queue.lock() {
+                    queue.push_front(next_id);
+                }
+                process_next_in_queue(&app);
+            }
+            Err(e) => {
+                eprintln!("[queue] Summarization failed for {}: {:?}", next_id, e);
+                if let Ok(mut active) = summ_state.active_meeting_id.lock() {
+                    *active = None;
+                }
+                process_next_in_queue(&app);
+            }
         }
-        // On success, do_summarize spawns title gen which will
-        // clear active_meeting_id and call process_next_in_queue when done.
     });
 }
 

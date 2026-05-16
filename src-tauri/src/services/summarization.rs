@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use llama_cpp_2::context::params::LlamaContextParams;
@@ -59,12 +60,14 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
 ## Open questions\n\
 - Announce in-app, or just over email?";
 
-const MAX_TOKENS: i32 = 4096;
+const MAX_SUMMARIZATION_TOKENS: i32 = 4096;
+const MAX_CHAT_TOKENS: i32 = 1024;
+const BATCH_SIZE: usize = 2048;
 
-/// Wraps a lazily-loaded llama.cpp model and exposes a blocking
-/// `summarize()` method. The model is loaded on the first call
-/// and reused for every subsequent call. If the model path changes
-/// (e.g. user selects a different model), it is reloaded automatically.
+/// Wraps a lazily-loaded llama.cpp model and exposes blocking
+/// `summarize()` / `generate_chat()` methods. The model is loaded on the
+/// first call and reused for every subsequent call. If the model path
+/// changes (e.g. user selects a different model), it is reloaded.
 pub struct SummarizationService {
     backend: LlamaBackend,
     model: Mutex<Option<(PathBuf, LlamaModel)>>,
@@ -107,28 +110,20 @@ impl SummarizationService {
         Ok(())
     }
 
-    /// Apply the model's built-in Jinja chat template with the given
-    /// `enable_thinking` flag. This uses the template baked into the GGUF
-    /// rather than manually constructing prompt strings.
+    /// Apply the model's built-in Jinja chat template to a pre-built
+    /// OpenAI-format messages JSON string. Returns the templated prompt
+    /// ready for tokenization.
     fn apply_template(
         model: &LlamaModel,
-        system: &str,
-        user: &str,
+        messages_json: &str,
         enable_thinking: bool,
     ) -> Result<String, AppError> {
         let tmpl = model.chat_template(None).map_err(|e| {
             AppError::SummarizationFailed(format!("Failed to get chat template: {e}"))
         })?;
 
-        // Build OpenAI-compatible messages JSON
-        let messages_json = serde_json::json!([
-            {"role": "system", "content": system},
-            {"role": "user", "content": user}
-        ])
-        .to_string();
-
         let params = OpenAIChatTemplateParams {
-            messages_json: &messages_json,
+            messages_json,
             tools_json: None,
             tool_choice: None,
             json_schema: None,
@@ -159,43 +154,31 @@ impl SummarizationService {
         Ok(result.prompt)
     }
 
-    /// Run summarization on the given transcript text.
+    /// Shared token-generation loop with streaming `<think>` filtering and
+    /// cooperative cancellation. `on_token(text, is_thinking)` is called
+    /// for each piece. Returns the raw output string (callers strip
+    /// `<think>` tags for storage).
     ///
-    /// Calls `on_token(text, is_thinking)` for each generated token so
-    /// callers can stream results to the frontend. The `is_thinking` flag
-    /// is `true` for tokens inside `<think>...</think>` blocks.
-    /// Returns the complete summary text (with thinking stripped).
-    ///
-    /// **Blocking** -- call from `spawn_blocking`.
+    /// **Blocking** — call from `spawn_blocking`. Returns
+    /// `AppError::Interrupted` when `interrupt` is set during the loop.
     #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-    pub fn summarize<F>(
+    fn run_inference<F>(
         &self,
-        model_path: &Path,
-        transcript: &str,
+        model: &LlamaModel,
+        prompt: &str,
+        max_tokens: i32,
+        interrupt: &AtomicBool,
         mut on_token: F,
     ) -> Result<String, AppError>
     where
         F: FnMut(&str, bool),
     {
-        self.ensure_loaded(model_path)?;
-
-        let guard = lock_or_err(&self.model)?;
-        let (_, model) = guard
-            .as_ref()
-            .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
-
-        let prompt = Self::apply_template(model, SYSTEM_PROMPT, transcript, false)?;
         let tokens_list = model
-            .str_to_token(&prompt, AddBos::Always)
+            .str_to_token(prompt, AddBos::Always)
             .map_err(|e| AppError::SummarizationFailed(format!("Tokenization failed: {e}")))?;
 
         let n_input = tokens_list.len() as u32;
-        let n_ctx = (n_input + MAX_TOKENS as u32 + 256).max(4096);
-
-        // Use a batch size large enough for chunked prompt ingestion.
-        // We process the prompt in chunks of BATCH_SIZE tokens to avoid
-        // allocating one enormous batch for long transcripts.
-        const BATCH_SIZE: usize = 2048;
+        let n_ctx = (n_input + max_tokens as u32 + 256).max(4096);
 
         let ctx_params = LlamaContextParams::default()
             .with_n_ctx(std::num::NonZeroU32::new(n_ctx))
@@ -206,10 +189,13 @@ impl SummarizationService {
 
         let mut batch = LlamaBatch::new(BATCH_SIZE, 1);
 
-        // Feed prompt tokens in chunks
+        // Feed prompt tokens in chunks to avoid one enormous batch allocation.
         let n_prompt = tokens_list.len();
         let last_prompt_idx = n_prompt as i32 - 1;
         for chunk_start in (0..n_prompt).step_by(BATCH_SIZE) {
+            if interrupt.load(Ordering::Relaxed) {
+                return Err(AppError::Interrupted);
+            }
             batch.clear();
             let chunk_end = (chunk_start + BATCH_SIZE).min(n_prompt);
             for i in chunk_start..chunk_end {
@@ -230,14 +216,14 @@ impl SummarizationService {
         let mut sampler = LlamaSampler::greedy();
         let mut output = String::new();
 
-        // Track <think> tags so we can separate thinking from answer in the stream.
         let mut inside_think = false;
-        // Buffer for partial tag detection (e.g. we see "<thi" and need to
-        // wait for more tokens before deciding whether to emit or suppress).
         let mut tag_buf = String::new();
 
-        while n_cur < n_prompt as i32 + MAX_TOKENS {
-            // Sample from the last logit position in the most recent batch
+        while n_cur < n_prompt as i32 + max_tokens {
+            if interrupt.load(Ordering::Relaxed) {
+                return Err(AppError::Interrupted);
+            }
+
             let token = sampler.sample(&ctx, batch.n_tokens() - 1);
             sampler.accept(token);
 
@@ -252,30 +238,25 @@ impl SummarizationService {
                 })?;
 
             output.push_str(&piece);
-            eprint!("{}", piece); // DEBUG: show raw model output
+            eprint!("{}", piece);
 
             // Stream filtering: strip <think>...</think> blocks, only emit
-            // answer content to the frontend. Thinking tokens are silently
-            // discarded (they're also stripped from the final DB output).
+            // answer content to the frontend.
             tag_buf.push_str(&piece);
             loop {
                 if inside_think {
                     if let Some(end) = tag_buf.find(THINK_CLOSE) {
-                        // Discard thinking content, keep anything after the tag
                         tag_buf = tag_buf[(end + THINK_CLOSE.len())..].to_string();
                         inside_think = false;
                     } else if tag_buf.contains('<') {
-                        // Might be a partial "</think>" — discard up to '<', keep rest
                         let lt = tag_buf.rfind('<').unwrap();
                         tag_buf = tag_buf[lt..].to_string();
                         break;
                     } else {
-                        // Still inside think block — discard everything
                         tag_buf.clear();
                         break;
                     }
                 } else if let Some(start) = tag_buf.find(THINK_OPEN) {
-                    // Emit everything before <think> as answer content
                     let before = &tag_buf[..start];
                     if !before.is_empty() {
                         on_token(before, false);
@@ -283,8 +264,6 @@ impl SummarizationService {
                     tag_buf = tag_buf[start + THINK_OPEN.len()..].to_string();
                     inside_think = true;
                 } else if tag_buf.contains('<') {
-                    // Might be a partial "<think>" tag starting; emit
-                    // everything before the '<' and keep the rest buffered.
                     let lt = tag_buf.rfind('<').unwrap();
                     let before = &tag_buf[..lt];
                     if !before.is_empty() {
@@ -293,7 +272,6 @@ impl SummarizationService {
                     tag_buf = tag_buf[lt..].to_string();
                     break;
                 } else {
-                    // No tags at all — flush the buffer as answer content
                     if !tag_buf.is_empty() {
                         on_token(&tag_buf, false);
                         tag_buf.clear();
@@ -313,20 +291,84 @@ impl SummarizationService {
                 .map_err(|e| AppError::SummarizationFailed(format!("Decode failed: {e}")))?;
         }
 
-        // Flush any remaining buffered text (only if not inside a think block)
         if !tag_buf.is_empty() && !inside_think {
             on_token(&tag_buf, false);
         }
 
-        // Also strip from the final output for DB storage
-        let cleaned = strip_think_tags(output.trim());
+        Ok(output)
+    }
+
+    /// Run summarization on the given transcript text. See `run_inference`
+    /// for streaming and cancellation semantics. **Blocking**.
+    pub fn summarize<F>(
+        &self,
+        model_path: &Path,
+        transcript: &str,
+        interrupt: &AtomicBool,
+        on_token: F,
+    ) -> Result<String, AppError>
+    where
+        F: FnMut(&str, bool),
+    {
+        self.ensure_loaded(model_path)?;
+
+        let guard = lock_or_err(&self.model)?;
+        let (_, model) = guard
+            .as_ref()
+            .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
+
+        let messages_json = serde_json::json!([
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": transcript}
+        ])
+        .to_string();
+        let prompt = Self::apply_template(model, &messages_json, false)?;
+
+        let raw = self.run_inference(
+            model,
+            &prompt,
+            MAX_SUMMARIZATION_TOKENS,
+            interrupt,
+            on_token,
+        )?;
+        let cleaned = strip_think_tags(raw.trim());
+        Ok(cleaned.trim().to_string())
+    }
+
+    /// Run a chat completion against the supplied pre-built OpenAI-format
+    /// `messages_json`. Streams via `on_token` and respects `interrupt`.
+    /// **Blocking**.
+    pub fn generate_chat<F>(
+        &self,
+        model_path: &Path,
+        messages_json: &str,
+        interrupt: &AtomicBool,
+        on_token: F,
+    ) -> Result<String, AppError>
+    where
+        F: FnMut(&str, bool),
+    {
+        self.ensure_loaded(model_path)?;
+
+        let guard = lock_or_err(&self.model)?;
+        let (_, model) = guard
+            .as_ref()
+            .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
+
+        // We're past the preemption hand-off: the lock is ours. Clear the
+        // shared flag so we don't immediately self-abort. It remains
+        // available for the stop button to signal *this* run to bail.
+        interrupt.store(false, Ordering::Relaxed);
+
+        let prompt = Self::apply_template(model, messages_json, false)?;
+
+        let raw = self.run_inference(model, &prompt, MAX_CHAT_TOKENS, interrupt, on_token)?;
+        let cleaned = strip_think_tags(raw.trim());
         Ok(cleaned.trim().to_string())
     }
 
     /// Generate a short title for a meeting from its summary.
-    ///
-    /// Uses the same model as `summarize()` (already loaded) with a tiny
-    /// context and a small token budget. **Blocking** -- call from `spawn_blocking`.
+    /// **Blocking** -- call from `spawn_blocking`.
     #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
     pub fn generate_title(
         &self,
@@ -341,7 +383,12 @@ impl SummarizationService {
             .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
 
         let system = "Generate a short, descriptive title (max 8 words) for a meeting based on the summary below. Output ONLY the title text, nothing else. Do not use quotes.";
-        let prompt = Self::apply_template(model, system, summary, false)?;
+        let messages_json = serde_json::json!([
+            {"role": "system", "content": system},
+            {"role": "user", "content": summary}
+        ])
+        .to_string();
+        let prompt = Self::apply_template(model, &messages_json, false)?;
 
         let tokens_list = model
             .str_to_token(&prompt, AddBos::Always)
@@ -350,8 +397,6 @@ impl SummarizationService {
         let n_input = tokens_list.len() as u32;
         let max_title_tokens: i32 = 512;
         let n_ctx = (n_input + max_title_tokens as u32 + 64).max(512);
-
-        const BATCH_SIZE: usize = 2048;
 
         let ctx_params = LlamaContextParams::default()
             .with_n_ctx(std::num::NonZeroU32::new(n_ctx))
@@ -383,9 +428,7 @@ impl SummarizationService {
         let mut decoder = encoding_rs::UTF_8.new_decoder();
         let mut sampler = LlamaSampler::greedy();
         let mut output = String::new();
-        // Track think blocks incrementally to avoid O(n^2) scans
         let mut inside_think = false;
-        // Accumulates only non-thinking content for newline detection
         let mut title_text = String::new();
 
         while n_cur < n_prompt as i32 + max_title_tokens {
@@ -404,7 +447,6 @@ impl SummarizationService {
 
             output.push_str(&piece);
 
-            // Track <think> blocks incrementally
             if !inside_think && piece.contains(THINK_OPEN) {
                 inside_think = true;
             }
@@ -412,7 +454,6 @@ impl SummarizationService {
                 inside_think = false;
             }
 
-            // Accumulate non-thinking content for newline detection
             if !inside_think {
                 title_text.push_str(&piece);
                 let trimmed = title_text.trim();
@@ -442,7 +483,6 @@ impl SummarizationService {
 }
 
 /// Strip `<think>...</think>` blocks from model output.
-/// Qwen3 may emit these even with `/no_think`.
 fn strip_think_tags(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut remaining = s;
@@ -451,7 +491,6 @@ fn strip_think_tags(s: &str) -> String {
         if let Some(end) = remaining[start..].find(THINK_CLOSE) {
             remaining = &remaining[(start + end + THINK_CLOSE.len())..];
         } else {
-            // Unclosed tag — drop everything from <think> onward
             return result.trim().to_string();
         }
     }
@@ -469,6 +508,12 @@ pub struct SummarizationState {
     /// Meeting IDs waiting to be summarized. Processed sequentially after the
     /// active summarization (including its title generation) completes.
     pub pending_queue: std::sync::Mutex<std::collections::VecDeque<String>>,
+    /// Cooperative-cancellation flag shared between summarization and chat.
+    /// When `true`, a running inference loop will exit early with
+    /// `AppError::Interrupted` on its next token. Whoever sets it should
+    /// clear it once they've acquired the model lock and are about to start
+    /// their own work.
+    pub llm_interrupt: std::sync::Arc<AtomicBool>,
 }
 
 #[cfg(test)]

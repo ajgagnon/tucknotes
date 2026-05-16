@@ -26,13 +26,15 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { cn } from "@/lib/utils";
 
-import { useMockStream } from "./use-mock-stream";
+import { useChatStream } from "./use-chat-stream";
 
 type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   text: string;
 };
+
+const HISTORY_CAP = 12;
 
 const newId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -41,18 +43,26 @@ const newId = () =>
 
 type ChatbotProps = {
   activeMeeting?: { id: string; title: string | null } | null;
+  onOpenSettings?: () => void;
 };
 
-export function Chatbot({ activeMeeting }: ChatbotProps = {}) {
+export function Chatbot({ activeMeeting, onOpenSettings }: ChatbotProps = {}) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatStatus | undefined>(undefined);
+  const [errorText, setErrorText] = useState<string | null>(null);
   const [dismissedContext, setDismissedContext] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { streamReply, stop } = useMockStream();
+  const { send, stop, modelReady } = useChatStream();
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      // Per-panel-open session: clear history + status on close.
+      setMessages([]);
+      setStatus(undefined);
+      setErrorText(null);
+      return;
+    }
     setDismissedContext(false);
     const raf = requestAnimationFrame(() => textareaRef.current?.focus());
     const onKey = (e: KeyboardEvent) => {
@@ -66,6 +76,7 @@ export function Chatbot({ activeMeeting }: ChatbotProps = {}) {
   }, [open]);
 
   const showContextChip = open && !!activeMeeting && !dismissedContext;
+  const canSubmit = modelReady === true;
 
   const appendChunk = useCallback((id: string, chunk: string) => {
     setMessages((prev) =>
@@ -77,6 +88,9 @@ export function Chatbot({ activeMeeting }: ChatbotProps = {}) {
     async (message: PromptInputMessage) => {
       const text = message.text?.trim();
       if (!text || status === "submitted" || status === "streaming") return;
+      if (!canSubmit) return;
+
+      setErrorText(null);
 
       const userMsg: ChatMessage = { id: newId(), role: "user", text };
       const assistantMsg: ChatMessage = {
@@ -88,12 +102,36 @@ export function Chatbot({ activeMeeting }: ChatbotProps = {}) {
       requestAnimationFrame(() => textareaRef.current?.focus());
 
       setStatus("submitted");
-      await new Promise((r) => setTimeout(r, 200));
-      setStatus("streaming");
-      await streamReply((chunk) => appendChunk(assistantMsg.id, chunk));
-      setStatus(undefined);
+      const meetingId =
+        showContextChip && activeMeeting ? activeMeeting.id : null;
+      // Build history from the messages we just appended; cap to last N entries.
+      const fullHistory = [
+        ...messages.map((m) => ({ role: m.role, text: m.text })),
+        { role: "user" as const, text },
+      ];
+      const history = fullHistory.slice(-HISTORY_CAP);
+
+      let firstToken = true;
+      await send({
+        meetingId,
+        history,
+        onToken: (chunk) => {
+          if (firstToken) {
+            firstToken = false;
+            setStatus("streaming");
+          }
+          appendChunk(assistantMsg.id, chunk);
+        },
+        onComplete: () => {
+          setStatus(undefined);
+        },
+        onError: (msg) => {
+          setStatus("error");
+          setErrorText(msg);
+        },
+      });
     },
-    [status, streamReply, appendChunk],
+    [status, send, appendChunk, showContextChip, activeMeeting, messages, canSubmit],
   );
 
   const handleStop = useCallback(() => {
@@ -120,7 +158,7 @@ export function Chatbot({ activeMeeting }: ChatbotProps = {}) {
           role="dialog"
           aria-label="Chat"
           className={cn(
-            "fixed bottom-4 right-4 z-50 flex h-[560px] w-[380px] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xl",
+            "fixed bottom-4 right-4 z-50 flex h-[560px] w-[380px] flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl",
             "animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200",
           )}
         >
@@ -139,26 +177,50 @@ export function Chatbot({ activeMeeting }: ChatbotProps = {}) {
 
           <Conversation className="flex-1">
             <ConversationContent className="gap-4 p-3">
-              {messages.length === 0 ? (
-                <ConversationEmptyState
-                  icon={<MessageCircle className="size-8" />}
-                  title="Ask me anything"
-                  description="I'm here to help you get more out of your meetings."
-                />
-              ) : (
-                messages.map((m) => (
-                  <Message from={m.role} key={m.id}>
-                    <MessageContent>
-                      {m.role === "assistant" ? (
-                        <MessageResponse>
-                          {m.text || "​"}
-                        </MessageResponse>
-                      ) : (
-                        m.text
-                      )}
-                    </MessageContent>
-                  </Message>
-                ))
+              {messages.length === 0 && (
+                <>
+                  <ConversationEmptyState
+                    icon={<MessageCircle className="size-8" />}
+                    title={
+                      modelReady === false
+                        ? "Model required"
+                        : "Ask me anything"
+                    }
+                    description={
+                      modelReady === false
+                        ? "Download a model in Settings to use Tuck."
+                        : "I'm here to help you get more out of your meetings."
+                    }
+                  />
+                  {modelReady === false && onOpenSettings && (
+                    <div className="-mt-4 flex justify-center">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={onOpenSettings}
+                      >
+                        Open Settings
+                      </Button>
+                    </div>
+                  )}
+                </>
+              )}
+              {messages.map((m) => (
+                <Message from={m.role} key={m.id}>
+                  <MessageContent>
+                    {m.role === "assistant" ? (
+                      <MessageResponse>{m.text || "​"}</MessageResponse>
+                    ) : (
+                      m.text
+                    )}
+                  </MessageContent>
+                </Message>
+              ))}
+              {errorText && (
+                <p className="text-xs text-red-500 dark:text-red-400">
+                  {errorText}
+                </p>
               )}
             </ConversationContent>
             <ConversationScrollButton />
@@ -188,7 +250,10 @@ export function Chatbot({ activeMeeting }: ChatbotProps = {}) {
               <PromptInputBody>
                 <PromptInputTextarea
                   ref={textareaRef}
-                  placeholder="Ask anything…"
+                  placeholder={
+                    canSubmit ? "Ask anything…" : "Download a model first…"
+                  }
+                  disabled={!canSubmit}
                 />
               </PromptInputBody>
               <PromptInputFooter>
@@ -196,9 +261,7 @@ export function Chatbot({ activeMeeting }: ChatbotProps = {}) {
                   <PromptInputButton
                     type="button"
                     variant={showContextChip ? "secondary" : "ghost"}
-                    onClick={() =>
-                      setDismissedContext((prev) => !prev)
-                    }
+                    onClick={() => setDismissedContext((prev) => !prev)}
                     disabled={!activeMeeting}
                     aria-pressed={showContextChip}
                     tooltip={
@@ -212,7 +275,11 @@ export function Chatbot({ activeMeeting }: ChatbotProps = {}) {
                     <Fullscreen className="size-4" />
                   </PromptInputButton>
                 </PromptInputTools>
-                <PromptInputSubmit status={status} onStop={handleStop} />
+                <PromptInputSubmit
+                  status={status}
+                  onStop={handleStop}
+                  disabled={!canSubmit}
+                />
               </PromptInputFooter>
             </PromptInput>
           </div>

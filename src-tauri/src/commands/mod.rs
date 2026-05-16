@@ -1,4 +1,5 @@
 pub mod appearance;
+pub mod chatbot;
 pub mod licensing;
 pub mod meetings;
 pub mod models;

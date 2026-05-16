@@ -687,6 +687,7 @@ function AppLayout() {
               ? meetings.find((m) => m.id === activeView.id) ?? null
               : null
           }
+          onOpenSettings={() => setActiveView({ type: "settings" })}
         />
       </TooltipProvider>
     </div>

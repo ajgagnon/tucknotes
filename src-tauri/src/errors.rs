@@ -17,6 +17,7 @@ pub enum AppError {
     NotFound(String),
     LicenseRequired(String),
     LicenseValidationFailed(String),
+    Interrupted,
 }
 
 impl std::fmt::Display for AppError {
@@ -36,6 +37,7 @@ impl std::fmt::Display for AppError {
             AppError::NotFound(msg) => write!(f, "Not found: {}", msg),
             AppError::LicenseRequired(msg) => write!(f, "License required: {}", msg),
             AppError::LicenseValidationFailed(msg) => write!(f, "License validation failed: {}", msg),
+            AppError::Interrupted => write!(f, "Interrupted"),
         }
     }
 }

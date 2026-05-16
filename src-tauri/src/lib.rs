@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{Manager, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
 
 use commands::appearance::*;
+use commands::chatbot::*;
 use commands::licensing::*;
 use commands::meetings::*;
 use commands::models::*;
@@ -62,6 +63,7 @@ pub fn run() {
         ),
         active_meeting_id: Mutex::new(None),
         pending_queue: Mutex::new(VecDeque::new()),
+        llm_interrupt: Arc::new(AtomicBool::new(false)),
     };
 
     let mut builder = tauri::Builder::default()
@@ -179,6 +181,8 @@ pub fn run() {
             summarize_meeting,
             get_summarization_queue,
             update_meeting_title,
+            chat_send_message,
+            chat_stop,
             get_license_status,
             activate_license_key,
             deactivate_license,
