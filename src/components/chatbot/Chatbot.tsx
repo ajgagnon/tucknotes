@@ -1,8 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FileText, Fullscreen, MessageCircle, X } from "lucide-react";
+import {
+  FileText,
+  Fullscreen,
+  Loader2,
+  MessageCircle,
+  Search,
+  X,
+} from "lucide-react";
 import type { ChatStatus } from "ai";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Conversation,
   ConversationContent,
@@ -26,12 +41,21 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { cn } from "@/lib/utils";
 
-import { useChatStream } from "./use-chat-stream";
+import { useChatStream, type SearchHit } from "./use-chat-stream";
+
+type ToolCall = {
+  id: string;
+  name: string;
+  args: string;
+  status: "running" | "done";
+  hits?: SearchHit[];
+};
 
 type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   text: string;
+  toolCalls?: ToolCall[];
 };
 
 const HISTORY_CAP = 12;
@@ -44,16 +68,30 @@ const newId = () =>
 type ChatbotProps = {
   activeMeeting?: { id: string; title: string | null } | null;
   onOpenSettings?: () => void;
+  onOpenMeeting?: (meetingId: string) => void;
 };
 
-export function Chatbot({ activeMeeting, onOpenSettings }: ChatbotProps = {}) {
+export function Chatbot({
+  activeMeeting,
+  onOpenSettings,
+  onOpenMeeting,
+}: ChatbotProps = {}) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatStatus | undefined>(undefined);
   const [errorText, setErrorText] = useState<string | null>(null);
   const [dismissedContext, setDismissedContext] = useState(false);
+  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { send, stop, modelReady } = useChatStream();
+
+  const requestClose = useCallback(() => {
+    if (messages.length > 0) {
+      setConfirmCloseOpen(true);
+      return;
+    }
+    setOpen(false);
+  }, [messages.length]);
 
   useEffect(() => {
     if (!open) {
@@ -61,19 +99,25 @@ export function Chatbot({ activeMeeting, onOpenSettings }: ChatbotProps = {}) {
       setMessages([]);
       setStatus(undefined);
       setErrorText(null);
+      setConfirmCloseOpen(false);
       return;
     }
     setDismissedContext(false);
     const raf = requestAnimationFrame(() => textareaRef.current?.focus());
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        // Don't close the panel via Escape if the confirmation dialog is up —
+        // Escape should dismiss the dialog instead.
+        if (confirmCloseOpen) return;
+        requestClose();
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => {
       cancelAnimationFrame(raf);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, confirmCloseOpen, requestClose]);
 
   const showContextChip = open && !!activeMeeting && !dismissedContext;
   const canSubmit = modelReady === true;
@@ -83,6 +127,32 @@ export function Chatbot({ activeMeeting, onOpenSettings }: ChatbotProps = {}) {
       prev.map((m) => (m.id === id ? { ...m, text: m.text + chunk } : m)),
     );
   }, []);
+
+  const upsertToolCall = useCallback(
+    (assistantId: string, callId: string, patch: Partial<ToolCall>) => {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== assistantId) return m;
+          const existing = m.toolCalls ?? [];
+          const idx = existing.findIndex((c) => c.id === callId);
+          if (idx === -1) {
+            const next: ToolCall = {
+              id: callId,
+              name: patch.name ?? "",
+              args: patch.args ?? "",
+              status: patch.status ?? "running",
+              hits: patch.hits,
+            };
+            return { ...m, toolCalls: [...existing, next] };
+          }
+          const updated = [...existing];
+          updated[idx] = { ...updated[idx], ...patch };
+          return { ...m, toolCalls: updated };
+        }),
+      );
+    },
+    [],
+  );
 
   const handleSubmit = useCallback(
     async (message: PromptInputMessage) => {
@@ -129,12 +199,41 @@ export function Chatbot({ activeMeeting, onOpenSettings }: ChatbotProps = {}) {
           setStatus("error");
           setErrorText(msg);
         },
+        onToolCallStart: (callId, name) => {
+          setStatus("streaming");
+          upsertToolCall(assistantMsg.id, callId, {
+            name,
+            status: "running",
+            args: "",
+          });
+        },
+        onToolCallArgsDelta: (callId, delta) => {
+          upsertToolCall(assistantMsg.id, callId, {});
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== assistantMsg.id || !m.toolCalls) return m;
+              return {
+                ...m,
+                toolCalls: m.toolCalls.map((c) =>
+                  c.id === callId ? { ...c, args: c.args + delta } : c,
+                ),
+              };
+            }),
+          );
+        },
+        onToolResult: (callId, _name, hits) => {
+          upsertToolCall(assistantMsg.id, callId, {
+            status: "done",
+            hits,
+          });
+        },
       });
     },
     [
       status,
       send,
       appendChunk,
+      upsertToolCall,
       showContextChip,
       activeMeeting,
       messages,
@@ -176,7 +275,7 @@ export function Chatbot({ activeMeeting, onOpenSettings }: ChatbotProps = {}) {
               type="button"
               variant="ghost"
               size="icon-sm"
-              onClick={() => setOpen(false)}
+              onClick={requestClose}
               aria-label="Close chat"
             >
               <X className="size-4" />
@@ -218,7 +317,16 @@ export function Chatbot({ activeMeeting, onOpenSettings }: ChatbotProps = {}) {
                 <Message from={m.role} key={m.id}>
                   <MessageContent>
                     {m.role === "assistant" ? (
-                      <MessageResponse>{m.text || "​"}</MessageResponse>
+                      <>
+                        {m.toolCalls?.map((tc) => (
+                          <ToolCallCard
+                            key={tc.id}
+                            call={tc}
+                            onOpenMeeting={onOpenMeeting}
+                          />
+                        ))}
+                        <MessageResponse>{m.text || "​"}</MessageResponse>
+                      </>
                     ) : (
                       m.text
                     )}
@@ -270,7 +378,6 @@ export function Chatbot({ activeMeeting, onOpenSettings }: ChatbotProps = {}) {
                     type="button"
                     variant={showContextChip ? "secondary" : "ghost"}
                     onClick={() => setDismissedContext((prev) => !prev)}
-                    disabled={!activeMeeting}
                     aria-pressed={showContextChip}
                     tooltip={
                       activeMeeting
@@ -293,7 +400,126 @@ export function Chatbot({ activeMeeting, onOpenSettings }: ChatbotProps = {}) {
           </div>
         </div>
       )}
+
+      <Dialog
+        open={confirmCloseOpen}
+        onOpenChange={(next) => setConfirmCloseOpen(next ?? false)}
+      >
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Close chat?</DialogTitle>
+            <DialogDescription>
+              This conversation isn't saved. If you close the chat, the
+              messages will be lost.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setConfirmCloseOpen(false)}
+            >
+              Keep chatting
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                setConfirmCloseOpen(false);
+                setOpen(false);
+              }}
+            >
+              Close chat
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
+  );
+}
+
+function ToolCallCard({
+  call,
+  onOpenMeeting,
+}: {
+  call: ToolCall;
+  onOpenMeeting?: (meetingId: string) => void;
+}) {
+  const isSearch = call.name === "search_meetings";
+  let query = "";
+  if (call.args) {
+    try {
+      query = (JSON.parse(call.args)?.query as string | undefined) ?? "";
+    } catch {
+      query = "";
+    }
+  }
+
+  return (
+    <div className="mb-2 flex flex-col gap-1.5 rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs">
+      <div className="flex items-center gap-1.5 text-muted-foreground">
+        {call.status === "running" ? (
+          <Loader2 className="size-3.5 shrink-0 animate-spin" />
+        ) : (
+          <Search className="size-3.5 shrink-0" />
+        )}
+        <span className="min-w-0 flex-1 truncate">
+          {isSearch
+            ? call.status === "running"
+              ? query
+                ? `Searching meetings: ${query}`
+                : "Searching meetings…"
+              : `Search results${query ? `: ${query}` : ""}`
+            : call.name}
+        </span>
+        {call.status === "done" && call.hits && (
+          <span className="shrink-0 tabular-nums">
+            {call.hits.length} {call.hits.length === 1 ? "result" : "results"}
+          </span>
+        )}
+      </div>
+      {call.status === "done" && call.hits && call.hits.length > 0 && (
+        <ul className="flex flex-col gap-1">
+          {call.hits.map((hit, i) => (
+            <li key={`${hit.meeting_id}-${hit.kind}-${i}`}>
+              <button
+                type="button"
+                onClick={() => onOpenMeeting?.(hit.meeting_id)}
+                disabled={!onOpenMeeting}
+                className={cn(
+                  "flex w-full flex-col gap-0.5 rounded border border-border/60 bg-background/60 px-2 py-1.5 text-left transition-colors",
+                  onOpenMeeting && "hover:border-border hover:bg-background",
+                  !onOpenMeeting && "cursor-default",
+                )}
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                    {hit.meeting_title || "Untitled meeting"}
+                  </span>
+                  <span
+                    className={cn(
+                      "shrink-0 rounded px-1 py-0.5 text-[10px] uppercase tracking-wide",
+                      hit.kind === "summary"
+                        ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                        : "bg-muted text-muted-foreground",
+                    )}
+                  >
+                    {hit.kind}
+                  </span>
+                </div>
+                <div
+                  className="line-clamp-2 text-muted-foreground [&_mark]:rounded [&_mark]:bg-yellow-200/60 [&_mark]:px-0.5 [&_mark]:text-foreground dark:[&_mark]:bg-yellow-300/30"
+                  dangerouslySetInnerHTML={{ __html: hit.snippet }}
+                />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {call.status === "done" && (!call.hits || call.hits.length === 0) && (
+        <p className="text-muted-foreground italic">No matching meetings.</p>
+      )}
+    </div>
   );
 }
 

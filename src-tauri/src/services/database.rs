@@ -42,6 +42,20 @@ pub struct SegmentRow {
     pub created_at: i64,
 }
 
+/// One full-text-search hit returned by [`search_meetings`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SearchHit {
+    pub meeting_id: String,
+    pub meeting_title: Option<String>,
+    pub meeting_created_at: i64,
+    /// `"transcript"` or `"summary"`.
+    pub kind: String,
+    /// FTS5 snippet with `<mark>` highlight markers around matches.
+    pub snippet: String,
+    /// BM25 score — lower is better.
+    pub rank: f64,
+}
+
 pub fn now_unix_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -107,6 +121,64 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Create the FTS5 virtual table and its sync triggers. Runs **after**
+/// `migrate_database`, because the meeting_documents migration recreates that
+/// table (dropping any triggers attached to it). Idempotent.
+fn init_fts_index(conn: &Connection) -> Result<(), AppError> {
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS meeting_search USING fts5(
+            text,
+            meeting_id UNINDEXED,
+            kind       UNINDEXED,
+            source_id  UNINDEXED,
+            tokenize='porter unicode61'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS segments_ai AFTER INSERT ON transcript_segments BEGIN
+            INSERT INTO meeting_search(text, meeting_id, kind, source_id)
+            VALUES (new.text, new.meeting_id, 'transcript', CAST(new.id AS TEXT));
+        END;
+        CREATE TRIGGER IF NOT EXISTS segments_ad AFTER DELETE ON transcript_segments BEGIN
+            DELETE FROM meeting_search
+            WHERE kind = 'transcript' AND source_id = CAST(old.id AS TEXT);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS docs_summary_ai AFTER INSERT ON meeting_documents
+            WHEN new.kind = 'summary' BEGIN
+            INSERT INTO meeting_search(text, meeting_id, kind, source_id)
+            VALUES (COALESCE(new.body, ''), new.meeting_id, 'summary', new.id);
+        END;
+        CREATE TRIGGER IF NOT EXISTS docs_summary_au AFTER UPDATE OF body ON meeting_documents
+            WHEN new.kind = 'summary' BEGIN
+            DELETE FROM meeting_search WHERE kind = 'summary' AND source_id = new.id;
+            INSERT INTO meeting_search(text, meeting_id, kind, source_id)
+            VALUES (COALESCE(new.body, ''), new.meeting_id, 'summary', new.id);
+        END;
+        CREATE TRIGGER IF NOT EXISTS docs_summary_ad AFTER DELETE ON meeting_documents
+            WHEN old.kind = 'summary' BEGIN
+            DELETE FROM meeting_search WHERE kind = 'summary' AND source_id = old.id;
+        END;",
+    )?;
+    Ok(())
+}
+
+/// Populate `meeting_search` from existing rows when the index is empty. Idempotent —
+/// once the FTS table has any rows, this is a no-op.
+fn backfill_meeting_search(conn: &Connection) -> Result<(), AppError> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM meeting_search", [], |r| r.get(0))?;
+    if count > 0 {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "INSERT INTO meeting_search(text, meeting_id, kind, source_id)
+            SELECT text, meeting_id, 'transcript', CAST(id AS TEXT) FROM transcript_segments;
+         INSERT INTO meeting_search(text, meeting_id, kind, source_id)
+            SELECT COALESCE(body, ''), meeting_id, 'summary', id
+            FROM meeting_documents WHERE kind = 'summary';",
+    )?;
+    Ok(())
+}
+
 /// Upgrade paths for pre-launch dev DBs (e.g. drop legacy `meetings.summary`).
 fn migrate_database(conn: &Connection) -> Result<(), AppError> {
     if meetings_table_has_column(conn, "summary")? {
@@ -114,6 +186,8 @@ fn migrate_database(conn: &Connection) -> Result<(), AppError> {
     }
     migrate_meeting_documents_to_summary_schema(conn)?;
     backfill_default_documents(conn)?;
+    init_fts_index(conn)?;
+    backfill_meeting_search(conn)?;
     Ok(())
 }
 
@@ -450,6 +524,65 @@ pub fn get_meeting_with_segments(
     Ok((meeting, segments, documents))
 }
 
+/// Build a safe FTS5 MATCH expression from a user query. Whitespace-splits the
+/// query, escapes embedded double-quotes, and wraps each token in double quotes
+/// (FTS5 phrase syntax). Empty queries return `None` so callers can short-circuit.
+fn build_fts_query(query: &str) -> Option<String> {
+    let parts: Vec<String> = query
+        .split_whitespace()
+        .filter(|p| !p.is_empty())
+        .map(|p| format!("\"{}\"", p.replace('"', "\"\"")))
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
+/// Full-text search across transcript segments and summary documents. Returns
+/// up to `limit` hits ordered by BM25 (lower = more relevant). Each hit
+/// includes a 24-token snippet with `<mark>...</mark>` markers around matches.
+pub fn search_meetings(
+    conn: &Connection,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<SearchHit>, AppError> {
+    let Some(match_expr) = build_fts_query(query) else {
+        return Ok(Vec::new());
+    };
+    let limit = limit.clamp(1, 50);
+
+    let mut stmt = conn.prepare(
+        "SELECT ms.meeting_id,
+                m.title,
+                m.created_at,
+                ms.kind,
+                snippet(meeting_search, 0, '<mark>', '</mark>', '…', 24) AS snip,
+                bm25(meeting_search) AS rank
+           FROM meeting_search ms
+           JOIN meetings m ON m.id = ms.meeting_id
+          WHERE meeting_search MATCH ?1
+          ORDER BY rank ASC
+          LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![match_expr, limit], |row| {
+        Ok(SearchHit {
+            meeting_id: row.get(0)?,
+            meeting_title: row.get(1)?,
+            meeting_created_at: row.get(2)?,
+            kind: row.get(3)?,
+            snippet: row.get(4)?,
+            rank: row.get(5)?,
+        })
+    })?;
+    let mut hits = Vec::new();
+    for row in rows {
+        hits.push(row?);
+    }
+    Ok(hits)
+}
+
 pub fn delete_meeting(conn: &Connection, meeting_id: &str) -> Result<(), AppError> {
     conn.execute(
         "DELETE FROM meetings WHERE id = ?1",
@@ -638,5 +771,145 @@ mod tests {
         let summary = docs.iter().find(|d| d.kind == "summary").unwrap();
         assert_eq!(summary.title, "Summary");
         assert_eq!(summary.body.as_deref(), Some("body-a"));
+    }
+
+    #[test]
+    fn search_finds_transcript_segment() {
+        let conn = open_db_memory().unwrap();
+        create_meeting(&conn, "m1", "Pricing review", 1708700000000).unwrap();
+        insert_segment(&conn, "m1", "We discussed the budget for next quarter.", "system", 0, None, 1).unwrap();
+        insert_segment(&conn, "m1", "Hello world unrelated", "system", 1000, None, 2).unwrap();
+
+        let hits = search_meetings(&conn, "budget", 10).unwrap();
+        assert_eq!(hits.len(), 1, "expected exactly one hit for 'budget'");
+        assert_eq!(hits[0].meeting_id, "m1");
+        assert_eq!(hits[0].kind, "transcript");
+        assert!(hits[0].snippet.contains("<mark>budget</mark>"));
+        assert_eq!(hits[0].meeting_title.as_deref(), Some("Pricing review"));
+    }
+
+    #[test]
+    fn search_finds_summary_body_and_updates_on_change() {
+        let conn = open_db_memory().unwrap();
+        create_meeting(&conn, "m1", "Sync", 1).unwrap();
+        set_summary_body(&conn, "m1", "Team decided to ship pricing on Friday.").unwrap();
+
+        let hits = search_meetings(&conn, "pricing", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].kind, "summary");
+        assert!(hits[0].snippet.contains("<mark>pricing</mark>"));
+
+        // Update the summary body -- the index must reflect the new content.
+        set_summary_body(&conn, "m1", "Team decided to defer launch.").unwrap();
+        let hits = search_meetings(&conn, "pricing", 10).unwrap();
+        assert!(hits.is_empty(), "old summary content must drop out of index");
+        let hits = search_meetings(&conn, "defer", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn search_ignores_notes_documents() {
+        let conn = open_db_memory().unwrap();
+        create_meeting(&conn, "m1", "M", 1).unwrap();
+        let (_, _, docs) = get_meeting_with_segments(&conn, "m1").unwrap();
+        let notes = docs.iter().find(|d| d.kind == "notes").unwrap();
+        update_meeting_document_body(&conn, &notes.id, "Notes mentioning xylophone.").unwrap();
+
+        let hits = search_meetings(&conn, "xylophone", 10).unwrap();
+        assert!(hits.is_empty(), "notes documents must not be indexed");
+    }
+
+    #[test]
+    fn search_clears_when_meeting_deleted() {
+        let conn = open_db_memory().unwrap();
+        create_meeting(&conn, "m1", "M", 1).unwrap();
+        insert_segment(&conn, "m1", "rare-token-xyzzy here", "system", 0, None, 2).unwrap();
+        set_summary_body(&conn, "m1", "rare-token-xyzzy summary").unwrap();
+        assert_eq!(search_meetings(&conn, "xyzzy", 10).unwrap().len(), 2);
+
+        delete_meeting(&conn, "m1").unwrap();
+        assert!(search_meetings(&conn, "xyzzy", 10).unwrap().is_empty());
+
+        let fts_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM meeting_search", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fts_count, 0);
+    }
+
+    #[test]
+    fn search_empty_query_returns_empty() {
+        let conn = open_db_memory().unwrap();
+        create_meeting(&conn, "m1", "M", 1).unwrap();
+        insert_segment(&conn, "m1", "anything", "system", 0, None, 2).unwrap();
+        assert!(search_meetings(&conn, "", 10).unwrap().is_empty());
+        assert!(search_meetings(&conn, "   ", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn search_query_with_special_chars_is_safe() {
+        // FTS5 MATCH chokes on bare punctuation like `"` or `(`; the sanitiser
+        // must wrap each token in escaped quotes so the query never crashes.
+        let conn = open_db_memory().unwrap();
+        create_meeting(&conn, "m1", "M", 1).unwrap();
+        insert_segment(&conn, "m1", "alpha beta gamma", "system", 0, None, 2).unwrap();
+        let _ = search_meetings(&conn, "alpha \"beta\" (gamma)", 10).unwrap();
+    }
+
+    #[test]
+    fn backfill_populates_search_from_existing_rows() {
+        // Simulate a pre-FTS DB: bypass init_schema so the FTS table/triggers don't exist
+        // yet, populate source tables directly, then run migrate_database and verify the
+        // backfill ran.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        conn.execute_batch(
+            "CREATE TABLE meetings (
+                id           TEXT PRIMARY KEY,
+                title        TEXT,
+                created_at   INTEGER NOT NULL,
+                ended_at     INTEGER,
+                duration_ms  INTEGER
+            );
+            CREATE TABLE transcript_segments (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                meeting_id   TEXT NOT NULL,
+                text         TEXT NOT NULL,
+                source       TEXT NOT NULL,
+                timestamp_ms INTEGER NOT NULL,
+                prompt       TEXT,
+                created_at   INTEGER NOT NULL,
+                FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+            );
+            CREATE TABLE meeting_documents (
+                id           TEXT PRIMARY KEY,
+                meeting_id   TEXT NOT NULL,
+                kind         TEXT NOT NULL CHECK (kind IN ('summary', 'notes')),
+                title        TEXT NOT NULL,
+                body         TEXT,
+                sort_order   INTEGER NOT NULL,
+                created_at   INTEGER NOT NULL,
+                FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+            );
+            INSERT INTO meetings VALUES ('m1', 'Old', 1, NULL, NULL);
+            INSERT INTO transcript_segments (meeting_id, text, source, timestamp_ms, created_at)
+                VALUES ('m1', 'legacy backfill token alpha', 'system', 0, 1);
+            INSERT INTO meeting_documents VALUES ('d1', 'm1', 'summary', 'Summary', 'legacy backfill token beta', 0, 1);
+            INSERT INTO meeting_documents VALUES ('d2', 'm1', 'notes', 'Notes', 'legacy notes not indexed', 1, 1);",
+        )
+        .unwrap();
+
+        // init_schema creates the FTS table + triggers; migrate_database runs the backfill.
+        init_schema(&conn).unwrap();
+        migrate_database(&conn).unwrap();
+
+        let hits = search_meetings(&conn, "alpha", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].kind, "transcript");
+        let hits = search_meetings(&conn, "beta", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].kind, "summary");
+        // Notes are never indexed.
+        let hits = search_meetings(&conn, "indexed", 10).unwrap();
+        assert!(hits.is_empty());
     }
 }

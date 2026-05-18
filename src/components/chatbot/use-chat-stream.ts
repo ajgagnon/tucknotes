@@ -5,9 +5,31 @@ import type { DownloadProgress } from "@/features/models";
 
 export type ChatRole = "user" | "assistant";
 
+export type SearchHit = {
+  meeting_id: string;
+  meeting_title: string | null;
+  meeting_created_at: number;
+  kind: string;
+  snippet: string;
+  rank: number;
+};
+
 type ChatTokenPayload = { chat_id: string; token: string };
 type ChatCompletePayload = { chat_id: string };
 type ChatErrorPayload = { chat_id: string; error: string };
+type ToolCallStartPayload = { chat_id: string; call_id: string; name: string };
+type ToolCallArgsDeltaPayload = {
+  chat_id: string;
+  call_id: string;
+  delta: string;
+};
+type ToolCallEndPayload = { chat_id: string; call_id: string };
+type ToolResultPayload = {
+  chat_id: string;
+  call_id: string;
+  name: string;
+  hits: SearchHit[];
+};
 
 type SendOpts = {
   meetingId: string | null;
@@ -15,6 +37,10 @@ type SendOpts = {
   onToken: (chunk: string) => void;
   onComplete: () => void;
   onError: (error: string) => void;
+  onToolCallStart?: (callId: string, name: string) => void;
+  onToolCallArgsDelta?: (callId: string, delta: string) => void;
+  onToolCallEnd?: (callId: string) => void;
+  onToolResult?: (callId: string, name: string, hits: SearchHit[]) => void;
 };
 
 const newId = () =>
@@ -90,6 +116,38 @@ export function useChatStream() {
         opts.onError(event.payload.error);
       },
     );
+    const unlistenToolStart = await listen<ToolCallStartPayload>(
+      "chat:tool_call_start",
+      (event) => {
+        if (event.payload.chat_id !== chatId) return;
+        opts.onToolCallStart?.(event.payload.call_id, event.payload.name);
+      },
+    );
+    const unlistenToolArgs = await listen<ToolCallArgsDeltaPayload>(
+      "chat:tool_call_args_delta",
+      (event) => {
+        if (event.payload.chat_id !== chatId) return;
+        opts.onToolCallArgsDelta?.(event.payload.call_id, event.payload.delta);
+      },
+    );
+    const unlistenToolEnd = await listen<ToolCallEndPayload>(
+      "chat:tool_call_end",
+      (event) => {
+        if (event.payload.chat_id !== chatId) return;
+        opts.onToolCallEnd?.(event.payload.call_id);
+      },
+    );
+    const unlistenToolResult = await listen<ToolResultPayload>(
+      "chat:tool_result",
+      (event) => {
+        if (event.payload.chat_id !== chatId) return;
+        opts.onToolResult?.(
+          event.payload.call_id,
+          event.payload.name,
+          event.payload.hits,
+        );
+      },
+    );
 
     const cleanup = () => {
       if (inflightChatId.current === chatId) {
@@ -99,6 +157,10 @@ export function useChatStream() {
       unlistenToken();
       unlistenComplete();
       unlistenError();
+      unlistenToolStart();
+      unlistenToolArgs();
+      unlistenToolEnd();
+      unlistenToolResult();
     };
     inflightCleanup.current = cleanup;
 

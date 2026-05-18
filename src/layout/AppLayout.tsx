@@ -688,6 +688,7 @@ function AppLayout() {
               : null
           }
           onOpenSettings={() => setActiveView({ type: "settings" })}
+          onOpenMeeting={(id) => setActiveView({ type: "meeting", id })}
         />
       </TooltipProvider>
     </div>
