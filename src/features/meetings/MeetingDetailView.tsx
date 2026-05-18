@@ -366,33 +366,31 @@ export function MeetingDetailView({
           </div>
         )}
       </div>
-      <div className="mt-0 shrink-0 flex flex-row items-center justify-between gap-3 border-t px-4 py-3 sm:flex-row">
-        <div className="min-w-0 flex-1">
-          {isLiveRecording && recording && (
-            <button
-              type="button"
-              onClick={() => void handleFooterPrimaryAction()}
-              className="text-sm font-medium text-danger hover:underline"
-            >
-              Stop recording
-            </button>
-          )}
-          {canResume && (
-            <button
-              type="button"
-              onClick={() => void handleFooterPrimaryAction()}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:underline"
-            >
-              <Play className="size-3 shrink-0" />
-              Resume
-            </button>
-          )}
-          {!isLiveRecording && (recording || paused) && (
-            <p className="text-xs text-muted-foreground">
-              Another meeting is being recorded.
-            </p>
-          )}
-        </div>
+      <div className="mt-0 shrink-0 flex flex-row items-center gap-2 border-t px-4 py-3">
+        {isLiveRecording && recording && (
+          <button
+            type="button"
+            onClick={() => void handleFooterPrimaryAction()}
+            className="text-sm font-medium text-danger hover:underline"
+          >
+            Stop recording
+          </button>
+        )}
+        {canResume && (
+          <button
+            type="button"
+            onClick={() => void handleFooterPrimaryAction()}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:underline"
+          >
+            <Play className="size-3 shrink-0" />
+            Resume
+          </button>
+        )}
+        {!isLiveRecording && (recording || paused) && (
+          <p className="text-xs text-muted-foreground">
+            Another meeting is being recorded.
+          </p>
+        )}
         <Button
           type="button"
           variant="ghost"
@@ -499,37 +497,33 @@ export function MeetingDetailView({
         </div>
 
         {!isLiveRecording && showSummarizeAction && (
-          <div className="mt-0 shrink-0 flex flex-row items-center justify-between gap-3 border-t px-4 py-3">
-            <div className="min-w-0 flex-1">
-              <button
+          <div className="mt-0 shrink-0 flex flex-row items-center gap-2 border-t px-4 py-3">
+            <button
+              type="button"
+              onClick={() => void handleSummarize()}
+              className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-muted-foreground hover:underline"
+            >
+              <Sparkles className="size-3 shrink-0" />
+              {currentSummary ? "Resummarize" : "Summarize"}
+            </button>
+            {onOpenSettings && (
+              <Button
                 type="button"
-                onClick={() => void handleSummarize()}
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:underline"
+                variant="ghost"
+                size="icon-sm"
+                className="shrink-0 text-muted-foreground hover:text-foreground"
+                aria-label="Change summarization model"
+                title="Change summarization model"
+                onClick={onOpenSettings}
               >
-                <Sparkles className="size-3 shrink-0" />
-                {currentSummary ? "Resummarize" : "Summarize"}
-              </button>
-            </div>
-            <div className="flex min-w-0 shrink-0 items-center gap-2">
-              {summaryError && (
-                <p className="min-w-0 truncate text-xs text-red-500 dark:text-red-400">
-                  {summaryError}
-                </p>
-              )}
-              {onOpenSettings && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="shrink-0 text-muted-foreground hover:text-foreground"
-                  aria-label="Change summarization model"
-                  title="Change summarization model"
-                  onClick={onOpenSettings}
-                >
-                  <Settings className="size-4" />
-                </Button>
-              )}
-            </div>
+                <Settings className="size-4" />
+              </Button>
+            )}
+            {summaryError && (
+              <p className="min-w-0 flex-1 truncate text-xs text-red-500 dark:text-red-400">
+                {summaryError}
+              </p>
+            )}
           </div>
         )}
       </div>

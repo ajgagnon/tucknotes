@@ -131,7 +131,15 @@ export function Chatbot({ activeMeeting, onOpenSettings }: ChatbotProps = {}) {
         },
       });
     },
-    [status, send, appendChunk, showContextChip, activeMeeting, messages, canSubmit],
+    [
+      status,
+      send,
+      appendChunk,
+      showContextChip,
+      activeMeeting,
+      messages,
+      canSubmit,
+    ],
   );
 
   const handleStop = useCallback(() => {
@@ -158,7 +166,7 @@ export function Chatbot({ activeMeeting, onOpenSettings }: ChatbotProps = {}) {
           role="dialog"
           aria-label="Chat"
           className={cn(
-            "fixed bottom-4 right-4 z-50 flex h-[560px] w-[380px] flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl",
+            "fixed bottom-4 right-4 z-50 flex h-[560px] w-[380px] flex-col overflow-hidden rounded-xl border border-border bg-[color-mix(in_oklab,var(--background),var(--popover)_45%)] text-popover-foreground shadow-xl",
             "animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200",
           )}
         >
@@ -246,7 +254,7 @@ export function Chatbot({ activeMeeting, onOpenSettings }: ChatbotProps = {}) {
                 </button>
               </div>
             )}
-            <PromptInput onSubmit={handleSubmit}>
+            <PromptInput className="bg-background" onSubmit={handleSubmit}>
               <PromptInputBody>
                 <PromptInputTextarea
                   ref={textareaRef}
