@@ -4,6 +4,7 @@ import {
   Fullscreen,
   Loader2,
   MessageCircle,
+  Plus,
   Search,
   X,
 } from "lucide-react";
@@ -93,45 +94,47 @@ export function Chatbot({
   const [status, setStatus] = useState<ChatStatus | undefined>(undefined);
   const [errorText, setErrorText] = useState<string | null>(null);
   const [dismissedContext, setDismissedContext] = useState(false);
-  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
+  const [confirmNewChatOpen, setConfirmNewChatOpen] = useState(false);
   const [usage, setUsage] = useState<ChatUsagePayload | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { send, stop, modelReady } = useChatStream();
 
-  const requestClose = useCallback(() => {
-    if (messages.length > 0) {
-      setConfirmCloseOpen(true);
-      return;
-    }
-    setOpen(false);
+  const requestClose = useCallback(() => setOpen(false), []);
+
+  const handleNewChat = useCallback(() => {
+    if (messages.length === 0) return;
+    setConfirmNewChatOpen(true);
   }, [messages.length]);
 
+  const confirmNewChat = useCallback(() => {
+    stop();
+    setMessages([]);
+    setStatus(undefined);
+    setErrorText(null);
+    setUsage(null);
+    setConfirmNewChatOpen(false);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [stop]);
+
   useEffect(() => {
-    if (!open) {
-      // Per-panel-open session: clear history + status on close.
-      setMessages([]);
-      setStatus(undefined);
-      setErrorText(null);
-      setConfirmCloseOpen(false);
-      setUsage(null);
-      return;
-    }
+    if (!open) return;
     setDismissedContext(false);
     const raf = requestAnimationFrame(() => textareaRef.current?.focus());
+    return () => cancelAnimationFrame(raf);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        // Don't close the panel via Escape if the confirmation dialog is up —
-        // Escape should dismiss the dialog instead.
-        if (confirmCloseOpen) return;
+        // Escape dismisses the new-chat confirmation if it's up; otherwise closes the panel.
+        if (confirmNewChatOpen) return;
         requestClose();
       }
     };
     document.addEventListener("keydown", onKey);
-    return () => {
-      cancelAnimationFrame(raf);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, confirmCloseOpen, requestClose]);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, confirmNewChatOpen, requestClose]);
 
   const showContextChip = open && !!activeMeeting && !dismissedContext;
   const canSubmit = modelReady === true;
@@ -288,15 +291,27 @@ export function Chatbot({
         >
           <header className="flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
             <span className="text-sm font-medium">Chat</span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={requestClose}
-              aria-label="Close chat"
-            >
-              <X className="size-4" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={handleNewChat}
+                disabled={messages.length === 0}
+                aria-label="Start new chat"
+              >
+                <Plus className="size-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={requestClose}
+                aria-label="Close chat"
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
           </header>
 
           <Conversation className="flex-1">
@@ -452,34 +467,30 @@ export function Chatbot({
       )}
 
       <Dialog
-        open={confirmCloseOpen}
-        onOpenChange={(next) => setConfirmCloseOpen(next ?? false)}
+        open={confirmNewChatOpen}
+        onOpenChange={(next) => setConfirmNewChatOpen(next ?? false)}
       >
         <DialogContent showCloseButton={false}>
           <DialogHeader>
-            <DialogTitle>Close chat?</DialogTitle>
+            <DialogTitle>Start a new chat?</DialogTitle>
             <DialogDescription>
-              This conversation isn't saved. If you close the chat, the
-              messages will be lost.
+              Your current conversation will be cleared and can't be recovered.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button
               type="button"
               variant="outline"
-              onClick={() => setConfirmCloseOpen(false)}
+              onClick={() => setConfirmNewChatOpen(false)}
             >
               Keep chatting
             </Button>
             <Button
               type="button"
               variant="destructive"
-              onClick={() => {
-                setConfirmCloseOpen(false);
-                setOpen(false);
-              }}
+              onClick={confirmNewChat}
             >
-              Close chat
+              Start new chat
             </Button>
           </DialogFooter>
         </DialogContent>
