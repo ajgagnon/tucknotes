@@ -101,6 +101,9 @@ pub struct ToolCallSpec {
 #[derive(Debug, Default)]
 pub struct TurnOutcome {
     pub tool_calls: Vec<ToolCallSpec>,
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub max_tokens: u32,
 }
 
 /// Wraps a lazily-loaded llama.cpp model and exposes blocking
@@ -432,6 +435,8 @@ impl SummarizationService {
             .as_ref()
             .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
 
+        let max_tokens = model.n_ctx_train();
+
         // We have the lock; clear the shared flag so we don't immediately
         // self-abort. The stop button can re-set it to interrupt this run.
         interrupt.store(false, Ordering::Relaxed);
@@ -688,7 +693,12 @@ impl SummarizationService {
             on_event(&InferenceEvent::ToolCallEnd { id: &tc.id });
         }
 
-        Ok(TurnOutcome { tool_calls })
+        Ok(TurnOutcome {
+            tool_calls,
+            prompt_tokens: n_input,
+            completion_tokens: tokens_emitted,
+            max_tokens,
+        })
     }
 
     /// Generate a short title for a meeting from its summary.

@@ -115,6 +115,14 @@ struct ToolResultPayload<'a> {
     hits: Vec<SearchHit>,
 }
 
+#[derive(Clone, Serialize)]
+struct ChatUsagePayload<'a> {
+    chat_id: &'a str,
+    prompt_tokens: u32,
+    completion_tokens: u32,
+    max_tokens: u32,
+}
+
 // ---------------------------------------------------------------------------
 // Frontend-facing message type
 // ---------------------------------------------------------------------------
@@ -200,6 +208,17 @@ pub async fn chat_send_message(
     // previously-seen hit by `[N]` consistently.
     let mut citation_counter: i64 = 0;
 
+    // Token usage accumulators. We report the *first* iteration's prompt
+    // (the "clean" context: system + transcript + text history + new user
+    // message, before any tool roundtrips). Tool-call/tool-result messages
+    // appended later in the loop don't survive to the next turn, so counting
+    // them would make the indicator drop next turn. `completion_tokens` is
+    // summed across iterations (close enough; over-counts tool-call JSON by a
+    // few tokens). `max_tokens` is the model's trained context.
+    let mut first_prompt_tokens: u32 = 0;
+    let mut total_completion_tokens: u32 = 0;
+    let mut max_tokens: u32 = 0;
+
     // 5. Tool-call loop. Each iteration runs one inference turn; if it produced
     // tool calls, we execute them, append the results to `messages`, and loop.
     for iteration in 0..MAX_TOOL_ITERATIONS {
@@ -238,6 +257,13 @@ pub async fn chat_send_message(
             Ok(Ok(o)) => o,
             Ok(Err(AppError::Interrupted)) => {
                 // User stopped — leave any partial reply intact.
+                emit_chat_usage(
+                    &app,
+                    &chat_id,
+                    first_prompt_tokens,
+                    total_completion_tokens,
+                    max_tokens,
+                );
                 let _ = app.emit(
                     "chat:complete",
                     ChatCompletePayload { chat_id: &chat_id },
@@ -268,6 +294,12 @@ pub async fn chat_send_message(
             }
         };
 
+        if iteration == 0 {
+            first_prompt_tokens = outcome.prompt_tokens;
+        }
+        total_completion_tokens += outcome.completion_tokens;
+        max_tokens = outcome.max_tokens;
+
         eprintln!(
             "[chatbot] iteration {} returned {} tool_calls",
             iteration,
@@ -276,6 +308,13 @@ pub async fn chat_send_message(
 
         if outcome.tool_calls.is_empty() {
             eprintln!("[chatbot] no tool calls -> emitting chat:complete");
+            emit_chat_usage(
+                &app,
+                &chat_id,
+                first_prompt_tokens,
+                total_completion_tokens,
+                max_tokens,
+            );
             let _ = app.emit(
                 "chat:complete",
                 ChatCompletePayload { chat_id: &chat_id },
@@ -338,6 +377,13 @@ pub async fn chat_send_message(
     // budget to execute. Without this fallback the UI shows only search-result
     // cards and no assistant reply.
     if summ_state.llm_interrupt.load(Ordering::Relaxed) {
+        emit_chat_usage(
+            &app,
+            &chat_id,
+            first_prompt_tokens,
+            total_completion_tokens,
+            max_tokens,
+        );
         let _ = app.emit(
             "chat:complete",
             ChatCompletePayload { chat_id: &chat_id },
@@ -365,7 +411,30 @@ pub async fn chat_send_message(
     .await;
 
     match final_result {
-        Ok(Ok(_)) | Ok(Err(AppError::Interrupted)) => {
+        Ok(Ok(outcome)) => {
+            total_completion_tokens += outcome.completion_tokens;
+            max_tokens = outcome.max_tokens;
+            emit_chat_usage(
+                &app,
+                &chat_id,
+                first_prompt_tokens,
+                total_completion_tokens,
+                max_tokens,
+            );
+            let _ = app.emit(
+                "chat:complete",
+                ChatCompletePayload { chat_id: &chat_id },
+            );
+            Ok(())
+        }
+        Ok(Err(AppError::Interrupted)) => {
+            emit_chat_usage(
+                &app,
+                &chat_id,
+                first_prompt_tokens,
+                total_completion_tokens,
+                max_tokens,
+            );
             let _ = app.emit(
                 "chat:complete",
                 ChatCompletePayload { chat_id: &chat_id },
@@ -407,6 +476,29 @@ pub fn chat_stop(summ_state: tauri::State<'_, SummarizationState>) -> Result<(),
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
+
+/// Emit a `chat:usage` event with the latest token counts. No-op when
+/// `max_tokens == 0` (the model never reached tokenization for this turn).
+fn emit_chat_usage(
+    app: &tauri::AppHandle,
+    chat_id: &str,
+    prompt_tokens: u32,
+    completion_tokens: u32,
+    max_tokens: u32,
+) {
+    if max_tokens == 0 {
+        return;
+    }
+    let _ = app.emit(
+        "chat:usage",
+        ChatUsagePayload {
+            chat_id,
+            prompt_tokens,
+            completion_tokens,
+            max_tokens,
+        },
+    );
+}
 
 /// Forward one InferenceEvent from the blocking inference thread to the
 /// frontend via Tauri events.

@@ -19,6 +19,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  Context,
+  ContextContent,
+  ContextContentBody,
+  ContextContentHeader,
+  ContextInputUsage,
+  ContextOutputUsage,
+  ContextTrigger,
+} from "@/components/ai-elements/context";
+import {
   Conversation,
   ConversationContent,
   ConversationEmptyState,
@@ -38,7 +47,11 @@ import {
 import { cn } from "@/lib/utils";
 import { Streamdown } from "streamdown";
 
-import { useChatStream, type SearchHit } from "./use-chat-stream";
+import {
+  useChatStream,
+  type ChatUsagePayload,
+  type SearchHit,
+} from "./use-chat-stream";
 import { CitationChip } from "./CitationChip";
 import { rehypeCitations } from "./rehype-citations";
 
@@ -81,6 +94,7 @@ export function Chatbot({
   const [errorText, setErrorText] = useState<string | null>(null);
   const [dismissedContext, setDismissedContext] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
+  const [usage, setUsage] = useState<ChatUsagePayload | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { send, stop, modelReady } = useChatStream();
 
@@ -99,6 +113,7 @@ export function Chatbot({
       setStatus(undefined);
       setErrorText(null);
       setConfirmCloseOpen(false);
+      setUsage(null);
       return;
     }
     setDismissedContext(false);
@@ -225,6 +240,9 @@ export function Chatbot({
             status: "done",
             hits,
           });
+        },
+        onUsage: (next) => {
+          setUsage(next);
         },
       });
     },
@@ -396,6 +414,31 @@ export function Chatbot({
                   >
                     <Fullscreen className="size-4" />
                   </PromptInputButton>
+                  {usage &&
+                    usage.max_tokens > 0 &&
+                    (usage.prompt_tokens + usage.completion_tokens) /
+                      usage.max_tokens >=
+                      0.8 && (
+                      <Context
+                        usedTokens={
+                          usage.prompt_tokens + usage.completion_tokens
+                        }
+                        maxTokens={usage.max_tokens}
+                        usage={{
+                          inputTokens: usage.prompt_tokens,
+                          outputTokens: usage.completion_tokens,
+                        }}
+                      >
+                        <ContextTrigger />
+                        <ContextContent>
+                          <ContextContentHeader />
+                          <ContextContentBody>
+                            <ContextInputUsage />
+                            <ContextOutputUsage />
+                          </ContextContentBody>
+                        </ContextContent>
+                      </Context>
+                    )}
                 </PromptInputTools>
                 <PromptInputSubmit
                   status={status}

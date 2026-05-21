@@ -17,6 +17,12 @@ export type SearchHit = {
 type ChatTokenPayload = { chat_id: string; token: string };
 type ChatCompletePayload = { chat_id: string };
 type ChatErrorPayload = { chat_id: string; error: string };
+export type ChatUsagePayload = {
+  chat_id: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  max_tokens: number;
+};
 type ToolCallStartPayload = { chat_id: string; call_id: string; name: string };
 type ToolCallArgsDeltaPayload = {
   chat_id: string;
@@ -41,6 +47,7 @@ type SendOpts = {
   onToolCallArgsDelta?: (callId: string, delta: string) => void;
   onToolCallEnd?: (callId: string) => void;
   onToolResult?: (callId: string, name: string, hits: SearchHit[]) => void;
+  onUsage?: (usage: ChatUsagePayload) => void;
 };
 
 const newId = () =>
@@ -148,6 +155,13 @@ export function useChatStream() {
         );
       },
     );
+    const unlistenUsage = await listen<ChatUsagePayload>(
+      "chat:usage",
+      (event) => {
+        if (event.payload.chat_id !== chatId) return;
+        opts.onUsage?.(event.payload);
+      },
+    );
 
     const cleanup = () => {
       if (inflightChatId.current === chatId) {
@@ -161,6 +175,7 @@ export function useChatStream() {
       unlistenToolArgs();
       unlistenToolEnd();
       unlistenToolResult();
+      unlistenUsage();
     };
     inflightCleanup.current = cleanup;
 
