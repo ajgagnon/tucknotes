@@ -24,11 +24,7 @@ import {
   ConversationEmptyState,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
-import {
-  Message,
-  MessageContent,
-  MessageResponse,
-} from "@/components/ai-elements/message";
+import { Message, MessageContent } from "@/components/ai-elements/message";
 import {
   PromptInput,
   PromptInputBody,
@@ -40,8 +36,11 @@ import {
   type PromptInputMessage,
 } from "@/components/ai-elements/prompt-input";
 import { cn } from "@/lib/utils";
+import { Streamdown } from "streamdown";
 
 import { useChatStream, type SearchHit } from "./use-chat-stream";
+import { CitationChip } from "./CitationChip";
+import { rehypeCitations } from "./rehype-citations";
 
 type ToolCall = {
   id: string;
@@ -313,26 +312,34 @@ export function Chatbot({
                   )}
                 </>
               )}
-              {messages.map((m) => (
-                <Message from={m.role} key={m.id}>
-                  <MessageContent>
-                    {m.role === "assistant" ? (
-                      <>
-                        {m.toolCalls?.map((tc) => (
-                          <ToolCallCard
-                            key={tc.id}
-                            call={tc}
+              {messages.map((m) => {
+                const sources: SearchHit[] =
+                  m.toolCalls?.flatMap((tc) => tc.hits ?? []) ?? [];
+                return (
+                  <Message from={m.role} key={m.id}>
+                    <MessageContent>
+                      {m.role === "assistant" ? (
+                        <>
+                          {m.toolCalls?.map((tc) => (
+                            <ToolCallCard
+                              key={tc.id}
+                              call={tc}
+                              onOpenMeeting={onOpenMeeting}
+                            />
+                          ))}
+                          <CitedResponse
+                            text={m.text || "​"}
+                            sources={sources}
                             onOpenMeeting={onOpenMeeting}
                           />
-                        ))}
-                        <MessageResponse>{m.text || "​"}</MessageResponse>
-                      </>
-                    ) : (
-                      m.text
-                    )}
-                  </MessageContent>
-                </Message>
-              ))}
+                        </>
+                      ) : (
+                        m.text
+                      )}
+                    </MessageContent>
+                  </Message>
+                );
+              })}
               {errorText && (
                 <p className="text-xs text-red-500 dark:text-red-400">
                   {errorText}
@@ -435,6 +442,43 @@ export function Chatbot({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/**
+ * Streamdown-based renderer for assistant prose that may contain `[N]` citation
+ * markers. The rehype plugin rewrites those into `<cite data-citation="N">[N]</cite>`
+ * elements, which we override to render a hoverable, clickable `CitationChip`.
+ */
+function CitedResponse({
+  text,
+  sources,
+  onOpenMeeting,
+}: {
+  text: string;
+  sources: SearchHit[];
+  onOpenMeeting?: (meetingId: string) => void;
+}) {
+  return (
+    <Streamdown
+      className="size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      rehypePlugins={[rehypeCitations]}
+      components={{
+        cite: (props) => (
+          <CitationChip
+            data-citation={
+              (props as { "data-citation"?: string })["data-citation"]
+            }
+            sources={sources}
+            onOpenMeeting={onOpenMeeting}
+          >
+            {props.children}
+          </CitationChip>
+        ),
+      }}
+    >
+      {text}
+    </Streamdown>
   );
 }
 

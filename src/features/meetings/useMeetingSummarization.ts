@@ -35,7 +35,17 @@ export function useMeetingSummarization(
   const summaryBodyRef = useRef(summaryBody);
   summaryBodyRef.current = summaryBody;
 
+  const cleanupStreamListeners = useCallback(() => {
+    unlistenTokenRef.current?.();
+    unlistenThinkingRef.current?.();
+    unlistenTokenRef.current = null;
+    unlistenThinkingRef.current = null;
+  }, []);
+
   const registerStreamListeners = useCallback(async () => {
+    if (unlistenTokenRef.current || unlistenThinkingRef.current) {
+      return cleanupStreamListeners;
+    }
     const tokenUn = await listen<TokenPayload>("summary:token", (event) => {
       if (event.payload.meeting_id !== meeting.id) return;
       setStreamedSummary((prev) => prev + event.payload.token);
@@ -46,20 +56,8 @@ export function useMeetingSummarization(
     });
     unlistenTokenRef.current = tokenUn;
     unlistenThinkingRef.current = thinkUn;
-    return () => {
-      tokenUn();
-      thinkUn();
-      unlistenTokenRef.current = null;
-      unlistenThinkingRef.current = null;
-    };
-  }, [meeting.id]);
-
-  const cleanupStreamListeners = useCallback(() => {
-    unlistenTokenRef.current?.();
-    unlistenThinkingRef.current?.();
-    unlistenTokenRef.current = null;
-    unlistenThinkingRef.current = null;
-  }, []);
+    return cleanupStreamListeners;
+  }, [meeting.id, cleanupStreamListeners]);
 
   const checkLlmModel = useCallback(async () => {
     try {
@@ -211,6 +209,25 @@ export function useMeetingSummarization(
       unlisten.then((fn) => fn());
     };
   }, [meeting.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const unlisten = listen<string>("summary:started", async (event) => {
+      if (event.payload !== meeting.id) return;
+      if (cancelled) return;
+      if (unlistenTokenRef.current) return;
+      setSummarizing(true);
+      setGeneratingTitle(true);
+      setStreamedSummary("");
+      setThinkingText("");
+      setSummaryError(null);
+      await registerStreamListeners();
+    });
+    return () => {
+      cancelled = true;
+      unlisten.then((fn) => fn());
+    };
+  }, [meeting.id, registerStreamListeners]);
 
   async function handleSummarize() {
     if (currentSummary) {

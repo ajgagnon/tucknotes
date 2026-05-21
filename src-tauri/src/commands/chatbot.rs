@@ -24,7 +24,15 @@ When the user is viewing a specific meeting, you'll receive its transcript below
 Use it to ground answers about the current meeting. If the user asks something \
 that spans multiple meetings or refers to past discussions, use search_meetings. \
 Be concise. Use markdown (lists, headings) when it helps. Keep replies short \
-unless the user asks for depth.";
+unless the user asks for depth.\n\
+\n\
+Citations: after search_meetings returns hits, each hit has an `index` field. \
+For any sentence in your answer whose information comes from a hit, append the \
+marker `[N]` (in plain ASCII brackets) at the end of that sentence, where N is \
+that hit's index. Example: \"The pricing freeze starts on Friday [2].\" Cite \
+only what the hits actually say; do not invent citations or cite an index that \
+wasn't returned. Sentences grounded in the active meeting transcript (not in \
+search hits) do not need citations.";
 
 const TOOL_NAME_SEARCH_MEETINGS: &str = "search_meetings";
 const MAX_TOOL_ITERATIONS: usize = 3;
@@ -187,6 +195,11 @@ pub async fn chat_send_message(
 
     let tools = tools_json();
 
+    // Per-assistant-turn citation counter. Hits are numbered sequentially
+    // across all tool calls in this turn so the model can reference any
+    // previously-seen hit by `[N]` consistently.
+    let mut citation_counter: i64 = 0;
+
     // 5. Tool-call loop. Each iteration runs one inference turn; if it produced
     // tool calls, we execute them, append the results to `messages`, and loop.
     for iteration in 0..MAX_TOOL_ITERATIONS {
@@ -214,7 +227,7 @@ pub async fn chat_send_message(
             service.generate_chat_with_tools(
                 &model_path_clone,
                 &messages_json,
-                &tools_clone,
+                Some(&tools_clone),
                 &interrupt,
                 |event| dispatch_inference_event(&app_clone, &chat_id_clone, event),
             )
@@ -293,7 +306,7 @@ pub async fn chat_send_message(
 
         // Execute each tool call and append its result.
         for tc in &outcome.tool_calls {
-            let (content_str, hits) = match execute_tool(&db_state, tc) {
+            let (content_str, hits) = match execute_tool(&db_state, tc, &mut citation_counter) {
                 Ok((content, hits)) => (content, hits),
                 Err(e) => (
                     serde_json::json!({ "error": e.to_string() }).to_string(),
@@ -319,13 +332,69 @@ pub async fn chat_send_message(
         }
     }
 
-    // Iteration cap exhausted with pending calls — close the chat anyway so
-    // any partial reply stays in the UI.
-    let _ = app.emit(
-        "chat:complete",
-        ChatCompletePayload { chat_id: &chat_id },
-    );
-    Ok(())
+    // Iteration cap exhausted with pending tool calls. Force a final inference
+    // WITHOUT tools so the model synthesizes a textual answer from the
+    // gathered context, instead of emitting yet another tool call we have no
+    // budget to execute. Without this fallback the UI shows only search-result
+    // cards and no assistant reply.
+    if summ_state.llm_interrupt.load(Ordering::Relaxed) {
+        let _ = app.emit(
+            "chat:complete",
+            ChatCompletePayload { chat_id: &chat_id },
+        );
+        return Ok(());
+    }
+
+    eprintln!("[chatbot] iteration cap reached, running final no-tools synthesis");
+
+    let messages_json = serde_json::Value::Array(messages).to_string();
+    let service = Arc::clone(&summ_state.service);
+    let interrupt = Arc::clone(&summ_state.llm_interrupt);
+    let app_clone = app.clone();
+    let chat_id_clone = chat_id.clone();
+
+    let final_result = tokio::task::spawn_blocking(move || {
+        service.generate_chat_with_tools(
+            &model_path,
+            &messages_json,
+            None,
+            &interrupt,
+            |event| dispatch_inference_event(&app_clone, &chat_id_clone, event),
+        )
+    })
+    .await;
+
+    match final_result {
+        Ok(Ok(_)) | Ok(Err(AppError::Interrupted)) => {
+            let _ = app.emit(
+                "chat:complete",
+                ChatCompletePayload { chat_id: &chat_id },
+            );
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            let msg = e.to_string();
+            let _ = app.emit(
+                "chat:error",
+                ChatErrorPayload {
+                    chat_id: &chat_id,
+                    error: &msg,
+                },
+            );
+            Err(e)
+        }
+        Err(e) => {
+            let msg = format!("Task panicked: {e}");
+            let _ = app.emit(
+                "chat:error",
+                ChatErrorPayload {
+                    chat_id: &chat_id,
+                    error: &msg,
+                },
+            );
+            Err(AppError::SummarizationFailed(msg))
+        }
+    }
 }
 
 #[tauri::command]
@@ -392,9 +461,12 @@ fn dispatch_inference_event(app: &tauri::AppHandle, chat_id: &str, event: &Infer
 /// Execute one tool call and return (content_for_model, hits_for_ui).
 /// The content string is what we feed back into the LLM context as the `tool`
 /// message body; the hits vector is the structured payload for the chat UI.
+/// `citation_counter` is incremented for every hit returned, giving each hit a
+/// stable per-turn `index` the model can reference as `[N]` in its reply.
 fn execute_tool(
     db_state: &tauri::State<'_, DatabaseState>,
     tc: &ToolCallSpec,
+    citation_counter: &mut i64,
 ) -> Result<(String, Vec<SearchHit>), AppError> {
     match tc.name.as_str() {
         TOOL_NAME_SEARCH_MEETINGS => {
@@ -418,15 +490,26 @@ fn execute_tool(
 
             // Strip <mark> markers from the snippet before feeding to the
             // model (it doesn't need them; the UI keeps the marked version).
+            // Each hit gets a sequential `index` field starting at 1 for the
+            // first hit of the turn — the model uses this to emit `[N]`
+            // citations.
+            let hits_json = hits
+                .iter()
+                .map(|h| {
+                    *citation_counter += 1;
+                    serde_json::json!({
+                        "index": *citation_counter,
+                        "meeting_id": h.meeting_id,
+                        "meeting_title": h.meeting_title,
+                        "meeting_created_at": h.meeting_created_at,
+                        "kind": h.kind,
+                        "snippet": h.snippet.replace("<mark>", "").replace("</mark>", ""),
+                    })
+                })
+                .collect::<Vec<_>>();
             let model_content = serde_json::json!({
                 "query": query,
-                "hits": hits.iter().map(|h| serde_json::json!({
-                    "meeting_id": h.meeting_id,
-                    "meeting_title": h.meeting_title,
-                    "meeting_created_at": h.meeting_created_at,
-                    "kind": h.kind,
-                    "snippet": h.snippet.replace("<mark>", "").replace("</mark>", ""),
-                })).collect::<Vec<_>>()
+                "hits": hits_json,
             })
             .to_string();
             Ok((model_content, hits))

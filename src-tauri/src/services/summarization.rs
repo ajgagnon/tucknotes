@@ -418,7 +418,7 @@ impl SummarizationService {
         &self,
         model_path: &Path,
         messages_json: &str,
-        tools_json: &str,
+        tools_json: Option<&str>,
         interrupt: &AtomicBool,
         mut on_event: F,
     ) -> Result<TurnOutcome, AppError>
@@ -444,7 +444,7 @@ impl SummarizationService {
         })?;
         let params = OpenAIChatTemplateParams {
             messages_json,
-            tools_json: Some(tools_json),
+            tools_json,
             tool_choice: None,
             json_schema: None,
             grammar: None,
