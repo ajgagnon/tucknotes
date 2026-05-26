@@ -53,6 +53,22 @@ pub async fn deactivate_license(
     app: tauri::AppHandle,
     state: tauri::State<'_, LicensingState>,
 ) -> Result<LicenseStatus, AppError> {
+    let snapshot = {
+        let storage = lock_or_err(&state.storage)?;
+        storage.license.clone()
+    };
+
+    if let Some(record) = snapshot {
+        // Best-effort: release Polar's activation slot so the key can be
+        // re-activated later. If Polar is unreachable we still clear local —
+        // the user asked to deactivate this device.
+        if let Err(err) =
+            licensing_svc::polar_deactivate(&record.key, &record.activation_id).await
+        {
+            eprintln!("[licensing] Polar deactivation failed (clearing local anyway): {err}");
+        }
+    }
+
     let dir = data_dir(&app)?;
     let mut storage = lock_or_err(&state.storage)?;
     licensing_svc::clear_license(&dir, &mut storage)

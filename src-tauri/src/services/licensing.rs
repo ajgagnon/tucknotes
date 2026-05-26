@@ -212,6 +212,47 @@ pub async fn polar_validate(key: &str, activation_id: &str) -> Result<(), AppErr
     }
 }
 
+#[derive(Debug, Serialize)]
+struct DeactivateRequest<'a> {
+    key: &'a str,
+    activation_id: &'a str,
+    organization_id: &'a str,
+}
+
+/// Release a previously-issued activation on Polar so the slot becomes
+/// available for re-activation. Without this, removing a key locally leaves
+/// the activation orphaned on Polar and the user hits "activation limit
+/// reached" on the next attempt.
+pub async fn polar_deactivate(key: &str, activation_id: &str) -> Result<(), AppError> {
+    if POLAR_ORGANIZATION_ID.is_empty() {
+        return Err(AppError::LicenseValidationFailed(
+            "License deactivation is not configured (missing POLAR_ORGANIZATION_ID).".into(),
+        ));
+    }
+    let body = DeactivateRequest {
+        key,
+        activation_id,
+        organization_id: POLAR_ORGANIZATION_ID,
+    };
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{POLAR_API_BASE}/v1/customer-portal/license-keys/deactivate"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| AppError::LicenseValidationFailed(format!("Network error: {e}")))?;
+
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        Err(AppError::LicenseValidationFailed(format!(
+            "Deactivation rejected ({status}): {text}"
+        )))
+    }
+}
+
 /// A device label Polar shows in the customer portal alongside each
 /// activation. We use the machine hostname so the user can see "Andre's
 /// MacBook Pro" instead of an opaque ID.
