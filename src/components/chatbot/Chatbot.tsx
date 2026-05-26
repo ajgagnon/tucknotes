@@ -273,7 +273,7 @@ export function Chatbot({
           type="button"
           onClick={() => setOpen(true)}
           aria-label="Ask Tuck"
-          className="fixed bottom-4 right-4 z-50 h-11 gap-2 rounded-full px-4 shadow-lg"
+          className="fixed bottom-4 right-4 z-50 h-10 gap-2 rounded-full px-4 shadow-lg"
         >
           <MessageCircle className="size-4" />
           <span className="text-sm font-medium">Ask Tuck</span>
