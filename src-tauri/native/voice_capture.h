@@ -14,9 +14,16 @@ typedef void (*VoiceCaptureCallback)(
     double timestamp
 );
 
-/// Start capturing microphone audio via AVAudioEngine with VoiceProcessingIO.
+/// Start capturing microphone audio via AVAudioEngine.
+/// When `use_voice_processing` is true, enables AUVoiceProcessingIO for hardware
+/// AEC/noise suppression/AGC (at the cost of unconditional system-audio ducking).
+/// When false, uses a plain input node (no AEC, no ducking).
 /// Returns true on success. The callback is invoked on a realtime audio thread.
-bool voice_capture_start(VoiceCaptureCallback callback, void *context);
+bool voice_capture_start(
+    bool use_voice_processing,
+    VoiceCaptureCallback callback,
+    void *context
+);
 
 /// Stop capturing and release the audio engine.
 void voice_capture_stop(void);
