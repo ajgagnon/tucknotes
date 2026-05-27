@@ -544,18 +544,7 @@ function AppLayout() {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return;
       e.preventDefault();
-      setSearchOpen((open) => {
-        if (open) return false;
-        const t = e.target as HTMLElement;
-        if (
-          t.tagName === "INPUT" ||
-          t.tagName === "TEXTAREA" ||
-          t.isContentEditable
-        ) {
-          return false;
-        }
-        return true;
-      });
+      setSearchOpen((open) => !open);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
