@@ -4,6 +4,7 @@ import PermissionSetup from "@/features/onboarding/PermissionSetup";
 import ModelSetup from "@/features/onboarding/ModelSetup";
 import SummarizationSetup from "@/features/onboarding/SummarizationSetup";
 import AppLayout from "@/layout/AppLayout";
+import { useAutoUpdateCheck } from "@/hooks/use-auto-update-check";
 
 type OnboardingStep =
   | "loading"
@@ -14,6 +15,7 @@ type OnboardingStep =
 
 function App() {
   const [step, setStep] = useState<OnboardingStep>("loading");
+  useAutoUpdateCheck({ enabled: step === "ready" });
 
   useEffect(() => {
     async function checkOnboarding() {
