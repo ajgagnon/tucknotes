@@ -1,34 +1,7 @@
 #import <AVFoundation/AVFoundation.h>
-#import <AudioToolbox/AudioToolbox.h>
 #import "voice_capture.h"
 
 static AVAudioEngine *gEngine = nil;
-
-/// Minimize VoiceProcessingIO audio ducking as much as the API allows.
-/// Note: VoiceProcessingIO always ducks other audio to some degree —
-/// there is no way to fully disable it. This is a known trade-off
-/// for getting hardware-tuned AEC.
-static void minimize_ducking(AVAudioEngine *engine) {
-    if (@available(macOS 14.0, *)) {
-        AudioUnit au = engine.inputNode.audioUnit;
-        if (au) {
-            AUVoiceIOOtherAudioDuckingConfiguration cfg;
-            cfg.mEnableAdvancedDucking = true;
-            cfg.mDuckingLevel = kAUVoiceIOOtherAudioDuckingLevelMin;
-            AudioUnitSetProperty(
-                au,
-                kAUVoiceIOProperty_OtherAudioDuckingConfiguration,
-                kAudioUnitScope_Global, 0,
-                &cfg, sizeof(cfg)
-            );
-        }
-
-        AVAudioVoiceProcessingOtherAudioDuckingConfiguration hlConfig;
-        hlConfig.enableAdvancedDucking = YES;
-        hlConfig.duckingLevel = AVAudioVoiceProcessingOtherAudioDuckingLevelMin;
-        engine.inputNode.voiceProcessingOtherAudioDuckingConfiguration = hlConfig;
-    }
-}
 
 bool voice_capture_start(VoiceCaptureCallback callback, void *context) {
     if (gEngine) {
@@ -37,14 +10,10 @@ bool voice_capture_start(VoiceCaptureCallback callback, void *context) {
 
     AVAudioEngine *engine = [[AVAudioEngine alloc] init];
 
-    // Enable voice processing on the input node — this wraps AUVoiceProcessingIO,
-    // giving us hardware-tuned AEC, noise suppression, AGC, and the system
-    // mic mode picker (Standard / Voice Isolation / Wide Spectrum).
-    NSError *vpError = nil;
-    if (![engine.inputNode setVoiceProcessingEnabled:YES error:&vpError]) {
-        NSLog(@"[voice_capture] failed to enable voice processing: %@", vpError);
-    }
-
+    // Use the plain input node (no VoiceProcessingIO). Voice processing would
+    // give us hardware AEC/noise suppression/AGC, but it also unconditionally
+    // ducks other system audio while the engine is running, which is far more
+    // disruptive than the benefit is worth for our transcription use case.
     AVAudioFormat *inputFormat = [engine.inputNode inputFormatForBus:0];
     NSLog(@"[voice_capture] input format: %@", inputFormat);
 
@@ -72,11 +41,8 @@ bool voice_capture_start(VoiceCaptureCallback callback, void *context) {
         return false;
     }
 
-    // Minimize ducking after engine start (AU must be instantiated first).
-    minimize_ducking(engine);
-
     gEngine = engine;
-    NSLog(@"[voice_capture] started with voice processing");
+    NSLog(@"[voice_capture] started");
     return true;
 }
 
