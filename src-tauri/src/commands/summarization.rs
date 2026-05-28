@@ -269,18 +269,34 @@ async fn do_summarize(
         match result {
             Ok(Ok(ref title)) if !title.is_empty() => {
                 eprintln!("[title-gen] Generated title: {:?}", title);
+                let final_title = app_title
+                    .try_state::<DatabaseState>()
+                    .and_then(|db| {
+                        let conn = db.conn.lock().ok()?;
+                        let existing = database::get_meeting_title(&conn, &mid_for_title)
+                            .ok()
+                            .flatten();
+                        let combined = match existing.as_deref().map(str::trim) {
+                            Some(t) if !t.is_empty() && t != "Recording" => {
+                                format!("{t} — {title}")
+                            }
+                            _ => title.clone(),
+                        };
+                        let _ = database::update_meeting_title(
+                            &conn,
+                            &mid_for_title,
+                            &combined,
+                        );
+                        Some(combined)
+                    })
+                    .unwrap_or_else(|| title.clone());
                 let _ = app_title.emit(
                     "summary:title",
                     TitlePayload {
                         meeting_id: &mid_for_title,
-                        title: title.as_str(),
+                        title: final_title.as_str(),
                     },
                 );
-                if let Some(db) = app_title.try_state::<DatabaseState>() {
-                    if let Ok(conn) = db.conn.lock() {
-                        let _ = database::update_meeting_title(&conn, &mid_for_title, title);
-                    }
-                }
             }
             other => {
                 match &other {

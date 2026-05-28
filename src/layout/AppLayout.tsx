@@ -117,8 +117,8 @@ function HeaderControls({
 
   const activeTitle =
     meetingId != null
-      ? meetings.find((m) => m.id === meetingId)?.title?.trim() || "Untitled"
-      : "Untitled";
+      ? meetings.find((m) => m.id === meetingId)?.title?.trim() || "Recording"
+      : "Recording";
 
   const handleClick = async () => {
     if (sessionActive) {
@@ -229,7 +229,7 @@ function MeetingHeaderTitle({
           <input
             className="text-lg font-semibold font-serif bg-transparent border-b border-primary outline-none min-w-0 flex-1 m-0 p-0"
             defaultValue={info.title || ""}
-            placeholder="Untitled"
+            placeholder="Recording"
             autoFocus
             onMouseDown={(e) => e.stopPropagation()}
             onBlur={(e) => {
@@ -264,7 +264,7 @@ function MeetingHeaderTitle({
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-muted-foreground animate-pulse" />
               </span>
             ) : (
-              info.title || "Untitled"
+              info.title || "Recording"
             )}
           </h1>
         )}
@@ -544,18 +544,7 @@ function AppLayout() {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return;
       e.preventDefault();
-      setSearchOpen((open) => {
-        if (open) return false;
-        const t = e.target as HTMLElement;
-        if (
-          t.tagName === "INPUT" ||
-          t.tagName === "TEXTAREA" ||
-          t.isContentEditable
-        ) {
-          return false;
-        }
-        return true;
-      });
+      setSearchOpen((open) => !open);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -628,13 +617,13 @@ function AppLayout() {
                           <CommandItem
                             key={m.id}
                             value={m.id}
-                            keywords={[m.title || "Untitled"]}
+                            keywords={[m.title || "Recording"]}
                             onSelect={() => {
                               setActiveView({ type: "meeting", id: m.id });
                               setSearchOpen(false);
                             }}
                           >
-                            {m.title || "Untitled"}
+                            {m.title || "Recording"}
                           </CommandItem>
                         ))}
                       </CommandGroup>

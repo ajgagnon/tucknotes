@@ -1,22 +1,20 @@
 import { useEffect, useState } from "react";
-import { check, type Update } from "@tauri-apps/plugin-updater";
 import { getVersion } from "@tauri-apps/api/app";
-import { relaunch } from "@tauri-apps/plugin-process";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-
-type State =
-  | { kind: "idle" }
-  | { kind: "checking" }
-  | { kind: "up-to-date" }
-  | { kind: "available"; update: Update }
-  | { kind: "downloading" }
-  | { kind: "ready" }
-  | { kind: "error"; message: string };
+import {
+  checkOnce,
+  installOnce,
+  relaunchOnce,
+  getState,
+  subscribe,
+  resetIfTerminal,
+  type UpdaterState,
+} from "@/lib/updater";
 
 export function UpdateSection() {
   const [version, setVersion] = useState<string | null>(null);
-  const [state, setState] = useState<State>({ kind: "idle" });
+  const [state, setState] = useState<UpdaterState>(() => getState());
 
   useEffect(() => {
     getVersion()
@@ -24,37 +22,11 @@ export function UpdateSection() {
       .catch(() => setVersion(null));
   }, []);
 
+  useEffect(() => subscribe(setState), []);
+
   async function handleCheck() {
-    setState({ kind: "checking" });
-    try {
-      const update = await check();
-      if (update) {
-        setState({ kind: "available", update });
-      } else {
-        setState({ kind: "up-to-date" });
-      }
-    } catch (e: unknown) {
-      setState({ kind: "error", message: String(e) });
-    }
-  }
-
-  async function handleInstall() {
-    if (state.kind !== "available") return;
-    setState({ kind: "downloading" });
-    try {
-      await state.update.downloadAndInstall();
-      setState({ kind: "ready" });
-    } catch (e: unknown) {
-      setState({ kind: "error", message: String(e) });
-    }
-  }
-
-  async function handleRelaunch() {
-    try {
-      await relaunch();
-    } catch (e: unknown) {
-      setState({ kind: "error", message: String(e) });
-    }
+    resetIfTerminal();
+    await checkOnce();
   }
 
   return (
@@ -69,11 +41,11 @@ export function UpdateSection() {
               {version ? `TuckNotes v${version}` : "TuckNotes"}
             </p>
             {state.kind === "ready" ? (
-              <Button size="sm" onClick={handleRelaunch}>
+              <Button size="sm" onClick={() => relaunchOnce()}>
                 Restart to apply update
               </Button>
             ) : state.kind === "available" ? (
-              <Button size="sm" onClick={handleInstall}>
+              <Button size="sm" onClick={() => installOnce()}>
                 Install v{state.update.version}
               </Button>
             ) : (

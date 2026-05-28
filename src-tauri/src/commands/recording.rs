@@ -501,7 +501,7 @@ mod macos {
             {
                 let db_state: tauri::State<'_, DatabaseState> = app.state::<DatabaseState>();
                 let conn = lock_or_err(&db_state.conn)?;
-                database::create_meeting(&conn, &new_id, "Recording", now)?;
+                database::create_meeting(&conn, &new_id, None, now)?;
             }
             {
                 let mut sid = lock_or_err(&state.session_id)?;

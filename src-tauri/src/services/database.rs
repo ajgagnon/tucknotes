@@ -305,7 +305,7 @@ fn insert_default_meeting_documents(
 pub fn create_meeting(
     conn: &Connection,
     id: &str,
-    title: &str,
+    title: Option<&str>,
     created_at: i64,
 ) -> Result<(), AppError> {
     let tx = conn.unchecked_transaction()?;
@@ -316,6 +316,15 @@ pub fn create_meeting(
     insert_default_meeting_documents(&tx, id, created_at)?;
     tx.commit()?;
     Ok(())
+}
+
+pub fn get_meeting_title(conn: &Connection, id: &str) -> Result<Option<String>, AppError> {
+    let title = conn.query_row(
+        "SELECT title FROM meetings WHERE id = ?1",
+        rusqlite::params![id],
+        |row| row.get::<_, Option<String>>(0),
+    )?;
+    Ok(title)
 }
 
 pub fn end_meeting(
@@ -599,7 +608,7 @@ mod tests {
     fn meeting_and_segment_lifecycle() {
         let conn = open_db_memory().unwrap();
 
-        create_meeting(&conn, "s1", "Test Meeting", 1708700000000).unwrap();
+        create_meeting(&conn, "s1", Some("Test Meeting"), 1708700000000).unwrap();
         insert_segment(&conn, "s1", "Hello world", "system", 0, None, 1708700003000).unwrap();
         insert_segment(
             &conn,
@@ -633,8 +642,8 @@ mod tests {
     fn list_meetings_ordering() {
         let conn = open_db_memory().unwrap();
 
-        create_meeting(&conn, "s1", "First", 1708700000000).unwrap();
-        create_meeting(&conn, "s2", "Second", 1708700060000).unwrap();
+        create_meeting(&conn, "s1", Some("First"), 1708700000000).unwrap();
+        create_meeting(&conn, "s2", Some("Second"), 1708700060000).unwrap();
 
         let meetings = list_meetings(&conn).unwrap();
         assert_eq!(meetings.len(), 2);
@@ -646,7 +655,7 @@ mod tests {
     fn delete_cascades_segments_and_documents() {
         let conn = open_db_memory().unwrap();
 
-        create_meeting(&conn, "s1", "To Delete", 1708700000000).unwrap();
+        create_meeting(&conn, "s1", Some("To Delete"), 1708700000000).unwrap();
         insert_segment(&conn, "s1", "text", "system", 0, None, 1708700003000).unwrap();
 
         delete_meeting(&conn, "s1").unwrap();
@@ -676,7 +685,7 @@ mod tests {
     #[test]
     fn reopen_meeting_and_duration_queries() {
         let conn = open_db_memory().unwrap();
-        create_meeting(&conn, "m", "M", 1).unwrap();
+        create_meeting(&conn, "m", Some("M"), 1).unwrap();
         insert_segment(&conn, "m", "a", "system", 5000, None, 2).unwrap();
         assert_eq!(max_segment_timestamp_ms(&conn, "m").unwrap(), 5000);
         assert_eq!(meeting_recording_duration_ms(&conn, "m").unwrap(), 0);
@@ -693,7 +702,7 @@ mod tests {
     fn summary_body_persists_in_documents() {
         let conn = open_db_memory().unwrap();
 
-        create_meeting(&conn, "s1", "Meeting", 1708700000000).unwrap();
+        create_meeting(&conn, "s1", Some("Meeting"), 1708700000000).unwrap();
         let (_, _, docs) = get_meeting_with_segments(&conn, "s1").unwrap();
         assert_eq!(docs[0].body, None);
 
@@ -708,7 +717,7 @@ mod tests {
     #[test]
     fn update_meeting_document_body_persists() {
         let conn = open_db_memory().unwrap();
-        create_meeting(&conn, "s1", "M", 1).unwrap();
+        create_meeting(&conn, "s1", Some("M"), 1).unwrap();
         let (_, _, docs) = get_meeting_with_segments(&conn, "s1").unwrap();
         let notes = docs.iter().find(|d| d.kind == "notes").unwrap();
         assert_eq!(notes.body, None);
@@ -722,7 +731,7 @@ mod tests {
     #[test]
     fn update_meeting_document_body_missing_id_errors() {
         let conn = open_db_memory().unwrap();
-        create_meeting(&conn, "s1", "M", 1).unwrap();
+        create_meeting(&conn, "s1", Some("M"), 1).unwrap();
         let err = super::update_meeting_document_body(&conn, "nonexistent-id", "x").unwrap_err();
         match err {
             crate::errors::AppError::NotFound(_) => {}
@@ -776,7 +785,7 @@ mod tests {
     #[test]
     fn search_finds_transcript_segment() {
         let conn = open_db_memory().unwrap();
-        create_meeting(&conn, "m1", "Pricing review", 1708700000000).unwrap();
+        create_meeting(&conn, "m1", Some("Pricing review"), 1708700000000).unwrap();
         insert_segment(&conn, "m1", "We discussed the budget for next quarter.", "system", 0, None, 1).unwrap();
         insert_segment(&conn, "m1", "Hello world unrelated", "system", 1000, None, 2).unwrap();
 
@@ -791,7 +800,7 @@ mod tests {
     #[test]
     fn search_finds_summary_body_and_updates_on_change() {
         let conn = open_db_memory().unwrap();
-        create_meeting(&conn, "m1", "Sync", 1).unwrap();
+        create_meeting(&conn, "m1", Some("Sync"), 1).unwrap();
         set_summary_body(&conn, "m1", "Team decided to ship pricing on Friday.").unwrap();
 
         let hits = search_meetings(&conn, "pricing", 10).unwrap();
@@ -810,7 +819,7 @@ mod tests {
     #[test]
     fn search_ignores_notes_documents() {
         let conn = open_db_memory().unwrap();
-        create_meeting(&conn, "m1", "M", 1).unwrap();
+        create_meeting(&conn, "m1", Some("M"), 1).unwrap();
         let (_, _, docs) = get_meeting_with_segments(&conn, "m1").unwrap();
         let notes = docs.iter().find(|d| d.kind == "notes").unwrap();
         update_meeting_document_body(&conn, &notes.id, "Notes mentioning xylophone.").unwrap();
@@ -822,7 +831,7 @@ mod tests {
     #[test]
     fn search_clears_when_meeting_deleted() {
         let conn = open_db_memory().unwrap();
-        create_meeting(&conn, "m1", "M", 1).unwrap();
+        create_meeting(&conn, "m1", Some("M"), 1).unwrap();
         insert_segment(&conn, "m1", "rare-token-xyzzy here", "system", 0, None, 2).unwrap();
         set_summary_body(&conn, "m1", "rare-token-xyzzy summary").unwrap();
         assert_eq!(search_meetings(&conn, "xyzzy", 10).unwrap().len(), 2);
@@ -839,7 +848,7 @@ mod tests {
     #[test]
     fn search_empty_query_returns_empty() {
         let conn = open_db_memory().unwrap();
-        create_meeting(&conn, "m1", "M", 1).unwrap();
+        create_meeting(&conn, "m1", Some("M"), 1).unwrap();
         insert_segment(&conn, "m1", "anything", "system", 0, None, 2).unwrap();
         assert!(search_meetings(&conn, "", 10).unwrap().is_empty());
         assert!(search_meetings(&conn, "   ", 10).unwrap().is_empty());
@@ -850,7 +859,7 @@ mod tests {
         // FTS5 MATCH chokes on bare punctuation like `"` or `(`; the sanitiser
         // must wrap each token in escaped quotes so the query never crashes.
         let conn = open_db_memory().unwrap();
-        create_meeting(&conn, "m1", "M", 1).unwrap();
+        create_meeting(&conn, "m1", Some("M"), 1).unwrap();
         insert_segment(&conn, "m1", "alpha beta gamma", "system", 0, None, 2).unwrap();
         let _ = search_meetings(&conn, "alpha \"beta\" (gamma)", 10).unwrap();
     }
