@@ -34,7 +34,7 @@ export function MeetingDateBadge({
         {formatMonthDayOrdinal(createdAt)}
       </PopoverTrigger>
       <PopoverContent className="min-w-[240px] p-3">
-        <div className="text-sm font-semibold">{title || "Untitled"}</div>
+        <div className="text-sm font-semibold">{title || "Recording"}</div>
         <div className="mt-0.5 text-xs text-muted-foreground">
           {formatWeekdayMonthDayOrdinal(createdAt)} ·{" "}
           {formatClockTime(createdAt)}

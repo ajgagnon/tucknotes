@@ -100,10 +100,10 @@ export default function MeetingsSidebar({
                   <SidebarMenuButton
                     isActive={activeMeetingId === meeting.id}
                     onClick={() => onSelectMeeting(meeting.id)}
-                    tooltip={meeting.title || "Untitled"}
+                    tooltip={meeting.title || "Recording"}
                   >
                     <span className="truncate flex items-center gap-1.5 text-xs">
-                      {meeting.title || "Untitled"}
+                      {meeting.title || "Recording"}
                       {summaryQueue.active === meeting.id && (
                         <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
                       )}
