@@ -1,15 +1,10 @@
-@import "tailwindcss";
+@import "./App.css";
 
-@layer base {
-  * {
-    box-sizing: border-box;
-  }
-  html,
-  body {
-    margin: 0;
-    background: transparent;
-    -webkit-user-select: none;
-    user-select: none;
-    cursor: default;
-  }
+html,
+body {
+  background: transparent;
+  margin: 0;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
 }
