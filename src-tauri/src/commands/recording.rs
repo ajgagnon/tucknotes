@@ -334,8 +334,11 @@ mod macos {
             }
         });
 
-        let voice_cap = crate::services::voice_capture::VoiceCapture::start(shared_tx)
-            .map_err(|e| AppError::CaptureFailed(format!("VoiceCapture: {e}")))?;
+        let use_vp = crate::services::audio_output::is_builtin_speakers();
+        eprintln!("[recording] mic capture mode: voice_processing={use_vp}");
+        let voice_cap =
+            crate::services::voice_capture::VoiceCapture::start(use_vp, shared_tx)
+                .map_err(|e| AppError::CaptureFailed(format!("VoiceCapture: {e}")))?;
         {
             let mut vc_guard = lock_or_err(&state.voice_capture)?;
             *vc_guard = Some(voice_cap);

@@ -30,19 +30,25 @@ static void minimize_ducking(AVAudioEngine *engine) {
     }
 }
 
-bool voice_capture_start(VoiceCaptureCallback callback, void *context) {
+bool voice_capture_start(bool use_voice_processing,
+                         VoiceCaptureCallback callback,
+                         void *context) {
     if (gEngine) {
         return false; // already running
     }
 
     AVAudioEngine *engine = [[AVAudioEngine alloc] init];
 
-    // Enable voice processing on the input node — this wraps AUVoiceProcessingIO,
-    // giving us hardware-tuned AEC, noise suppression, AGC, and the system
-    // mic mode picker (Standard / Voice Isolation / Wide Spectrum).
-    NSError *vpError = nil;
-    if (![engine.inputNode setVoiceProcessingEnabled:YES error:&vpError]) {
-        NSLog(@"[voice_capture] failed to enable voice processing: %@", vpError);
+    // When use_voice_processing is true we engage AUVoiceProcessingIO for
+    // hardware AEC/noise suppression/AGC. This unconditionally ducks other
+    // system audio, which is acceptable only when the user is on built-in
+    // speakers (otherwise the bleed AEC fixes wasn't a problem in the first
+    // place). When false we use the plain input node — no AEC, no ducking.
+    if (use_voice_processing) {
+        NSError *vpError = nil;
+        if (![engine.inputNode setVoiceProcessingEnabled:YES error:&vpError]) {
+            NSLog(@"[voice_capture] failed to enable voice processing: %@", vpError);
+        }
     }
 
     AVAudioFormat *inputFormat = [engine.inputNode inputFormatForBus:0];
@@ -72,11 +78,14 @@ bool voice_capture_start(VoiceCaptureCallback callback, void *context) {
         return false;
     }
 
-    // Minimize ducking after engine start (AU must be instantiated first).
-    minimize_ducking(engine);
+    if (use_voice_processing) {
+        // Minimize ducking after engine start (AU must be instantiated first).
+        minimize_ducking(engine);
+    }
 
     gEngine = engine;
-    NSLog(@"[voice_capture] started with voice processing");
+    NSLog(@"[voice_capture] started (voice_processing=%s)",
+          use_voice_processing ? "yes" : "no");
     return true;
 }
 

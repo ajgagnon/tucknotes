@@ -8,6 +8,8 @@ pub mod vad;
 #[cfg(target_os = "macos")]
 pub mod audio_capture;
 #[cfg(target_os = "macos")]
+pub mod audio_output;
+#[cfg(target_os = "macos")]
 pub mod voice_capture;
 #[cfg(target_os = "macos")]
 pub mod permissions;
