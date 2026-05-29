@@ -59,7 +59,7 @@ function MeetingDetectedContent({ appName }: { appName: string }) {
 
   return (
     <>
-      <div className="size-2.5 shrink-0 animate-pulse rounded-full bg-destructive" />
+      <div className="size-2.5 shrink-0 animate-pulse rounded-full bg-primary" />
 
       <div className="min-w-0 flex-1">
         <div className="text-[11px] leading-none text-muted-foreground">
@@ -73,7 +73,7 @@ function MeetingDetectedContent({ appName }: { appName: string }) {
       <button
         onClick={handleStart}
         disabled={starting}
-        className="shrink-0 rounded-lg bg-destructive px-3.5 py-1.5 text-xs font-semibold text-white transition-[opacity,background-color] hover:bg-destructive/90 disabled:cursor-default disabled:opacity-60"
+        className="shrink-0 rounded-lg bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-[opacity,background-color] hover:bg-primary/90 disabled:cursor-default disabled:opacity-60"
       >
         {starting ? "Starting..." : "Record"}
       </button>
@@ -132,7 +132,7 @@ function AutoStopContent({ appName }: { appName: string | null }) {
       <button
         onClick={handleStop}
         disabled={stopping}
-        className="shrink-0 rounded-lg bg-destructive px-3 py-1.5 text-xs font-semibold text-white transition-[opacity,background-color] hover:bg-destructive/90 disabled:cursor-default disabled:opacity-60"
+        className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-[opacity,background-color] hover:bg-primary/90 disabled:cursor-default disabled:opacity-60"
       >
         {stopping ? "Stopping…" : "Stop"}
       </button>
