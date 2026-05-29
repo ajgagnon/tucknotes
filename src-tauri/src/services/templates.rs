@@ -11,9 +11,11 @@
 //! section-composition based so that user-defined templates — a future cycle —
 //! are simply "a template with a user-chosen ordered list of sections".
 //!
-//! INVARIANT: `build_system_prompt(&DEFAULT_TEMPLATE)` must reproduce the
-//! original hardcoded system prompt byte-for-byte. This is locked down by
-//! `default_template_is_byte_identical_to_legacy` below.
+//! INVARIANT: `build_system_prompt(&builtin_as_owned(&DEFAULT_TEMPLATE))` must
+//! reproduce the original hardcoded system prompt byte-for-byte. This is locked
+//! down by `default_template_is_byte_identical_to_legacy` below.
+
+use crate::models::template::{OwnedSection, OwnedTemplate};
 
 /// One composable section of a summary template.
 pub struct Section {
@@ -56,6 +58,8 @@ pub struct TemplateInfo {
     pub id: String,
     pub name: String,
     pub description: String,
+    /// `true` for templates that ship with the app (resettable, not deletable).
+    pub builtin: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -236,8 +240,63 @@ pub fn list_templates() -> Vec<TemplateInfo> {
             id: t.id.to_string(),
             name: t.name.to_string(),
             description: t.description.to_string(),
+            builtin: true,
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Conversion to the owned model (used to seed the store and as the "reset"
+// source for built-in templates).
+// ---------------------------------------------------------------------------
+
+/// Recover a section's user-editable instructions from its `body_spec` by
+/// stripping the `"- ## {heading} — "` prefix the prompt assembler re-adds.
+fn section_description(s: &Section) -> &str {
+    let prefix = format!("- ## {} — ", s.heading);
+    s.body_spec.strip_prefix(prefix.as_str()).unwrap_or(s.body_spec)
+}
+
+/// Convert a built-in `'static` template into its owned (seed) form. The
+/// template-level example (Default only) is carried in `template_example` so
+/// the assembled prompt stays byte-identical to the legacy prompt.
+pub fn builtin_as_owned(t: &SummaryTemplate) -> OwnedTemplate {
+    OwnedTemplate {
+        id: t.id.to_string(),
+        name: t.name.to_string(),
+        description: t.description.to_string(),
+        sections: t
+            .sections
+            .iter()
+            .map(|s| OwnedSection {
+                id: s.id.to_string(),
+                heading: s.heading.to_string(),
+                description: section_description(s).to_string(),
+                example: None,
+            })
+            .collect(),
+        builtin: true,
+        template_example: t.example.map(|e| e.to_string()),
+    }
+}
+
+/// All built-in templates as owned seeds, in display order. This is the
+/// "reset source" — resetting a built-in restores its entry here.
+pub fn builtin_seeds() -> Vec<OwnedTemplate> {
+    BUILT_IN_TEMPLATES.iter().map(|t| builtin_as_owned(t)).collect()
+}
+
+/// The owned seed for a built-in id, or `None` if `id` is not a built-in.
+pub fn builtin_seed_by_id(id: &str) -> Option<OwnedTemplate> {
+    BUILT_IN_TEMPLATES
+        .iter()
+        .find(|t| t.id == id)
+        .map(|t| builtin_as_owned(t))
+}
+
+/// Whether `id` names a built-in template (reserved id).
+pub fn is_builtin_id(id: &str) -> bool {
+    BUILT_IN_TEMPLATES.iter().any(|t| t.id == id)
 }
 
 /// Spell out small counts so the prompt reads naturally ("four sections").
@@ -262,7 +321,7 @@ fn count_word(n: usize) -> String {
 /// template's sections, and a shared rule set. Blocks are joined by a blank
 /// line (`\n\n`); only the count word, the heading list, and the section-body
 /// block vary per template.
-pub fn build_system_prompt(template: &SummaryTemplate) -> String {
+pub fn build_system_prompt(template: &OwnedTemplate) -> String {
     let count = count_word(template.sections.len());
     let heading_list = template
         .sections
@@ -273,7 +332,7 @@ pub fn build_system_prompt(template: &SummaryTemplate) -> String {
     let bodies = template
         .sections
         .iter()
-        .map(|s| s.body_spec)
+        .map(|s| format!("- ## {} — {}", s.heading, s.description))
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -300,9 +359,21 @@ pub fn build_system_prompt(template: &SummaryTemplate) -> String {
         "Rules:\n- Use the em dash character `—` (not `--`) before due dates.\n- Name people only in the Summary and Decisions sections, and only when the transcript clearly attributes the work or decision to them. Action items never carry a name.\n- Skip filler, chit-chat, repeated points, and pleasantries.\n- No editorializing, no summarizing importance, no meta-commentary.\n- Do not invent labels beyond the {count} section headings.\n- Do not give the output a title — the title is generated separately."
     ));
 
-    // (F) Example (Default only, for now).
-    if let Some(example) = template.example {
-        blocks.push(example.to_string());
+    // (F) Examples. Per-section examples (user templates) take precedence; the
+    // shipped built-in seeds fall back to their frozen template-level example,
+    // which keeps the Default prompt byte-identical to the legacy prompt.
+    let examples: Vec<String> = template
+        .sections
+        .iter()
+        .filter_map(|s| s.example.as_ref().map(|ex| format!("## {}\n{}", s.heading, ex)))
+        .collect();
+    if !examples.is_empty() {
+        blocks.push(format!(
+            "Example shape (illustrative only, do not copy the content):\n{}",
+            examples.join("\n\n")
+        ));
+    } else if let Some(ex) = &template.template_example {
+        blocks.push(ex.clone());
     }
 
     blocks.join("\n\n")
@@ -361,13 +432,16 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
 
     #[test]
     fn default_template_is_byte_identical_to_legacy() {
-        assert_eq!(build_system_prompt(&DEFAULT_TEMPLATE), LEGACY_SYSTEM_PROMPT);
+        assert_eq!(
+            build_system_prompt(&builtin_as_owned(&DEFAULT_TEMPLATE)),
+            LEGACY_SYSTEM_PROMPT
+        );
     }
 
     #[test]
     fn all_built_in_templates_build_without_panic() {
         for t in BUILT_IN_TEMPLATES {
-            let prompt = build_system_prompt(t);
+            let prompt = build_system_prompt(&builtin_as_owned(t));
             assert!(!prompt.is_empty(), "{} produced an empty prompt", t.id);
             // Every template's headings must appear in order.
             let mut cursor = 0;
@@ -385,7 +459,7 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
     fn templates_reuse_action_items_section_verbatim() {
         // The tuned Action items rules must carry into every template that uses it.
         for t in [&MINUTES_TEMPLATE, &ONE_ON_ONE_TEMPLATE] {
-            let prompt = build_system_prompt(t);
+            let prompt = build_system_prompt(&builtin_as_owned(t));
             assert!(
                 prompt.contains(SECTION_ACTION_ITEMS.body_spec),
                 "{} lost the verbatim Action items body_spec",
@@ -395,8 +469,37 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
     }
 
     #[test]
+    fn section_description_is_lossless() {
+        // Splitting body_spec into heading + description must reassemble exactly.
+        let s = &SECTION_ACTION_ITEMS;
+        let rebuilt = format!("- ## {} — {}", s.heading, section_description(s));
+        assert_eq!(rebuilt, s.body_spec);
+    }
+
+    #[test]
+    fn builtin_seeds_match_static_ids() {
+        let ids: Vec<String> = builtin_seeds().into_iter().map(|t| t.id).collect();
+        assert_eq!(ids, ["default", "minutes", "one_on_one", "standup"]);
+        assert!(builtin_seeds().iter().all(|t| t.builtin));
+        assert!(builtin_seed_by_id("minutes").is_some());
+        assert!(builtin_seed_by_id("nope").is_none());
+        assert!(is_builtin_id("standup"));
+        assert!(!is_builtin_id("custom"));
+    }
+
+    #[test]
+    fn per_section_example_emits_example_block() {
+        let mut t = builtin_as_owned(&STANDUP_TEMPLATE); // no template_example
+        assert!(!build_system_prompt(&t).contains("Example shape"));
+        t.sections[0].example = Some("- Shipped the login flow.".to_string());
+        let prompt = build_system_prompt(&t);
+        assert!(prompt.contains("Example shape (illustrative only, do not copy the content):"));
+        assert!(prompt.contains("## Progress\n- Shipped the login flow."));
+    }
+
+    #[test]
     fn minutes_template_shape() {
-        let prompt = build_system_prompt(&MINUTES_TEMPLATE);
+        let prompt = build_system_prompt(&builtin_as_owned(&MINUTES_TEMPLATE));
         assert!(prompt.contains("up to four sections"));
         for h in ["## Agenda", "## Discussion", "## Decisions", "## Action items"] {
             assert!(prompt.contains(h), "minutes missing {h}");
@@ -410,7 +513,7 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
 
     #[test]
     fn standup_template_shape() {
-        let prompt = build_system_prompt(&STANDUP_TEMPLATE);
+        let prompt = build_system_prompt(&builtin_as_owned(&STANDUP_TEMPLATE));
         assert!(prompt.contains("up to three sections"));
         for h in ["## Progress", "## Plans", "## Blockers"] {
             assert!(prompt.contains(h), "standup missing {h}");
@@ -421,7 +524,7 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
 
     #[test]
     fn one_on_one_template_shape() {
-        let prompt = build_system_prompt(&ONE_ON_ONE_TEMPLATE);
+        let prompt = build_system_prompt(&builtin_as_owned(&ONE_ON_ONE_TEMPLATE));
         assert!(prompt.contains("up to three sections"));
         for h in ["## Discussion", "## Action items", "## Follow-ups"] {
             assert!(prompt.contains(h), "1:1 missing {h}");

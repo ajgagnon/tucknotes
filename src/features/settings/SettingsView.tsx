@@ -10,7 +10,13 @@ import { LicenseSection } from "@/features/licensing";
 
 /// `section` (optional) is the DOM id of a section to scroll to on open, used
 /// for deep-links like the summary template dropdown's "Edit templates" link.
-function SettingsView({ section }: { section?: string }) {
+function SettingsView({
+  section,
+  onEditTemplate,
+}: {
+  section?: string;
+  onEditTemplate: (id?: string) => void;
+}) {
   const { recording, paused } = useRecording();
   const summarizing = useSummarizationActive();
 
@@ -45,7 +51,7 @@ function SettingsView({ section }: { section?: string }) {
           radioIdPrefix="llm-model"
           disabled={summarizing}
         />
-        <TemplateSection disabled={summarizing} />
+        <TemplateSection disabled={summarizing} onEditTemplate={onEditTemplate} />
         <UpdateSection />
       </div>
     </div>

@@ -3,6 +3,7 @@ pub mod licensing;
 pub mod llm;
 pub mod meeting_detection;
 pub mod settings;
+pub mod template;
 
 pub use audio::{
     AccumulatedAudio, AudioChunkEvent, AudioSource, PcmAccumulator, RecordingFinalizedEvent,
@@ -10,6 +11,7 @@ pub use audio::{
 };
 pub use llm::LlmModel;
 pub use settings::{AppSettings, DownloadProgress, ModelInfo, WhisperModel};
+pub use template::{OwnedSection, OwnedTemplate, TemplateStore};
 
 /// Shared interface for downloadable model types (Whisper, LLM).
 ///

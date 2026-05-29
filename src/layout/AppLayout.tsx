@@ -51,6 +51,8 @@ import {
 } from "@/features/meetings/types";
 import { MeetingDateBadge } from "@/features/meetings/MeetingDateBadge";
 import SettingsView from "@/features/settings/SettingsView";
+import { TemplateEditorView } from "@/features/settings/TemplateEditorView";
+import { SETTINGS_SECTION_TEMPLATES } from "@/features/settings/TemplateSection";
 import { LlmDownloadIndicator } from "@/features/models";
 import {
   TrialBanner,
@@ -70,6 +72,7 @@ import {
 type ActiveView =
   | { type: "meeting"; id: string }
   | { type: "settings"; section?: string }
+  | { type: "template-editor"; id?: string }
   | null;
 
 const appWindow = getCurrentWindow();
@@ -342,6 +345,7 @@ function LayoutContent({
   meetingInfo,
   onSaveTitle,
   onOpenSettings,
+  onEditTemplate,
 }: {
   activeView: ActiveView;
   onDrag: (e: React.MouseEvent) => void;
@@ -351,6 +355,7 @@ function LayoutContent({
   meetingInfo: MeetingTitleInfo | null;
   onSaveTitle: (title: string) => void;
   onOpenSettings: (section?: string) => void;
+  onEditTemplate: (id?: string) => void;
 }) {
   // Build header left content based on active view
   const headerLeft =
@@ -363,6 +368,8 @@ function LayoutContent({
       />
     ) : activeView?.type === "settings" ? (
       <h1 className="text-lg font-semibold m-0">Settings</h1>
+    ) : activeView?.type === "template-editor" ? (
+      <h1 className="text-lg font-semibold m-0">Templates</h1>
     ) : null;
 
   return (
@@ -379,7 +386,18 @@ function LayoutContent({
             />
           )}
           {activeView?.type === "settings" && (
-            <SettingsView section={activeView.section} />
+            <SettingsView
+              section={activeView.section}
+              onEditTemplate={onEditTemplate}
+            />
+          )}
+          {activeView?.type === "template-editor" && (
+            <TemplateEditorView
+              templateId={activeView.id}
+              onDone={() =>
+                onOpenSettings(SETTINGS_SECTION_TEMPLATES)
+              }
+            />
           )}
           {activeView === null && (
             <div className="flex h-full flex-col items-center justify-center p-8 text-center">
@@ -673,6 +691,9 @@ function AppLayout() {
               onSaveTitle={handleSaveTitle}
               onOpenSettings={(section) =>
                 setActiveView({ type: "settings", section })
+              }
+              onEditTemplate={(id) =>
+                setActiveView({ type: "template-editor", id })
               }
             />
           </SidebarProvider>

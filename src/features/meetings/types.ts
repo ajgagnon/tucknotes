@@ -8,11 +8,13 @@ export interface MeetingRow {
   template: string | null;
 }
 
-/** A built-in summary template, as returned by `list_summary_templates`. */
+/** A summary template summary, as returned by `list_summary_templates`. */
 export interface TemplateInfo {
   id: string;
   name: string;
   description: string;
+  /** `true` for templates that ship with the app (resettable, not deletable). */
+  builtin: boolean;
 }
 
 export interface MeetingDocument {

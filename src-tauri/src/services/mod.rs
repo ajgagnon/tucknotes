@@ -3,6 +3,7 @@ pub mod database;
 pub mod licensing;
 pub mod model_manager;
 pub mod summarization;
+pub mod template_store;
 pub mod templates;
 pub mod vad;
 

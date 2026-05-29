@@ -13,7 +13,8 @@ use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::token::LlamaToken;
 
 use crate::errors::{lock_or_err, AppError};
-use crate::services::templates::{self, SummaryTemplate};
+use crate::models::template::OwnedTemplate;
+use crate::services::templates;
 
 const THINK_OPEN: &str = "<think>";
 const THINK_CLOSE: &str = "</think>";
@@ -302,7 +303,7 @@ impl SummarizationService {
         &self,
         model_path: &Path,
         transcript: &str,
-        template: &SummaryTemplate,
+        template: &OwnedTemplate,
         interrupt: &AtomicBool,
         on_token: F,
     ) -> Result<String, AppError>

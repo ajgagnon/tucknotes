@@ -7,11 +7,13 @@ use crate::commands::licensing::require_paid_entitlement;
 use crate::errors::{lock_or_err, AppError};
 use crate::models::licensing::LicensingState;
 use crate::models::llm::LlmModel;
+use crate::models::template::OwnedTemplate;
 use crate::models::{Model, ModelInfo};
 use crate::services::database::{self, DatabaseState};
 use crate::services::model_manager;
 use crate::services::summarization::SummarizationState;
-use crate::services::templates::{self, TemplateInfo};
+use crate::services::templates::TemplateInfo;
+use crate::services::template_store;
 
 // ---------------------------------------------------------------------------
 // Event payloads — scoped to a specific meeting ID
@@ -71,10 +73,68 @@ pub fn set_selected_llm_model(app: tauri::AppHandle, model_id: String) -> Result
 // Summary template commands
 // ---------------------------------------------------------------------------
 
-/// The built-in summary templates, for the picker / settings UI.
+/// All summary templates (built-ins + user-created), for the picker / settings
+/// list. Lightweight — section content is fetched per-template for the editor.
 #[tauri::command]
-pub fn list_summary_templates() -> Vec<TemplateInfo> {
-    templates::list_templates()
+pub fn list_summary_templates(app: tauri::AppHandle) -> Result<Vec<TemplateInfo>, AppError> {
+    Ok(template_store::list_resolved_app(&app)?
+        .into_iter()
+        .map(|t| TemplateInfo {
+            id: t.id,
+            name: t.name,
+            description: t.description,
+            builtin: t.builtin,
+        })
+        .collect())
+}
+
+/// Full content of one template, for the editor.
+#[tauri::command]
+pub fn get_summary_template(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<OwnedTemplate, AppError> {
+    template_store::get_resolved_app(&app, &id)?
+        .ok_or_else(|| AppError::InvalidTemplate(format!("Unknown template \"{id}\"")))
+}
+
+/// Create a new user template; returns it with its assigned id.
+#[tauri::command]
+pub fn create_summary_template(
+    app: tauri::AppHandle,
+    template: OwnedTemplate,
+) -> Result<OwnedTemplate, AppError> {
+    template_store::create_app(&app, template)
+}
+
+/// Update an existing template (built-in override or user template).
+#[tauri::command]
+pub fn update_summary_template(
+    app: tauri::AppHandle,
+    template: OwnedTemplate,
+) -> Result<(), AppError> {
+    template_store::update_app(&app, template)
+}
+
+/// Reset a built-in template back to its shipped defaults; returns the seed.
+#[tauri::command]
+pub fn reset_summary_template(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<OwnedTemplate, AppError> {
+    template_store::reset_app(&app, &id)
+}
+
+/// Delete a user template. Clears it from the app-wide default if it was set.
+#[tauri::command]
+pub fn delete_summary_template(app: tauri::AppHandle, id: String) -> Result<(), AppError> {
+    template_store::delete_app(&app, &id)?;
+    let mut settings = model_manager::load_settings(&app)?;
+    if settings.default_template.as_deref() == Some(id.as_str()) {
+        settings.default_template = None;
+        model_manager::save_settings(&app, &settings)?;
+    }
+    Ok(())
 }
 
 /// The app-wide default template id (`None` = Default).
@@ -240,9 +300,6 @@ async fn do_summarize(
         ));
     }
 
-    // Resolve the template (NULL / unknown → Default).
-    let template = templates::template_by_id(template_id.as_deref());
-
     // 2. Resolve model path
     let base_dir = app
         .path()
@@ -251,6 +308,9 @@ async fn do_summarize(
     let model_path = model_manager::resolve_llm_path(&base_dir)?.ok_or_else(|| {
         AppError::SummarizationFailed("No LLM model selected or downloaded".into())
     })?;
+
+    // Resolve the template (NULL / unknown / deleted → Default).
+    let template = template_store::resolve_owned(&base_dir, template_id.as_deref())?;
 
     // 3. Run summarization with streaming (events scoped to meeting_id).
     // The interrupt flag is shared with the chatbot; if chat sets it, we exit
@@ -262,7 +322,7 @@ async fn do_summarize(
     let mid_owned = meeting_id.to_owned();
 
     let summary = tokio::task::spawn_blocking(move || {
-        service.summarize(&model_path, &transcript, template, &interrupt, |token, is_thinking| {
+        service.summarize(&model_path, &transcript, &template, &interrupt, |token, is_thinking| {
             let event_name = if is_thinking {
                 "summary:thinking"
             } else {
