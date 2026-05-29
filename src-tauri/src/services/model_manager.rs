@@ -444,8 +444,10 @@ mod tests {
     fn list_whisper_models_returns_both_models() {
         let models = list_whisper_models();
         assert_eq!(models.len(), 2);
-        assert_eq!(models[0].id, WhisperModel::BaseEn);
-        assert_eq!(models[1].id, WhisperModel::LargeV3TurboQ5);
+        assert_eq!(models[0].id, WhisperModel::LargeV3TurboQ5);
+        assert_eq!(models[1].id, WhisperModel::BaseEn);
+        // The recommended model is listed first.
+        assert_eq!(models[0].recommended, Some(true));
     }
 
     #[test]
@@ -514,8 +516,10 @@ mod tests {
     fn list_llm_models_returns_catalog() {
         let models = list_llm_models();
         assert_eq!(models.len(), 2);
-        assert_eq!(models[0].id, LlmModel::Qwen3_5_4B_Q4KM);
-        assert_eq!(models[1].id, LlmModel::Gemma4_E2B_Q8);
+        assert_eq!(models[0].id, LlmModel::Gemma4_E2B_Q8);
+        assert_eq!(models[1].id, LlmModel::Qwen3_5_4B_Q4KM);
+        // The recommended model is listed first.
+        assert_eq!(models[0].recommended, Some(true));
     }
 
     #[test]
@@ -531,6 +535,7 @@ mod tests {
         let settings = AppSettings {
             selected_model: Some(WhisperModel::BaseEn),
             selected_llm_model: Some(LlmModel::Qwen3_5_4B_Q4KM),
+            ..AppSettings::default()
         };
         save_settings_to(base.path(), &settings).unwrap();
         let loaded = load_settings_from(base.path()).unwrap();

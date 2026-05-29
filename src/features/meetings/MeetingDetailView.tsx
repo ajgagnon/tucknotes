@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles, Settings, Settings2, Play } from "lucide-react";
+import {
+  Sparkles,
+  Settings,
+  Settings2,
+  Play,
+  ChevronDown,
+  Pencil,
+} from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { invoke } from "@tauri-apps/api/core";
@@ -9,8 +16,19 @@ import {
   type AppError,
 } from "@/features/recording";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { SETTINGS_SECTION_TEMPLATES } from "@/features/settings/TemplateSection";
 import {
   type MeetingDetail,
   type MeetingTitleInfo,
@@ -43,8 +61,9 @@ interface MeetingDetailViewProps {
   onRefreshMeeting?: () => void | Promise<void>;
   /** Merge persisted document body into local meeting detail (notes autosave). */
   onMeetingDocumentBodyUpdated?: (documentId: string, body: string) => void;
-  /** Switch the app to the settings view (e.g. to change the LLM model). */
-  onOpenSettings?: () => void;
+  /** Switch the app to the settings view (e.g. to change the LLM model).
+   *  Pass a section id to deep-link/scroll to a specific settings section. */
+  onOpenSettings?: (section?: string) => void;
 }
 
 export function MeetingDetailView({
@@ -140,6 +159,9 @@ export function MeetingDetailView({
     llmModelReady,
     currentSummary,
     handleSummarize,
+    templates,
+    selectedTemplate,
+    handleTemplateChange,
   } = useMeetingSummarization(detail.meeting, summaryBodyStored, onTitleChange);
 
   const leaveTranscriptTab = useCallback(() => {
@@ -498,14 +520,62 @@ export function MeetingDetailView({
 
         {!isLiveRecording && showSummarizeAction && (
           <div className="mt-0 shrink-0 flex flex-row items-center gap-2 border-t px-4 py-3">
-            <button
-              type="button"
-              onClick={() => void handleSummarize()}
-              className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-muted-foreground hover:underline"
-            >
-              <Sparkles className="size-3 shrink-0" />
-              {currentSummary ? "Resummarize" : "Summarize"}
-            </button>
+            <ButtonGroup className="shrink-0">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void handleSummarize()}
+              >
+                <Sparkles />
+                {currentSummary ? "Resummarize" : "Summarize"}
+              </Button>
+
+              {templates.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        aria-label="Summary template"
+                      />
+                    }
+                  >
+                    {templates.find((t) => t.id === selectedTemplate)?.name ??
+                      "Default"}
+                    <ChevronDown className="text-muted-foreground" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="min-w-52">
+                    <DropdownMenuRadioGroup
+                      value={selectedTemplate}
+                      onValueChange={(value) =>
+                        void handleTemplateChange(value as string)
+                      }
+                    >
+                      {templates.map((t) => (
+                        <DropdownMenuRadioItem key={t.id} value={t.id}>
+                          {t.name}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                    {onOpenSettings && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() =>
+                            onOpenSettings(SETTINGS_SECTION_TEMPLATES)
+                          }
+                        >
+                          <Pencil className="size-2.5" />
+                          Edit templates…
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </ButtonGroup>
             {onOpenSettings && (
               <Button
                 type="button"
@@ -514,7 +584,7 @@ export function MeetingDetailView({
                 className="shrink-0 text-muted-foreground hover:text-foreground"
                 aria-label="Change summarization model"
                 title="Change summarization model"
-                onClick={onOpenSettings}
+                onClick={() => onOpenSettings()}
               >
                 <Settings className="size-4" />
               </Button>

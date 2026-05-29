@@ -11,6 +11,7 @@ use crate::models::{Model, ModelInfo};
 use crate::services::database::{self, DatabaseState};
 use crate::services::model_manager;
 use crate::services::summarization::SummarizationState;
+use crate::services::templates::{self, TemplateInfo};
 
 // ---------------------------------------------------------------------------
 // Event payloads — scoped to a specific meeting ID
@@ -63,6 +64,30 @@ pub fn set_selected_llm_model(app: tauri::AppHandle, model_id: String) -> Result
         LlmModel::from_id(&model_id).ok_or_else(|| AppError::InvalidModel(model_id))?;
     let mut settings = model_manager::load_settings(&app)?;
     settings.selected_llm_model = Some(model);
+    model_manager::save_settings(&app, &settings)
+}
+
+// ---------------------------------------------------------------------------
+// Summary template commands
+// ---------------------------------------------------------------------------
+
+/// The built-in summary templates, for the picker / settings UI.
+#[tauri::command]
+pub fn list_summary_templates() -> Vec<TemplateInfo> {
+    templates::list_templates()
+}
+
+/// The app-wide default template id (`None` = Default).
+#[tauri::command]
+pub fn get_default_template(app: tauri::AppHandle) -> Result<Option<String>, AppError> {
+    let settings = model_manager::load_settings(&app)?;
+    Ok(settings.default_template)
+}
+
+#[tauri::command]
+pub fn set_default_template(app: tauri::AppHandle, template: String) -> Result<(), AppError> {
+    let mut settings = model_manager::load_settings(&app)?;
+    settings.default_template = Some(template);
     model_manager::save_settings(&app, &settings)
 }
 
@@ -123,8 +148,16 @@ pub async fn summarize_meeting(
     summ_state: tauri::State<'_, SummarizationState>,
     licensing: tauri::State<'_, LicensingState>,
     meeting_id: String,
+    template: Option<String>,
 ) -> Result<String, AppError> {
     require_paid_entitlement(&licensing)?;
+
+    // Persist the chosen template up front so it's the single source of truth:
+    // both this run and any queued run resolve it from the DB in do_summarize.
+    {
+        let conn = lock_or_err(&db_state.conn)?;
+        database::set_meeting_template(&conn, &meeting_id, template.as_deref())?;
+    }
 
     // Single lock scope: check for duplicates and either start or enqueue atomically.
     {
@@ -182,11 +215,11 @@ async fn do_summarize(
     summ_state: &SummarizationState,
     meeting_id: &str,
 ) -> Result<String, AppError> {
-    // 1. Load meeting transcript from DB
-    let transcript = {
+    // 1. Load meeting transcript + selected template from DB
+    let (transcript, template_id) = {
         let conn = lock_or_err(&db_state.conn)?;
-        let (_, segments, _) = database::get_meeting_with_segments(&conn, meeting_id)?;
-        segments
+        let (meeting, segments, _) = database::get_meeting_with_segments(&conn, meeting_id)?;
+        let transcript = segments
             .iter()
             .map(|s| {
                 let speaker = if s.source == "system" {
@@ -197,7 +230,8 @@ async fn do_summarize(
                 format!("{speaker}: {}", s.text)
             })
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n");
+        (transcript, meeting.template)
     };
 
     if transcript.is_empty() {
@@ -205,6 +239,9 @@ async fn do_summarize(
             "No transcript to summarize".into(),
         ));
     }
+
+    // Resolve the template (NULL / unknown → Default).
+    let template = templates::template_by_id(template_id.as_deref());
 
     // 2. Resolve model path
     let base_dir = app
@@ -225,7 +262,7 @@ async fn do_summarize(
     let mid_owned = meeting_id.to_owned();
 
     let summary = tokio::task::spawn_blocking(move || {
-        service.summarize(&model_path, &transcript, &interrupt, |token, is_thinking| {
+        service.summarize(&model_path, &transcript, template, &interrupt, |token, is_thinking| {
             let event_name = if is_thinking {
                 "summary:thinking"
             } else {

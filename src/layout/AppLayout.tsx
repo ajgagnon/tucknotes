@@ -67,7 +67,10 @@ import {
   CommandList,
 } from "@/components/ui/command";
 
-type ActiveView = { type: "meeting"; id: string } | { type: "settings" } | null;
+type ActiveView =
+  | { type: "meeting"; id: string }
+  | { type: "settings"; section?: string }
+  | null;
 
 const appWindow = getCurrentWindow();
 
@@ -347,7 +350,7 @@ function LayoutContent({
   onTitleChange: (info: MeetingTitleInfo) => void;
   meetingInfo: MeetingTitleInfo | null;
   onSaveTitle: (title: string) => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (section?: string) => void;
 }) {
   // Build header left content based on active view
   const headerLeft =
@@ -375,7 +378,9 @@ function LayoutContent({
               onOpenSettings={onOpenSettings}
             />
           )}
-          {activeView?.type === "settings" && <SettingsView />}
+          {activeView?.type === "settings" && (
+            <SettingsView section={activeView.section} />
+          )}
           {activeView === null && (
             <div className="flex h-full flex-col items-center justify-center p-8 text-center">
               <FileText className="mb-4 h-12 w-12 text-muted-foreground" />
@@ -666,7 +671,9 @@ function AppLayout() {
               onTitleChange={handleTitleChange}
               meetingInfo={meetingInfo}
               onSaveTitle={handleSaveTitle}
-              onOpenSettings={() => setActiveView({ type: "settings" })}
+              onOpenSettings={(section) =>
+                setActiveView({ type: "settings", section })
+              }
             />
           </SidebarProvider>
         </RecordingProvider>

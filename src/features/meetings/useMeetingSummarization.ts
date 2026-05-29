@@ -7,6 +7,7 @@ import {
   type MeetingDetail,
   type MeetingTitleInfo,
   type SummarizationQueue,
+  type TemplateInfo,
   type TokenPayload,
   type TitlePayload,
   summaryBodyFromDocuments,
@@ -28,6 +29,11 @@ export function useMeetingSummarization(
   const [llmModelReady, setLlmModelReady] = useState<boolean | null>(null);
   const [currentSummary, setCurrentSummary] = useState<string | null>(
     summaryBody,
+  );
+
+  const [templates, setTemplates] = useState<TemplateInfo[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState<string>(
+    meeting.template ?? "default",
   );
 
   const unlistenTokenRef = useRef<(() => void) | null>(null);
@@ -78,6 +84,45 @@ export function useMeetingSummarization(
   useEffect(() => {
     void checkLlmModel();
   }, [checkLlmModel]);
+
+  // Load the (static) list of built-in templates once.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await invoke<TemplateInfo[]>("list_summary_templates");
+        if (!cancelled) setTemplates(list);
+      } catch {
+        // Picker just renders no options; Summarize still works (→ Default).
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Resolve the picker selection whenever the meeting changes: the meeting's
+  // stored template wins, then the app-wide default, then "default". Switching
+  // the picker afterwards only mutates local state (applied on Summarize).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (meeting.template) {
+        setSelectedTemplate(meeting.template);
+        return;
+      }
+      try {
+        const appDefault = await invoke<string | null>("get_default_template");
+        if (!cancelled) setSelectedTemplate(appDefault ?? "default");
+      } catch {
+        if (!cancelled) setSelectedTemplate("default");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meeting.id, meeting.template]);
 
   // Re-check model readiness when an LLM download finishes so the UI flips
   // out of the "Download a summarization model in Settings…" state without a
@@ -229,15 +274,9 @@ export function useMeetingSummarization(
     };
   }, [meeting.id, registerStreamListeners]);
 
-  async function handleSummarize() {
-    if (currentSummary) {
-      const confirmed = await ask("This will replace the existing summary.", {
-        title: "Resummarize?",
-        kind: "warning",
-      });
-      if (!confirmed) return;
-    }
-
+  // Core (re)summarize with an explicit template id — no confirmation. Callers
+  // own the confirm step so they can word it for their context.
+  async function runSummarize(templateId: string) {
     setSummarizing(true);
     setGeneratingTitle(true);
     setStreamedSummary("");
@@ -249,6 +288,7 @@ export function useMeetingSummarization(
     try {
       await invoke<string>("summarize_meeting", {
         meetingId: meeting.id,
+        template: templateId,
       });
     } catch (err) {
       const e = err as { message?: string };
@@ -256,6 +296,37 @@ export function useMeetingSummarization(
       cleanupStreamListeners();
       setSummarizing(false);
       setGeneratingTitle(false);
+    }
+  }
+
+  async function handleSummarize() {
+    if (currentSummary) {
+      const confirmed = await ask("This will replace the existing summary.", {
+        title: "Resummarize?",
+        kind: "warning",
+      });
+      if (!confirmed) return;
+    }
+    await runSummarize(selectedTemplate);
+  }
+
+  // Switching the template (re)summarizes with it. If a summary already exists,
+  // confirm first; on cancel the selection is left unchanged (the controlled
+  // Select reverts). With no summary yet, just remember the choice for the next
+  // Summarize click.
+  async function handleTemplateChange(next: string) {
+    if (next === selectedTemplate) return;
+    if (currentSummary) {
+      const name = templates.find((t) => t.id === next)?.name ?? next;
+      const confirmed = await ask(
+        `Resummarize this meeting with the "${name}" template? This replaces the current summary.`,
+        { title: "Switch template?", kind: "warning" },
+      );
+      if (!confirmed) return;
+      setSelectedTemplate(next);
+      await runSummarize(next);
+    } else {
+      setSelectedTemplate(next);
     }
   }
 
@@ -267,5 +338,8 @@ export function useMeetingSummarization(
     llmModelReady,
     currentSummary,
     handleSummarize,
+    templates,
+    selectedTemplate,
+    handleTemplateChange,
   };
 }
