@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Sparkles,
-  Settings,
   Settings2,
   Play,
   ChevronDown,
@@ -576,19 +575,6 @@ export function MeetingDetailView({
                 </DropdownMenu>
               )}
             </ButtonGroup>
-            {onOpenSettings && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="shrink-0 text-muted-foreground hover:text-foreground"
-                aria-label="Change summarization model"
-                title="Change summarization model"
-                onClick={() => onOpenSettings()}
-              >
-                <Settings className="size-4" />
-              </Button>
-            )}
             {summaryError && (
               <p className="min-w-0 flex-1 truncate text-xs text-red-500 dark:text-red-400">
                 {summaryError}
