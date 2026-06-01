@@ -363,6 +363,7 @@ export function MeetingDetailView({
       stampElapsedSecs={isSummaryTab ? null : stampElapsedSecs}
       onSeekTranscript={handleSeekTranscript}
       className={isSummaryTab ? "meeting-summary-prose" : undefined}
+      summaryActions={isSummaryTab}
     />
   ) : (
     summaryPanel

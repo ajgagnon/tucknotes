@@ -55,6 +55,7 @@ import {
 } from "./use-chat-stream";
 import { CitationChip } from "./CitationChip";
 import { rehypeCitations } from "./rehype-citations";
+import { useAskTuckRequest } from "./ask-tuck-context";
 
 type ToolCall = {
   id: string;
@@ -98,8 +99,36 @@ export function Chatbot({
   const [usage, setUsage] = useState<ChatUsagePayload | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { send, stop, modelReady } = useChatStream();
+  const askTuckRequest = useAskTuckRequest();
 
   const requestClose = useCallback(() => setOpen(false), []);
+
+  // External "Ask Tuck about this" requests (e.g. from an AI-summary block):
+  // open the panel and pre-fill the textarea without sending. Keyed on `nonce`
+  // so repeat requests re-trigger even when the panel is already open.
+  useEffect(() => {
+    if (!askTuckRequest) return;
+    setOpen(true);
+    // Double rAF: after setOpen(true), the panel (and textarea) must mount on
+    // the next render before we can set its value.
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        ta.value = askTuckRequest.text;
+        // Notify any listeners and trigger `field-sizing-content` auto-resize.
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [askTuckRequest?.nonce]);
 
   const handleNewChat = useCallback(() => {
     if (messages.length === 0) return;
