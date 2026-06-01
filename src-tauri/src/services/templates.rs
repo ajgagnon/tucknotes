@@ -166,7 +166,7 @@ pub static SECTION_BLOCKERS: Section = Section {
 
 pub static DEFAULT_TEMPLATE: SummaryTemplate = SummaryTemplate {
     id: "default",
-    name: "Default",
+    name: "Recap",
     description: "General-purpose summary with decisions, action items, and open questions.",
     sections: &[
         &SECTION_SUMMARY,

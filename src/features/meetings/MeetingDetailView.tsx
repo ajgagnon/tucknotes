@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Sparkles,
-  Settings2,
-  Play,
-  ChevronDown,
-  Pencil,
-} from "lucide-react";
+import { Sparkles, Settings2, Play, MoreHorizontal } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { invoke } from "@tauri-apps/api/core";
@@ -15,16 +9,22 @@ import {
   type AppError,
 } from "@/features/recording";
 import { Button } from "@/components/ui/button";
-import { ButtonGroup } from "@/components/ui/button-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SETTINGS_SECTION_TEMPLATES } from "@/features/settings/TemplateSection";
@@ -46,6 +46,8 @@ import { cn } from "@/lib/utils";
 
 /** Sentinel value for the Transcript tab (not a `MeetingDocument` id). */
 const TRANSCRIPT_TAB = "__transcript__";
+/// Sentinel value for the "Edit templates…" action in the template Select.
+const EDIT_TEMPLATES_VALUE = "__edit_templates__";
 
 interface MeetingDetailViewProps {
   detail: MeetingDetail;
@@ -519,62 +521,66 @@ export function MeetingDetailView({
 
         {!isLiveRecording && showSummarizeAction && (
           <div className="mt-0 shrink-0 flex flex-row items-center gap-2 border-t px-4 py-3">
-            <ButtonGroup className="shrink-0">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void handleSummarize()}
-              >
-                <Sparkles />
-                {currentSummary ? "Resummarize" : "Summarize"}
-              </Button>
-
-              {templates.length > 0 && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        aria-label="Summary template"
-                      />
+            {templates.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <Select
+                  value={selectedTemplate}
+                  onValueChange={(value) => {
+                    if (value === EDIT_TEMPLATES_VALUE) {
+                      onOpenSettings?.(SETTINGS_SECTION_TEMPLATES);
+                      return;
                     }
-                  >
-                    {templates.find((t) => t.id === selectedTemplate)?.name ??
-                      "Default"}
-                    <ChevronDown className="text-muted-foreground" />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="min-w-52">
-                    <DropdownMenuRadioGroup
-                      value={selectedTemplate}
-                      onValueChange={(value) =>
-                        void handleTemplateChange(value as string)
+                    void handleTemplateChange(value as string);
+                  }}
+                >
+                  <SelectTrigger size="sm" aria-label="Summary template">
+                    <SelectValue>
+                      {(value: string | null) =>
+                        templates.find((t) => t.id === value)?.name ?? "Recap"
                       }
-                    >
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent className="min-w-52">
+                    <SelectGroup>
+                      <SelectLabel>Templates</SelectLabel>
                       {templates.map((t) => (
-                        <DropdownMenuRadioItem key={t.id} value={t.id}>
+                        <SelectItem key={t.id} value={t.id}>
                           {t.name}
-                        </DropdownMenuRadioItem>
+                        </SelectItem>
                       ))}
-                    </DropdownMenuRadioGroup>
+                    </SelectGroup>
                     {onOpenSettings && (
-                      <>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onClick={() =>
-                            onOpenSettings(SETTINGS_SECTION_TEMPLATES)
-                          }
-                        >
-                          <Pencil className="size-2.5" />
+                      <SelectGroup>
+                        <SelectSeparator />
+                        <SelectItem value={EDIT_TEMPLATES_VALUE}>
                           Edit templates…
-                        </DropdownMenuItem>
-                      </>
+                        </SelectItem>
+                      </SelectGroup>
                     )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-            </ButtonGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="More summary actions"
+                  />
+                }
+              >
+                <MoreHorizontal />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => void handleSummarize()}>
+                  <Sparkles className="size-2.5" />
+                  {currentSummary ? "Resummarize" : "Summarize"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {summaryError && (
               <p className="min-w-0 flex-1 truncate text-xs text-red-500 dark:text-red-400">
                 {summaryError}

@@ -112,7 +112,7 @@ export function TemplateSection({
         <SelectTrigger aria-label="Default summary template" className="w-full">
           <SelectValue>
             {(value: string | null) =>
-              templates.find((t) => t.id === value)?.name ?? "Default"
+              templates.find((t) => t.id === value)?.name ?? "Recap"
             }
           </SelectValue>
         </SelectTrigger>
