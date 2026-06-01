@@ -4,6 +4,17 @@ export interface MeetingRow {
   created_at: number;
   ended_at: number | null;
   duration_ms: number | null;
+  /** Summary template id used for this meeting (null = the Default template). */
+  template: string | null;
+}
+
+/** A summary template summary, as returned by `list_summary_templates`. */
+export interface TemplateInfo {
+  id: string;
+  name: string;
+  description: string;
+  /** `true` for templates that ship with the app (resettable, not deletable). */
+  builtin: boolean;
 }
 
 export interface MeetingDocument {

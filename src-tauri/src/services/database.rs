@@ -18,6 +18,8 @@ pub struct MeetingRow {
     pub created_at: i64,
     pub ended_at: Option<i64>,
     pub duration_ms: Option<i64>,
+    /// Summary template id used for this meeting (`NULL` = the Default template).
+    pub template: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -89,7 +91,8 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             title        TEXT,
             created_at   INTEGER NOT NULL,
             ended_at     INTEGER,
-            duration_ms  INTEGER
+            duration_ms  INTEGER,
+            template     TEXT
         );
         CREATE TABLE IF NOT EXISTS transcript_segments (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -183,6 +186,14 @@ fn backfill_meeting_search(conn: &Connection) -> Result<(), AppError> {
 fn migrate_database(conn: &Connection) -> Result<(), AppError> {
     if meetings_table_has_column(conn, "summary")? {
         conn.execute("ALTER TABLE meetings DROP COLUMN summary", [])?;
+    }
+    if !meetings_table_has_column(conn, "template")? {
+        conn.execute("ALTER TABLE meetings ADD COLUMN template TEXT", [])?;
+    }
+    if !meetings_table_has_column(conn, "base_title")? {
+        // Holds the user's entered title; the AI suffix is appended to it.
+        // No backfill: legacy rows keep NULL and are treated as already-final.
+        conn.execute("ALTER TABLE meetings ADD COLUMN base_title TEXT", [])?;
     }
     migrate_meeting_documents_to_summary_schema(conn)?;
     backfill_default_documents(conn)?;
@@ -327,6 +338,16 @@ pub fn get_meeting_title(conn: &Connection, id: &str) -> Result<Option<String>, 
     Ok(title)
 }
 
+/// The user-entered base title, which the AI suffix is appended to.
+pub fn get_base_title(conn: &Connection, id: &str) -> Result<Option<String>, AppError> {
+    let title = conn.query_row(
+        "SELECT base_title FROM meetings WHERE id = ?1",
+        rusqlite::params![id],
+        |row| row.get::<_, Option<String>>(0),
+    )?;
+    Ok(title)
+}
+
 pub fn end_meeting(
     conn: &Connection,
     id: &str,
@@ -423,6 +444,30 @@ pub fn update_meeting_title(
     Ok(())
 }
 
+/// Set the title from a user edit: both `base_title` (the value the AI suffix is
+/// appended to) and the displayed `title` become the entered value, clearing any
+/// previously appended AI suffix until the next summarization.
+pub fn set_user_title(conn: &Connection, id: &str, title: &str) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE meetings SET base_title = ?1, title = ?1 WHERE id = ?2",
+        rusqlite::params![title, id],
+    )?;
+    Ok(())
+}
+
+/// Set the summary template id for a meeting (`None` clears it back to Default).
+pub fn set_meeting_template(
+    conn: &Connection,
+    id: &str,
+    template: Option<&str>,
+) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE meetings SET template = ?1 WHERE id = ?2",
+        rusqlite::params![template, id],
+    )?;
+    Ok(())
+}
+
 pub fn insert_segment(
     conn: &Connection,
     meeting_id: &str,
@@ -442,7 +487,7 @@ pub fn insert_segment(
 
 pub fn list_meetings(conn: &Connection) -> Result<Vec<MeetingRow>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, created_at, ended_at, duration_ms
+        "SELECT id, title, created_at, ended_at, duration_ms, template
          FROM meetings ORDER BY created_at DESC",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -452,6 +497,7 @@ pub fn list_meetings(conn: &Connection) -> Result<Vec<MeetingRow>, AppError> {
             created_at: row.get(2)?,
             ended_at: row.get(3)?,
             duration_ms: row.get(4)?,
+            template: row.get(5)?,
         })
     })?;
     let mut meetings = Vec::new();
@@ -495,7 +541,7 @@ pub fn get_meeting_with_segments(
     meeting_id: &str,
 ) -> Result<(MeetingRow, Vec<SegmentRow>, Vec<MeetingDocumentRow>), AppError> {
     let meeting = conn.query_row(
-        "SELECT id, title, created_at, ended_at, duration_ms FROM meetings WHERE id = ?1",
+        "SELECT id, title, created_at, ended_at, duration_ms, template FROM meetings WHERE id = ?1",
         rusqlite::params![meeting_id],
         |row| {
             Ok(MeetingRow {
@@ -504,6 +550,7 @@ pub fn get_meeting_with_segments(
                 created_at: row.get(2)?,
                 ended_at: row.get(3)?,
                 duration_ms: row.get(4)?,
+                template: row.get(5)?,
             })
         },
     )?;
@@ -920,5 +967,27 @@ mod tests {
         // Notes are never indexed.
         let hits = search_meetings(&conn, "indexed", 10).unwrap();
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn meeting_template_persists_and_defaults_null() {
+        let conn = open_db_memory().unwrap();
+        create_meeting(&conn, "m1", Some("Sync"), 1).unwrap();
+
+        // New meetings have no template (→ Default).
+        let (meeting, _, _) = get_meeting_with_segments(&conn, "m1").unwrap();
+        assert_eq!(meeting.template, None);
+
+        // Setting a template round-trips through both read paths.
+        set_meeting_template(&conn, "m1", Some("standup")).unwrap();
+        let (meeting, _, _) = get_meeting_with_segments(&conn, "m1").unwrap();
+        assert_eq!(meeting.template.as_deref(), Some("standup"));
+        let listed = list_meetings(&conn).unwrap();
+        assert_eq!(listed[0].template.as_deref(), Some("standup"));
+
+        // Clearing it returns to NULL.
+        set_meeting_template(&conn, "m1", None).unwrap();
+        let (meeting, _, _) = get_meeting_with_segments(&conn, "m1").unwrap();
+        assert_eq!(meeting.template, None);
     }
 }

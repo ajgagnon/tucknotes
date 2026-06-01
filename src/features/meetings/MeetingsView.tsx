@@ -9,7 +9,7 @@ interface MeetingsViewProps {
   meetingId: string;
   onTitleChange?: (info: MeetingTitleInfo) => void;
   onRecordingStarted?: (meetingId: string) => void;
-  onOpenSettings?: () => void;
+  onOpenSettings?: (section?: string) => void;
 }
 
 export default function MeetingsView({

@@ -13,54 +13,11 @@ use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::token::LlamaToken;
 
 use crate::errors::{lock_or_err, AppError};
+use crate::models::template::OwnedTemplate;
+use crate::services::templates;
 
 const THINK_OPEN: &str = "<think>";
 const THINK_CLOSE: &str = "</think>";
-
-const SYSTEM_PROMPT: &str = "\
-You are a professional, detail-oriented Meeting Analyst AI designed to review meeting transcripts \
-and provide concise, actionable minutes for busy professionals.\n\
-You will be given a full transcript of a meeting, which may include a mix of speakers, topics, and \
-discussion threads. Participants may use informal language, go off-topic, or interleave multiple subjects. \
-Your job is to distill the transcript into the fixed four-section structure described below.\n\
-\n\
-The output is composed of up to four sections. Each section has a fixed `##` markdown heading. \
-The headings, in order, are exactly: `## Summary`, `## Decisions`, `## Action items`, `## Open questions`. \
-Never invent, rename, abbreviate, or reorder these headings.\n\
-\n\
-Rule for emitting a section: if and only if the section has content, emit its `##` heading on its own line, \
-then a blank line, then the body. If a section has no content, omit both the heading and the body entirely. \
-Never emit a heading with no body beneath it. Never emit body content without its heading directly above it.\n\
-\n\
-Section bodies:\n\
-- ## Summary — 2 to 4 sentences of prose (no bullets, no bold). Factual, terse, scannable. What happened, what was decided, and the immediate next steps in plain language. The Summary section is always present.\n\
-- ## Decisions — bullet list (`- `) of choices the group made. Fragments, not full sentences. No \"Decision:\" prefix.\n\
-- ## Action items — GitHub-flavored task list. Every line is exactly `- [ ] action.` (unchecked square brackets, never `- [x]`). NEVER prefix the action with an owner, assignee, name, or role — no `**Name:**`, `Speaker:`, `Owner:`, `Team:`, or similar. The action stands on its own. When the transcript explicitly mentions a concrete deadline (a date, weekday, or relative day like \"tomorrow\"), append a space then an inline-code span containing an em dash and the date, like `` `— Wed` ``. NEVER invent or guess deadlines, and NEVER emit `` `— TBD` ``, `` `— soon` ``, or similar placeholders — if there's no real deadline, just omit the suffix.\n\
-- ## Open questions — bullet list (`- `) of unresolved items, each phrased as a question ending with `?`. If you have any open question to list, you MUST emit the `## Open questions` heading line directly above the bullets.\n\
-\n\
-Rules:\n\
-- Use the em dash character `—` (not `--`) before due dates.\n\
-- Name people only in the Summary and Decisions sections, and only when the transcript clearly attributes the work or decision to them. Action items never carry a name.\n\
-- Skip filler, chit-chat, repeated points, and pleasantries.\n\
-- No editorializing, no summarizing importance, no meta-commentary.\n\
-- Do not invent labels beyond the four section headings.\n\
-- Do not give the output a title — the title is generated separately.\n\
-\n\
-Example shape (illustrative only, do not copy the content):\n\
-## Summary\n\
-The team agreed to ship v2 onboarding on Friday. QA gets the full week for regression. Dev cuts the release branch tonight; Priya drafts the launch email by Wednesday.\n\
-\n\
-## Decisions\n\
-- Ship v2 onboarding on Friday.\n\
-- Hold the redesigned empty state for v2.1 — not a launch blocker.\n\
-\n\
-## Action items\n\
-- [ ] Cut the release branch tonight.\n\
-- [ ] Draft the launch email. `— Wed`\n\
-- [ ] Publish the updated dark-mode docs.\n\
-\n\
-## Open questions\n\
-- Announce in-app, or just over email?";
 
 const MAX_SUMMARIZATION_TOKENS: i32 = 4096;
 const MAX_CHAT_TOKENS: i32 = 1024;
@@ -346,6 +303,7 @@ impl SummarizationService {
         &self,
         model_path: &Path,
         transcript: &str,
+        template: &OwnedTemplate,
         interrupt: &AtomicBool,
         on_token: F,
     ) -> Result<String, AppError>
@@ -359,8 +317,9 @@ impl SummarizationService {
             .as_ref()
             .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
 
+        let system_prompt = templates::build_system_prompt(template);
         let messages_json = serde_json::json!([
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": transcript}
         ])
         .to_string();
@@ -716,7 +675,7 @@ impl SummarizationService {
             .as_ref()
             .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
 
-        let system = "Generate a short, descriptive title (max 8 words) for a meeting based on the summary below. Output ONLY the title text, nothing else. Do not use quotes.";
+        let system = "Generate a very short, descriptive meeting title (5-6 words maximum) from the summary below. Output ONLY the title text — no quotes, no dashes, no colons, nothing else.";
         let messages_json = serde_json::json!([
             {"role": "system", "content": system},
             {"role": "user", "content": summary}
@@ -810,7 +769,12 @@ impl SummarizationService {
         eprintln!("[title-gen] Raw output ({} tokens): {:?}", n_cur - n_prompt as i32, output);
         let title = strip_think_tags(output.trim());
         eprintln!("[title-gen] After strip_think_tags: {:?}", title);
-        let title = title.trim().trim_matches('"').trim().to_string();
+        let title = title
+            .trim()
+            .trim_matches('"')
+            .trim_matches(|c| c == '-' || c == '–' || c == '—')
+            .trim()
+            .to_string();
         eprintln!("[title-gen] Final title: {:?}", title);
         Ok(title)
     }

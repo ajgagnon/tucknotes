@@ -70,6 +70,11 @@ pub struct DownloadProgress {
 pub struct AppSettings {
     pub selected_model: Option<WhisperModel>,
     pub selected_llm_model: Option<LlmModel>,
+    /// App-wide default summary template id (`None` = the Default template).
+    /// `#[serde(default)]` keeps older `settings.json` files (without this
+    /// field) loading.
+    #[serde(default)]
+    pub default_template: Option<String>,
 }
 
 #[cfg(test)]
@@ -106,5 +111,25 @@ mod tests {
             WhisperModel::from_id(WhisperModel::LargeV3TurboQ5.id()),
             Some(WhisperModel::LargeV3TurboQ5)
         );
+    }
+
+    #[test]
+    fn app_settings_default_template_is_optional() {
+        // An older settings.json without `default_template` still loads.
+        let legacy = r#"{"selected_model":null,"selected_llm_model":null}"#;
+        let parsed: AppSettings = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.default_template, None);
+
+        // Default is None.
+        assert_eq!(AppSettings::default().default_template, None);
+
+        // Round-trips when set.
+        let settings = AppSettings {
+            default_template: Some("minutes".to_string()),
+            ..AppSettings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.default_template.as_deref(), Some("minutes"));
     }
 }

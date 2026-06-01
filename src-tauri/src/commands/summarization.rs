@@ -7,10 +7,13 @@ use crate::commands::licensing::require_paid_entitlement;
 use crate::errors::{lock_or_err, AppError};
 use crate::models::licensing::LicensingState;
 use crate::models::llm::LlmModel;
+use crate::models::template::OwnedTemplate;
 use crate::models::{Model, ModelInfo};
 use crate::services::database::{self, DatabaseState};
 use crate::services::model_manager;
 use crate::services::summarization::SummarizationState;
+use crate::services::templates::TemplateInfo;
+use crate::services::template_store;
 
 // ---------------------------------------------------------------------------
 // Event payloads — scoped to a specific meeting ID
@@ -66,6 +69,88 @@ pub fn set_selected_llm_model(app: tauri::AppHandle, model_id: String) -> Result
     model_manager::save_settings(&app, &settings)
 }
 
+// ---------------------------------------------------------------------------
+// Summary template commands
+// ---------------------------------------------------------------------------
+
+/// All summary templates (built-ins + user-created), for the picker / settings
+/// list. Lightweight — section content is fetched per-template for the editor.
+#[tauri::command]
+pub fn list_summary_templates(app: tauri::AppHandle) -> Result<Vec<TemplateInfo>, AppError> {
+    Ok(template_store::list_resolved_app(&app)?
+        .into_iter()
+        .map(|t| TemplateInfo {
+            id: t.id,
+            name: t.name,
+            description: t.description,
+            builtin: t.builtin,
+        })
+        .collect())
+}
+
+/// Full content of one template, for the editor.
+#[tauri::command]
+pub fn get_summary_template(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<OwnedTemplate, AppError> {
+    template_store::get_resolved_app(&app, &id)?
+        .ok_or_else(|| AppError::InvalidTemplate(format!("Unknown template \"{id}\"")))
+}
+
+/// Create a new user template; returns it with its assigned id.
+#[tauri::command]
+pub fn create_summary_template(
+    app: tauri::AppHandle,
+    template: OwnedTemplate,
+) -> Result<OwnedTemplate, AppError> {
+    template_store::create_app(&app, template)
+}
+
+/// Update an existing template (built-in override or user template).
+#[tauri::command]
+pub fn update_summary_template(
+    app: tauri::AppHandle,
+    template: OwnedTemplate,
+) -> Result<(), AppError> {
+    template_store::update_app(&app, template)
+}
+
+/// Reset a built-in template back to its shipped defaults; returns the seed.
+#[tauri::command]
+pub fn reset_summary_template(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<OwnedTemplate, AppError> {
+    template_store::reset_app(&app, &id)
+}
+
+/// Delete a user template. Clears it from the app-wide default if it was set.
+#[tauri::command]
+pub fn delete_summary_template(app: tauri::AppHandle, id: String) -> Result<(), AppError> {
+    template_store::delete_app(&app, &id)?;
+    let mut settings = model_manager::load_settings(&app)?;
+    if settings.default_template.as_deref() == Some(id.as_str()) {
+        settings.default_template = None;
+        model_manager::save_settings(&app, &settings)?;
+    }
+    Ok(())
+}
+
+/// The app-wide default template id (`None` = Default).
+#[tauri::command]
+pub fn get_default_template(app: tauri::AppHandle) -> Result<Option<String>, AppError> {
+    let settings = model_manager::load_settings(&app)?;
+    Ok(settings.default_template)
+}
+
+#[tauri::command]
+pub fn set_default_template(app: tauri::AppHandle, template: String) -> Result<(), AppError> {
+    let mut settings = model_manager::load_settings(&app)?;
+    settings.default_template = Some(template);
+    model_manager::save_settings(&app, &settings)
+}
+
 #[tauri::command]
 pub fn remove_llm_model(app: tauri::AppHandle, model_id: String) -> Result<(), AppError> {
     let model =
@@ -88,7 +173,7 @@ pub async fn update_meeting_title(
     title: String,
 ) -> Result<(), AppError> {
     let conn = lock_or_err(&db_state.conn)?;
-    database::update_meeting_title(&conn, &meeting_id, &title)
+    database::set_user_title(&conn, &meeting_id, &title)
 }
 
 // ---------------------------------------------------------------------------
@@ -123,8 +208,16 @@ pub async fn summarize_meeting(
     summ_state: tauri::State<'_, SummarizationState>,
     licensing: tauri::State<'_, LicensingState>,
     meeting_id: String,
+    template: Option<String>,
 ) -> Result<String, AppError> {
     require_paid_entitlement(&licensing)?;
+
+    // Persist the chosen template up front so it's the single source of truth:
+    // both this run and any queued run resolve it from the DB in do_summarize.
+    {
+        let conn = lock_or_err(&db_state.conn)?;
+        database::set_meeting_template(&conn, &meeting_id, template.as_deref())?;
+    }
 
     // Single lock scope: check for duplicates and either start or enqueue atomically.
     {
@@ -182,11 +275,11 @@ async fn do_summarize(
     summ_state: &SummarizationState,
     meeting_id: &str,
 ) -> Result<String, AppError> {
-    // 1. Load meeting transcript from DB
-    let transcript = {
+    // 1. Load meeting transcript + selected template from DB
+    let (transcript, template_id) = {
         let conn = lock_or_err(&db_state.conn)?;
-        let (_, segments, _) = database::get_meeting_with_segments(&conn, meeting_id)?;
-        segments
+        let (meeting, segments, _) = database::get_meeting_with_segments(&conn, meeting_id)?;
+        let transcript = segments
             .iter()
             .map(|s| {
                 let speaker = if s.source == "system" {
@@ -197,7 +290,8 @@ async fn do_summarize(
                 format!("{speaker}: {}", s.text)
             })
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n");
+        (transcript, meeting.template)
     };
 
     if transcript.is_empty() {
@@ -215,6 +309,9 @@ async fn do_summarize(
         AppError::SummarizationFailed("No LLM model selected or downloaded".into())
     })?;
 
+    // Resolve the template (NULL / unknown / deleted → Default).
+    let template = template_store::resolve_owned(&base_dir, template_id.as_deref())?;
+
     // 3. Run summarization with streaming (events scoped to meeting_id).
     // The interrupt flag is shared with the chatbot; if chat sets it, we exit
     // early with AppError::Interrupted and the caller re-queues this meeting.
@@ -225,7 +322,7 @@ async fn do_summarize(
     let mid_owned = meeting_id.to_owned();
 
     let summary = tokio::task::spawn_blocking(move || {
-        service.summarize(&model_path, &transcript, &interrupt, |token, is_thinking| {
+        service.summarize(&model_path, &transcript, &template, &interrupt, |token, is_thinking| {
             let event_name = if is_thinking {
                 "summary:thinking"
             } else {
@@ -260,57 +357,98 @@ async fn do_summarize(
 
     tokio::spawn(async move {
         let mid_for_title = mid.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            eprintln!("[title-gen] Starting title generation…");
-            service.generate_title(&model_path_clone, &summary_for_title)
-        })
-        .await;
 
-        match result {
-            Ok(Ok(ref title)) if !title.is_empty() => {
-                eprintln!("[title-gen] Generated title: {:?}", title);
-                let final_title = app_title
-                    .try_state::<DatabaseState>()
-                    .and_then(|db| {
-                        let conn = db.conn.lock().ok()?;
-                        let existing = database::get_meeting_title(&conn, &mid_for_title)
-                            .ok()
-                            .flatten();
-                        let combined = match existing.as_deref().map(str::trim) {
-                            Some(t) if !t.is_empty() && t != "Recording" => {
-                                format!("{t} — {title}")
-                            }
-                            _ => title.clone(),
-                        };
-                        let _ = database::update_meeting_title(
-                            &conn,
-                            &mid_for_title,
-                            &combined,
-                        );
-                        Some(combined)
-                    })
-                    .unwrap_or_else(|| title.clone());
-                let _ = app_title.emit(
-                    "summary:title",
-                    TitlePayload {
-                        meeting_id: &mid_for_title,
-                        title: final_title.as_str(),
-                    },
-                );
-            }
-            other => {
-                match &other {
-                    Ok(Ok(title)) => eprintln!("[title-gen] Title was empty after processing: {:?}", title),
-                    Ok(Err(e)) => eprintln!("[title-gen] Title generation failed: {:?}", e),
-                    Err(e) => eprintln!("[title-gen] Title gen task panicked: {:?}", e),
+        // The title is enhanced only once. Read the current title and the
+        // user's base title up front: if a suffix was already appended (the
+        // displayed title differs from the base), this is a re-summarization —
+        // leave the title untouched.
+        let (base_title, already_enhanced) = app_title
+            .try_state::<DatabaseState>()
+            .and_then(|db| {
+                let conn = db.conn.lock().ok()?;
+                let base = database::get_base_title(&conn, &mid_for_title)
+                    .ok()
+                    .flatten();
+                let current = database::get_meeting_title(&conn, &mid_for_title)
+                    .ok()
+                    .flatten();
+                let enhanced = match current.as_deref().map(str::trim) {
+                    Some(t) if !t.is_empty() && t != "Recording" => {
+                        base.as_deref().map(str::trim) != Some(t)
+                    }
+                    _ => false,
+                };
+                Some((base, enhanced))
+            })
+            .unwrap_or((None, false));
+
+        if already_enhanced {
+            // Re-summarization: keep the existing title, just emit it so the
+            // frontend clears its "generating title" spinner.
+            eprintln!("[title-gen] Title already enhanced; skipping regeneration.");
+            let current = app_title
+                .try_state::<DatabaseState>()
+                .and_then(|db| {
+                    let conn = db.conn.lock().ok()?;
+                    database::get_meeting_title(&conn, &mid_for_title)
+                        .ok()
+                        .flatten()
+                })
+                .unwrap_or_default();
+            let _ = app_title.emit(
+                "summary:title",
+                TitlePayload {
+                    meeting_id: &mid_for_title,
+                    title: current.as_str(),
+                },
+            );
+        } else {
+            let result = tokio::task::spawn_blocking(move || {
+                eprintln!("[title-gen] Starting title generation…");
+                service.generate_title(&model_path_clone, &summary_for_title)
+            })
+            .await;
+
+            match result {
+                Ok(Ok(ref title)) if !title.is_empty() => {
+                    eprintln!("[title-gen] Generated title: {:?}", title);
+                    let combined = match base_title.as_deref().map(str::trim) {
+                        Some(t) if !t.is_empty() && t != "Recording" => {
+                            format!("{t} — {title}")
+                        }
+                        _ => title.clone(),
+                    };
+                    if let Some(db) = app_title.try_state::<DatabaseState>() {
+                        if let Ok(conn) = db.conn.lock() {
+                            let _ = database::update_meeting_title(
+                                &conn,
+                                &mid_for_title,
+                                &combined,
+                            );
+                        }
+                    }
+                    let _ = app_title.emit(
+                        "summary:title",
+                        TitlePayload {
+                            meeting_id: &mid_for_title,
+                            title: combined.as_str(),
+                        },
+                    );
                 }
-                let _ = app_title.emit(
-                    "summary:title",
-                    TitlePayload {
-                        meeting_id: &mid_for_title,
-                        title: "",
-                    },
-                );
+                other => {
+                    match &other {
+                        Ok(Ok(title)) => eprintln!("[title-gen] Title was empty after processing: {:?}", title),
+                        Ok(Err(e)) => eprintln!("[title-gen] Title generation failed: {:?}", e),
+                        Err(e) => eprintln!("[title-gen] Title gen task panicked: {:?}", e),
+                    }
+                    let _ = app_title.emit(
+                        "summary:title",
+                        TitlePayload {
+                            meeting_id: &mid_for_title,
+                            title: "",
+                        },
+                    );
+                }
             }
         }
 

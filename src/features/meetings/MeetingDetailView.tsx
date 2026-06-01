@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles, Settings, Settings2, Play } from "lucide-react";
+import { Sparkles, Settings2, Play, MoreHorizontal } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { invoke } from "@tauri-apps/api/core";
@@ -11,6 +11,23 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { SETTINGS_SECTION_TEMPLATES } from "@/features/settings/TemplateSection";
 import {
   type MeetingDetail,
   type MeetingTitleInfo,
@@ -29,6 +46,8 @@ import { cn } from "@/lib/utils";
 
 /** Sentinel value for the Transcript tab (not a `MeetingDocument` id). */
 const TRANSCRIPT_TAB = "__transcript__";
+/// Sentinel value for the "Edit templates…" action in the template Select.
+const EDIT_TEMPLATES_VALUE = "__edit_templates__";
 
 interface MeetingDetailViewProps {
   detail: MeetingDetail;
@@ -43,8 +62,9 @@ interface MeetingDetailViewProps {
   onRefreshMeeting?: () => void | Promise<void>;
   /** Merge persisted document body into local meeting detail (notes autosave). */
   onMeetingDocumentBodyUpdated?: (documentId: string, body: string) => void;
-  /** Switch the app to the settings view (e.g. to change the LLM model). */
-  onOpenSettings?: () => void;
+  /** Switch the app to the settings view (e.g. to change the LLM model).
+   *  Pass a section id to deep-link/scroll to a specific settings section. */
+  onOpenSettings?: (section?: string) => void;
 }
 
 export function MeetingDetailView({
@@ -140,6 +160,9 @@ export function MeetingDetailView({
     llmModelReady,
     currentSummary,
     handleSummarize,
+    templates,
+    selectedTemplate,
+    handleTemplateChange,
   } = useMeetingSummarization(detail.meeting, summaryBodyStored, onTitleChange);
 
   const leaveTranscriptTab = useCallback(() => {
@@ -498,27 +521,66 @@ export function MeetingDetailView({
 
         {!isLiveRecording && showSummarizeAction && (
           <div className="mt-0 shrink-0 flex flex-row items-center gap-2 border-t px-4 py-3">
-            <button
-              type="button"
-              onClick={() => void handleSummarize()}
-              className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-muted-foreground hover:underline"
-            >
-              <Sparkles className="size-3 shrink-0" />
-              {currentSummary ? "Resummarize" : "Summarize"}
-            </button>
-            {onOpenSettings && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="shrink-0 text-muted-foreground hover:text-foreground"
-                aria-label="Change summarization model"
-                title="Change summarization model"
-                onClick={onOpenSettings}
-              >
-                <Settings className="size-4" />
-              </Button>
+            {templates.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <Select
+                  value={selectedTemplate}
+                  onValueChange={(value) => {
+                    if (value === EDIT_TEMPLATES_VALUE) {
+                      onOpenSettings?.(SETTINGS_SECTION_TEMPLATES);
+                      return;
+                    }
+                    void handleTemplateChange(value as string);
+                  }}
+                >
+                  <SelectTrigger size="sm" aria-label="Summary template">
+                    <SelectValue>
+                      {(value: string | null) =>
+                        templates.find((t) => t.id === value)?.name ?? "Recap"
+                      }
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent className="min-w-52">
+                    <SelectGroup>
+                      <SelectLabel>Templates</SelectLabel>
+                      {templates.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {t.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                    {onOpenSettings && (
+                      <SelectGroup>
+                        <SelectSeparator />
+                        <SelectItem value={EDIT_TEMPLATES_VALUE}>
+                          Edit templates…
+                        </SelectItem>
+                      </SelectGroup>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
             )}
+
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="More summary actions"
+                  />
+                }
+              >
+                <MoreHorizontal />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => void handleSummarize()}>
+                  <Sparkles className="size-2.5" />
+                  {currentSummary ? "Resummarize" : "Summarize"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {summaryError && (
               <p className="min-w-0 flex-1 truncate text-xs text-red-500 dark:text-red-400">
                 {summaryError}
