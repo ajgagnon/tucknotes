@@ -1,7 +1,12 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { EditorContent, EditorContext, useEditor } from "@tiptap/react"
+import {
+  EditorContent,
+  EditorContext,
+  useEditor,
+  type Editor,
+} from "@tiptap/react"
 
 // --- Tiptap Core Extensions ---
 import { Markdown } from "@tiptap/markdown"
@@ -11,6 +16,7 @@ import {
   MeetingNoteHeading,
   MeetingNoteParagraph,
 } from "@/editor/extensions/meeting-note-elapsed"
+import { SummaryHoverHighlight } from "@/editor/extensions/summary-hover-highlight"
 import { Image } from "@tiptap/extension-image"
 import { TaskItem, TaskList } from "@tiptap/extension-list"
 import { TextAlign } from "@tiptap/extension-text-align"
@@ -193,6 +199,10 @@ export type SimpleEditorProps = {
   hideThemeToggle?: boolean
   /** Meeting notes: elapsed stamping + timestamp UI (only used from `MeetingNotesEditor`). */
   meetingNote?: MeetingNoteEditorConfig | null
+  /** Load the per-block hover-highlight plugin (AI summary only). */
+  summaryHover?: boolean
+  /** Surfaces the editor instance to the parent (e.g. to drive hover decorations). */
+  onEditorReady?: (editor: Editor | null) => void
 }
 
 export function SimpleEditor({
@@ -200,6 +210,8 @@ export function SimpleEditor({
   onMarkdownChange,
   hideThemeToggle = false,
   meetingNote = null,
+  summaryHover = false,
+  onEditorReady,
 }: SimpleEditorProps = {}) {
   const isMobile = useIsBreakpoint()
   const { height } = useWindowSize()
@@ -212,6 +224,9 @@ export function SimpleEditor({
 
   const meetingNoteRef = useRef(meetingNote)
   meetingNoteRef.current = meetingNote
+
+  const onEditorReadyRef = useRef(onEditorReady)
+  onEditorReadyRef.current = onEditorReady
 
   /** Stable identity: parent often passes a new object when `stampElapsedSecs` ticks; extension list must not rebuild or the editor remounts and focus is lost. */
   const meetingNoteMode = meetingNote != null
@@ -256,8 +271,9 @@ export function SimpleEditor({
       Subscript,
       Selection,
       Markdown,
+      ...(summaryHover ? [SummaryHoverHighlight] : []),
     ]
-  }, [meetingNoteMode])
+  }, [meetingNoteMode, summaryHover])
 
   const editor = useEditor(
     {
@@ -301,6 +317,10 @@ export function SimpleEditor({
         emit(editor.getMarkdown())
       }
     }
+  }, [editor])
+
+  useEffect(() => {
+    onEditorReadyRef.current?.(editor ?? null)
   }, [editor])
 
   const rect = useCursorVisibility({

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import type { Editor } from "@tiptap/react";
 import { Check, Copy, MessageCircleQuestion } from "lucide-react";
 import { SimpleEditor } from "@/editor/templates/simple/simple-editor";
+import { setSummaryHover } from "@/editor/extensions/summary-hover-highlight";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -18,7 +20,12 @@ const DEBOUNCE_MS = 500;
 const BLOCK_SELECTOR =
   ".ProseMirror > p, .ProseMirror > h1, .ProseMirror > h2, .ProseMirror > h3, .ProseMirror > h4, .ProseMirror li";
 
-type HoveredBlock = { rect: DOMRect; isTask: boolean; text: string };
+type HoveredBlock = {
+  el: HTMLElement;
+  rect: DOMRect;
+  isTask: boolean;
+  text: string;
+};
 
 function readBlockText(block: HTMLElement): string {
   // For task/list items the visible text lives in an inner p/div; the checkbox
@@ -57,6 +64,7 @@ export function MeetingDocumentEditor({
   const meetingNote = useMemo(() => ({ stampElapsedSecs }), [stampElapsedSecs]);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<Editor | null>(null);
   const { openAskTuck } = useAskTuck();
   const [hovered, setHovered] = useState<HoveredBlock | null>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -107,6 +115,7 @@ export function MeetingDocumentEditor({
       const text = readBlockText(block);
       if (!text) return;
       setHovered({
+        el: block,
         rect: block.getBoundingClientRect(),
         isTask: !!block.closest('ul[data-type="taskList"]'),
         text,
@@ -127,6 +136,21 @@ export function MeetingDocumentEditor({
       cancelClose();
     };
   }, [summaryActions, cancelClose, scheduleClose]);
+
+  // Drive the block's highlight band from `hovered` via a ProseMirror decoration
+  // (a manual class would be stripped by PM's DOMObserver). Sourcing it from the
+  // same state that keeps the toolbar alive lets the band persist while the cursor
+  // is over the detached action toolbar. Deduped by element so intra-block
+  // `mouseover` events don't dispatch a transaction each time.
+  const activeDecoElRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || editor.isDestroyed) return;
+    const el = hovered?.el ?? null;
+    if (el === activeDecoElRef.current) return;
+    activeDecoElRef.current = el;
+    setSummaryHover(editor, el);
+  }, [hovered]);
 
   const persist = useCallback(
     async (markdown: string) => {
@@ -183,6 +207,10 @@ export function MeetingDocumentEditor({
         onMarkdownChange={onMarkdownChange}
         hideThemeToggle
         meetingNote={meetingNote}
+        summaryHover={summaryActions}
+        onEditorReady={(ed) => {
+          editorRef.current = ed;
+        }}
       />
       {summaryActions && hovered && (
         <SummaryBlockActions
@@ -227,8 +255,10 @@ function SummaryBlockActions({
   }, [block.text]);
 
   return (
+    // Anchor the toolbar's right edge just inside the block's right edge, and
+    // vertically center it on the block (top is the block's midpoint).
     <div
-      className="summary-block-actions"
+      className="fixed z-50 flex items-center gap-0.5 rounded-lg bg-popover p-0.5 text-popover-foreground [transform:translate(calc(-100%_-_0.25rem),-50%)]"
       style={{
         top: block.rect.top + block.rect.height / 2,
         left: block.rect.right,
