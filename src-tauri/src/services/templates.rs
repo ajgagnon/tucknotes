@@ -74,14 +74,14 @@ const DEFAULT_EXAMPLE: &str = "Example shape (illustrative only, do not copy the
 ## Summary
 The team agreed to ship v2 onboarding on Friday. QA gets the full week for regression. Dev cuts the release branch tonight; Priya drafts the launch email by Wednesday.
 
+## Action items
+- [ ] **You:** Cut the release branch tonight.
+- [ ] **Them:** Draft the launch email. `— Wed`
+- [ ] Publish the updated dark-mode docs.
+
 ## Decisions
 - Ship v2 onboarding on Friday.
 - Hold the redesigned empty state for v2.1 — not a launch blocker.
-
-## Action items
-- [ ] Cut the release branch tonight.
-- [ ] Draft the launch email. `— Wed`
-- [ ] Publish the updated dark-mode docs.
 
 ## Open questions
 - Announce in-app, or just over email?";
@@ -107,7 +107,7 @@ pub static SECTION_DECISIONS: Section = Section {
 pub static SECTION_ACTION_ITEMS: Section = Section {
     id: "action_items",
     heading: "Action items",
-    body_spec: "- ## Action items — GitHub-flavored task list. Every line is exactly `- [ ] action.` (unchecked square brackets, never `- [x]`). NEVER prefix the action with an owner, assignee, name, or role — no `**Name:**`, `Speaker:`, `Owner:`, `Team:`, or similar. The action stands on its own. When the transcript explicitly mentions a concrete deadline (a date, weekday, or relative day like \"tomorrow\"), append a space then an inline-code span containing an em dash and the date, like `` `— Wed` ``. NEVER invent or guess deadlines, and NEVER emit `` `— TBD` ``, `` `— soon` ``, or similar placeholders — if there's no real deadline, just omit the suffix.",
+    body_spec: "- ## Action items — GitHub-flavored task list of work that is still outstanding. Every line is exactly `- [ ] action.` (unchecked square brackets, never `- [x]`). Only list tasks that still need to be done — exclude anything the transcript indicates is already finished or completed. When you are at least 95% confident who owns a task, prefix the action with a bold assignee: `**You:**` if the meeting recorder (the \"You\" speaker) owns it, or `**Them:**` if another participant owns it. When ownership is unclear or you are less than 95% confident, omit the prefix entirely — never guess. Do not use any other attribution (no personal names, `Owner:`, `Speaker:`, `Team:`, or roles). When the transcript explicitly mentions a concrete deadline (a date, weekday, or relative day like \"tomorrow\"), append a space then an inline-code span containing an em dash and the date, like `` `— Wed` ``, at the end of the line. NEVER invent or guess deadlines, and NEVER emit `` `— TBD` ``, `` `— soon` ``, or similar placeholders — if there's no real deadline, just omit the suffix.",
     always_present: false,
 };
 
@@ -170,8 +170,8 @@ pub static DEFAULT_TEMPLATE: SummaryTemplate = SummaryTemplate {
     description: "General-purpose summary with decisions, action items, and open questions.",
     sections: &[
         &SECTION_SUMMARY,
-        &SECTION_DECISIONS,
         &SECTION_ACTION_ITEMS,
+        &SECTION_DECISIONS,
         &SECTION_OPEN_QUESTIONS,
     ],
     example: Some(DEFAULT_EXAMPLE),
@@ -356,7 +356,7 @@ pub fn build_system_prompt(template: &OwnedTemplate) -> String {
 
     // (E) Rules.
     blocks.push(format!(
-        "Rules:\n- Use the em dash character `—` (not `--`) before due dates.\n- Name people only in the Summary and Decisions sections, and only when the transcript clearly attributes the work or decision to them. Action items never carry a name.\n- Skip filler, chit-chat, repeated points, and pleasantries.\n- No editorializing, no summarizing importance, no meta-commentary.\n- Do not invent labels beyond the {count} section headings.\n- Do not give the output a title — the title is generated separately."
+        "Rules:\n- Use the em dash character `—` (not `--`) before due dates.\n- Name people only in the Summary and Decisions sections, and only when the transcript clearly attributes the work or decision to them. In Action items, the only allowed attribution is the `**You:**` / `**Them:**` assignee prefix — never a personal name.\n- Skip filler, chit-chat, repeated points, and pleasantries.\n- No editorializing, no summarizing importance, no meta-commentary.\n- Do not invent labels beyond the {count} section headings.\n- Do not give the output a title — the title is generated separately."
     ));
 
     // (F) Examples. Per-section examples (user templates) take precedence; the
@@ -393,7 +393,7 @@ discussion threads. Participants may use informal language, go off-topic, or int
 Your job is to distill the transcript into the fixed four-section structure described below.\n\
 \n\
 The output is composed of up to four sections. Each section has a fixed `##` markdown heading. \
-The headings, in order, are exactly: `## Summary`, `## Decisions`, `## Action items`, `## Open questions`. \
+The headings, in order, are exactly: `## Summary`, `## Action items`, `## Decisions`, `## Open questions`. \
 Never invent, rename, abbreviate, or reorder these headings.\n\
 \n\
 Rule for emitting a section: if and only if the section has content, emit its `##` heading on its own line, \
@@ -402,13 +402,13 @@ Never emit a heading with no body beneath it. Never emit body content without it
 \n\
 Section bodies:\n\
 - ## Summary — 2 to 4 sentences of prose (no bullets, no bold). Factual, terse, scannable. What happened, what was decided, and the immediate next steps in plain language. The Summary section is always present.\n\
+- ## Action items — GitHub-flavored task list of work that is still outstanding. Every line is exactly `- [ ] action.` (unchecked square brackets, never `- [x]`). Only list tasks that still need to be done — exclude anything the transcript indicates is already finished or completed. When you are at least 95% confident who owns a task, prefix the action with a bold assignee: `**You:**` if the meeting recorder (the \"You\" speaker) owns it, or `**Them:**` if another participant owns it. When ownership is unclear or you are less than 95% confident, omit the prefix entirely — never guess. Do not use any other attribution (no personal names, `Owner:`, `Speaker:`, `Team:`, or roles). When the transcript explicitly mentions a concrete deadline (a date, weekday, or relative day like \"tomorrow\"), append a space then an inline-code span containing an em dash and the date, like `` `— Wed` ``, at the end of the line. NEVER invent or guess deadlines, and NEVER emit `` `— TBD` ``, `` `— soon` ``, or similar placeholders — if there's no real deadline, just omit the suffix.\n\
 - ## Decisions — bullet list (`- `) of choices the group made. Fragments, not full sentences. No \"Decision:\" prefix.\n\
-- ## Action items — GitHub-flavored task list. Every line is exactly `- [ ] action.` (unchecked square brackets, never `- [x]`). NEVER prefix the action with an owner, assignee, name, or role — no `**Name:**`, `Speaker:`, `Owner:`, `Team:`, or similar. The action stands on its own. When the transcript explicitly mentions a concrete deadline (a date, weekday, or relative day like \"tomorrow\"), append a space then an inline-code span containing an em dash and the date, like `` `— Wed` ``. NEVER invent or guess deadlines, and NEVER emit `` `— TBD` ``, `` `— soon` ``, or similar placeholders — if there's no real deadline, just omit the suffix.\n\
 - ## Open questions — bullet list (`- `) of unresolved items, each phrased as a question ending with `?`. If you have any open question to list, you MUST emit the `## Open questions` heading line directly above the bullets.\n\
 \n\
 Rules:\n\
 - Use the em dash character `—` (not `--`) before due dates.\n\
-- Name people only in the Summary and Decisions sections, and only when the transcript clearly attributes the work or decision to them. Action items never carry a name.\n\
+- Name people only in the Summary and Decisions sections, and only when the transcript clearly attributes the work or decision to them. In Action items, the only allowed attribution is the `**You:**` / `**Them:**` assignee prefix — never a personal name.\n\
 - Skip filler, chit-chat, repeated points, and pleasantries.\n\
 - No editorializing, no summarizing importance, no meta-commentary.\n\
 - Do not invent labels beyond the four section headings.\n\
@@ -418,14 +418,14 @@ Example shape (illustrative only, do not copy the content):\n\
 ## Summary\n\
 The team agreed to ship v2 onboarding on Friday. QA gets the full week for regression. Dev cuts the release branch tonight; Priya drafts the launch email by Wednesday.\n\
 \n\
+## Action items\n\
+- [ ] **You:** Cut the release branch tonight.\n\
+- [ ] **Them:** Draft the launch email. `— Wed`\n\
+- [ ] Publish the updated dark-mode docs.\n\
+\n\
 ## Decisions\n\
 - Ship v2 onboarding on Friday.\n\
 - Hold the redesigned empty state for v2.1 — not a launch blocker.\n\
-\n\
-## Action items\n\
-- [ ] Cut the release branch tonight.\n\
-- [ ] Draft the launch email. `— Wed`\n\
-- [ ] Publish the updated dark-mode docs.\n\
 \n\
 ## Open questions\n\
 - Announce in-app, or just over email?";

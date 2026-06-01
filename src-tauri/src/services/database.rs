@@ -190,6 +190,11 @@ fn migrate_database(conn: &Connection) -> Result<(), AppError> {
     if !meetings_table_has_column(conn, "template")? {
         conn.execute("ALTER TABLE meetings ADD COLUMN template TEXT", [])?;
     }
+    if !meetings_table_has_column(conn, "base_title")? {
+        // Holds the user's entered title; the AI suffix is appended to it.
+        // No backfill: legacy rows keep NULL and are treated as already-final.
+        conn.execute("ALTER TABLE meetings ADD COLUMN base_title TEXT", [])?;
+    }
     migrate_meeting_documents_to_summary_schema(conn)?;
     backfill_default_documents(conn)?;
     init_fts_index(conn)?;
@@ -333,6 +338,16 @@ pub fn get_meeting_title(conn: &Connection, id: &str) -> Result<Option<String>, 
     Ok(title)
 }
 
+/// The user-entered base title, which the AI suffix is appended to.
+pub fn get_base_title(conn: &Connection, id: &str) -> Result<Option<String>, AppError> {
+    let title = conn.query_row(
+        "SELECT base_title FROM meetings WHERE id = ?1",
+        rusqlite::params![id],
+        |row| row.get::<_, Option<String>>(0),
+    )?;
+    Ok(title)
+}
+
 pub fn end_meeting(
     conn: &Connection,
     id: &str,
@@ -424,6 +439,17 @@ pub fn update_meeting_title(
 ) -> Result<(), AppError> {
     conn.execute(
         "UPDATE meetings SET title = ?1 WHERE id = ?2",
+        rusqlite::params![title, id],
+    )?;
+    Ok(())
+}
+
+/// Set the title from a user edit: both `base_title` (the value the AI suffix is
+/// appended to) and the displayed `title` become the entered value, clearing any
+/// previously appended AI suffix until the next summarization.
+pub fn set_user_title(conn: &Connection, id: &str, title: &str) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE meetings SET base_title = ?1, title = ?1 WHERE id = ?2",
         rusqlite::params![title, id],
     )?;
     Ok(())

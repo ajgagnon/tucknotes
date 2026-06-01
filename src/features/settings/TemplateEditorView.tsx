@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { message } from "@tauri-apps/plugin-dialog";
 import { ArrowLeft, ArrowUp, ArrowDown, Trash2, Plus } from "lucide-react";
@@ -34,10 +34,16 @@ function blankTemplate(): OwnedTemplate {
 export function TemplateEditorView({
   templateId,
   onDone,
+  onDirtyChange,
 }: {
   templateId?: string;
   onDone: () => void;
+  onDirtyChange: (dirty: boolean) => void;
 }) {
+  // Snapshot of the saved/initial template; used to detect unsaved edits.
+  const initialRef = useRef<string | null>(
+    templateId ? null : JSON.stringify(blankTemplate()),
+  );
   const [template, setTemplate] = useState<OwnedTemplate | null>(
     templateId ? null : blankTemplate(),
   );
@@ -51,7 +57,10 @@ export function TemplateEditorView({
         const t = await invoke<OwnedTemplate>("get_summary_template", {
           id: templateId,
         });
-        if (!cancelled) setTemplate(t);
+        if (!cancelled) {
+          initialRef.current = JSON.stringify(t);
+          setTemplate(t);
+        }
       } catch {
         if (!cancelled) onDone();
       }
@@ -60,6 +69,18 @@ export function TemplateEditorView({
       cancelled = true;
     };
   }, [templateId, onDone]);
+
+  const isDirty =
+    template != null &&
+    initialRef.current != null &&
+    JSON.stringify(template) !== initialRef.current;
+
+  // Report dirtiness up so navigation can warn before discarding edits, and
+  // clear the flag when the editor unmounts.
+  useEffect(() => {
+    onDirtyChange(isDirty);
+    return () => onDirtyChange(false);
+  }, [isDirty, onDirtyChange]);
 
   if (!template) {
     return (
@@ -138,6 +159,9 @@ export function TemplateEditorView({
         ? "create_summary_template"
         : "update_summary_template";
       await invoke(command, { template });
+      // Mark clean so the navigation triggered by onDone isn't blocked.
+      initialRef.current = JSON.stringify(template);
+      onDirtyChange(false);
       onDone();
     } catch (e) {
       await message(typeof e === "string" ? e : "Failed to save template.", {

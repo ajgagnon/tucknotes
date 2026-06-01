@@ -173,7 +173,7 @@ pub async fn update_meeting_title(
     title: String,
 ) -> Result<(), AppError> {
     let conn = lock_or_err(&db_state.conn)?;
-    database::update_meeting_title(&conn, &meeting_id, &title)
+    database::set_user_title(&conn, &meeting_id, &title)
 }
 
 // ---------------------------------------------------------------------------
@@ -357,57 +357,98 @@ async fn do_summarize(
 
     tokio::spawn(async move {
         let mid_for_title = mid.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            eprintln!("[title-gen] Starting title generation…");
-            service.generate_title(&model_path_clone, &summary_for_title)
-        })
-        .await;
 
-        match result {
-            Ok(Ok(ref title)) if !title.is_empty() => {
-                eprintln!("[title-gen] Generated title: {:?}", title);
-                let final_title = app_title
-                    .try_state::<DatabaseState>()
-                    .and_then(|db| {
-                        let conn = db.conn.lock().ok()?;
-                        let existing = database::get_meeting_title(&conn, &mid_for_title)
-                            .ok()
-                            .flatten();
-                        let combined = match existing.as_deref().map(str::trim) {
-                            Some(t) if !t.is_empty() && t != "Recording" => {
-                                format!("{t} — {title}")
-                            }
-                            _ => title.clone(),
-                        };
-                        let _ = database::update_meeting_title(
-                            &conn,
-                            &mid_for_title,
-                            &combined,
-                        );
-                        Some(combined)
-                    })
-                    .unwrap_or_else(|| title.clone());
-                let _ = app_title.emit(
-                    "summary:title",
-                    TitlePayload {
-                        meeting_id: &mid_for_title,
-                        title: final_title.as_str(),
-                    },
-                );
-            }
-            other => {
-                match &other {
-                    Ok(Ok(title)) => eprintln!("[title-gen] Title was empty after processing: {:?}", title),
-                    Ok(Err(e)) => eprintln!("[title-gen] Title generation failed: {:?}", e),
-                    Err(e) => eprintln!("[title-gen] Title gen task panicked: {:?}", e),
+        // The title is enhanced only once. Read the current title and the
+        // user's base title up front: if a suffix was already appended (the
+        // displayed title differs from the base), this is a re-summarization —
+        // leave the title untouched.
+        let (base_title, already_enhanced) = app_title
+            .try_state::<DatabaseState>()
+            .and_then(|db| {
+                let conn = db.conn.lock().ok()?;
+                let base = database::get_base_title(&conn, &mid_for_title)
+                    .ok()
+                    .flatten();
+                let current = database::get_meeting_title(&conn, &mid_for_title)
+                    .ok()
+                    .flatten();
+                let enhanced = match current.as_deref().map(str::trim) {
+                    Some(t) if !t.is_empty() && t != "Recording" => {
+                        base.as_deref().map(str::trim) != Some(t)
+                    }
+                    _ => false,
+                };
+                Some((base, enhanced))
+            })
+            .unwrap_or((None, false));
+
+        if already_enhanced {
+            // Re-summarization: keep the existing title, just emit it so the
+            // frontend clears its "generating title" spinner.
+            eprintln!("[title-gen] Title already enhanced; skipping regeneration.");
+            let current = app_title
+                .try_state::<DatabaseState>()
+                .and_then(|db| {
+                    let conn = db.conn.lock().ok()?;
+                    database::get_meeting_title(&conn, &mid_for_title)
+                        .ok()
+                        .flatten()
+                })
+                .unwrap_or_default();
+            let _ = app_title.emit(
+                "summary:title",
+                TitlePayload {
+                    meeting_id: &mid_for_title,
+                    title: current.as_str(),
+                },
+            );
+        } else {
+            let result = tokio::task::spawn_blocking(move || {
+                eprintln!("[title-gen] Starting title generation…");
+                service.generate_title(&model_path_clone, &summary_for_title)
+            })
+            .await;
+
+            match result {
+                Ok(Ok(ref title)) if !title.is_empty() => {
+                    eprintln!("[title-gen] Generated title: {:?}", title);
+                    let combined = match base_title.as_deref().map(str::trim) {
+                        Some(t) if !t.is_empty() && t != "Recording" => {
+                            format!("{t} — {title}")
+                        }
+                        _ => title.clone(),
+                    };
+                    if let Some(db) = app_title.try_state::<DatabaseState>() {
+                        if let Ok(conn) = db.conn.lock() {
+                            let _ = database::update_meeting_title(
+                                &conn,
+                                &mid_for_title,
+                                &combined,
+                            );
+                        }
+                    }
+                    let _ = app_title.emit(
+                        "summary:title",
+                        TitlePayload {
+                            meeting_id: &mid_for_title,
+                            title: combined.as_str(),
+                        },
+                    );
                 }
-                let _ = app_title.emit(
-                    "summary:title",
-                    TitlePayload {
-                        meeting_id: &mid_for_title,
-                        title: "",
-                    },
-                );
+                other => {
+                    match &other {
+                        Ok(Ok(title)) => eprintln!("[title-gen] Title was empty after processing: {:?}", title),
+                        Ok(Err(e)) => eprintln!("[title-gen] Title generation failed: {:?}", e),
+                        Err(e) => eprintln!("[title-gen] Title gen task panicked: {:?}", e),
+                    }
+                    let _ = app_title.emit(
+                        "summary:title",
+                        TitlePayload {
+                            meeting_id: &mid_for_title,
+                            title: "",
+                        },
+                    );
+                }
             }
         }
 

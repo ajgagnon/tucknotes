@@ -675,7 +675,7 @@ impl SummarizationService {
             .as_ref()
             .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
 
-        let system = "Generate a short, descriptive title (max 8 words) for a meeting based on the summary below. Output ONLY the title text, nothing else. Do not use quotes.";
+        let system = "Generate a very short, descriptive meeting title (5-6 words maximum) from the summary below. Output ONLY the title text — no quotes, no dashes, no colons, nothing else.";
         let messages_json = serde_json::json!([
             {"role": "system", "content": system},
             {"role": "user", "content": summary}
@@ -769,7 +769,12 @@ impl SummarizationService {
         eprintln!("[title-gen] Raw output ({} tokens): {:?}", n_cur - n_prompt as i32, output);
         let title = strip_think_tags(output.trim());
         eprintln!("[title-gen] After strip_think_tags: {:?}", title);
-        let title = title.trim().trim_matches('"').trim().to_string();
+        let title = title
+            .trim()
+            .trim_matches('"')
+            .trim_matches(|c| c == '-' || c == '–' || c == '—')
+            .trim()
+            .to_string();
         eprintln!("[title-gen] Final title: {:?}", title);
         Ok(title)
     }

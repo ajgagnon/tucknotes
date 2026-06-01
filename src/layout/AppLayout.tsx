@@ -346,6 +346,7 @@ function LayoutContent({
   onSaveTitle,
   onOpenSettings,
   onEditTemplate,
+  onDirtyChange,
 }: {
   activeView: ActiveView;
   onDrag: (e: React.MouseEvent) => void;
@@ -356,6 +357,7 @@ function LayoutContent({
   onSaveTitle: (title: string) => void;
   onOpenSettings: (section?: string) => void;
   onEditTemplate: (id?: string) => void;
+  onDirtyChange: (dirty: boolean) => void;
 }) {
   // Build header left content based on active view
   const headerLeft =
@@ -397,6 +399,7 @@ function LayoutContent({
               onDone={() =>
                 onOpenSettings(SETTINGS_SECTION_TEMPLATES)
               }
+              onDirtyChange={onDirtyChange}
             />
           )}
           {activeView === null && (
@@ -421,6 +424,30 @@ function AppLayout() {
   const [activeView, setActiveView] = useState<ActiveView>(null);
   const [meetings, setMeetings] = useState<MeetingRow[]>([]);
   const [meetingInfo, setMeetingInfo] = useState<MeetingTitleInfo | null>(null);
+
+  // Tracks whether the template editor has unsaved edits. Set via onDirtyChange.
+  const unsavedRef = useRef(false);
+
+  // Confirms discarding unsaved template edits before leaving the editor.
+  // Returns true if navigation may proceed.
+  const confirmDiscardIfNeeded = useCallback(async () => {
+    if (!unsavedRef.current) return true;
+    const ok = await ask(
+      "You have unsaved changes to this template. Discard them?",
+      { title: "Discard changes?", kind: "warning" },
+    );
+    if (ok) unsavedRef.current = false;
+    return ok;
+  }, []);
+
+  // Single entry point for user-initiated navigation, so the unsaved-changes
+  // guard runs no matter how the user leaves the template editor.
+  const navigateTo = useCallback(
+    async (next: ActiveView) => {
+      if (await confirmDiscardIfNeeded()) setActiveView(next);
+    },
+    [confirmDiscardIfNeeded],
+  );
 
   // Only start window drag on primary-button single-click
   const onDrag = useCallback((e: React.MouseEvent) => {
@@ -592,7 +619,9 @@ function AppLayout() {
                       onNavigateToActiveRecording={
                         handleNavigateToActiveRecording
                       }
-                      onOpenSettings={() => setActiveView({ type: "settings" })}
+                      onOpenSettings={() =>
+                        void navigateTo({ type: "settings" })
+                      }
                     />
                   </div>
                   <button
@@ -642,7 +671,7 @@ function AppLayout() {
                             value={m.id}
                             keywords={[m.title || "Recording"]}
                             onSelect={() => {
-                              setActiveView({ type: "meeting", id: m.id });
+                              void navigateTo({ type: "meeting", id: m.id });
                               setSearchOpen(false);
                             }}
                           >
@@ -659,19 +688,21 @@ function AppLayout() {
                 activeMeetingId={
                   activeView?.type === "meeting" ? activeView.id : null
                 }
-                onSelectMeeting={(id) => setActiveView({ type: "meeting", id })}
+                onSelectMeeting={(id) =>
+                  void navigateTo({ type: "meeting", id })
+                }
               />
 
               <SidebarFooter className="px-3 pb-3">
                 <LlmDownloadIndicator />
                 <TrialBanner
-                  onOpenSettings={() => setActiveView({ type: "settings" })}
+                  onOpenSettings={() => void navigateTo({ type: "settings" })}
                 />
                 <SidebarMenu>
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       isActive={activeView?.type === "settings"}
-                      onClick={() => setActiveView({ type: "settings" })}
+                      onClick={() => void navigateTo({ type: "settings" })}
                       tooltip="Settings"
                     >
                       <Settings className="text-muted-foreground" />
@@ -690,11 +721,12 @@ function AppLayout() {
               meetingInfo={meetingInfo}
               onSaveTitle={handleSaveTitle}
               onOpenSettings={(section) =>
-                setActiveView({ type: "settings", section })
+                void navigateTo({ type: "settings", section })
               }
               onEditTemplate={(id) =>
-                setActiveView({ type: "template-editor", id })
+                void navigateTo({ type: "template-editor", id })
               }
+              onDirtyChange={(d) => (unsavedRef.current = d)}
             />
           </SidebarProvider>
         </RecordingProvider>
@@ -704,8 +736,8 @@ function AppLayout() {
               ? meetings.find((m) => m.id === activeView.id) ?? null
               : null
           }
-          onOpenSettings={() => setActiveView({ type: "settings" })}
-          onOpenMeeting={(id) => setActiveView({ type: "meeting", id })}
+          onOpenSettings={() => void navigateTo({ type: "settings" })}
+          onOpenMeeting={(id) => void navigateTo({ type: "meeting", id })}
         />
       </TooltipProvider>
     </div>
