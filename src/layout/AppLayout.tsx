@@ -34,6 +34,7 @@ import {
 import { cn } from "@/lib/utils";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Chatbot } from "@/components/chatbot/Chatbot";
+import { AskTuckProvider } from "@/components/chatbot/ask-tuck-context";
 import {
   RecordingProvider,
   useRecording,
@@ -603,6 +604,7 @@ function AppLayout() {
   return (
     <div className="bg-background/50">
       <TooltipProvider>
+       <AskTuckProvider>
         <RecordingProvider>
           <SidebarProvider className="max-h-svh overflow-hidden">
             <Sidebar variant="inset">
@@ -739,6 +741,7 @@ function AppLayout() {
           onOpenSettings={() => void navigateTo({ type: "settings" })}
           onOpenMeeting={(id) => void navigateTo({ type: "meeting", id })}
         />
+       </AskTuckProvider>
       </TooltipProvider>
     </div>
   );

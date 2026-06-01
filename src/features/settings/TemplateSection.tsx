@@ -10,9 +10,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { TemplateInfo } from "@/features/meetings/types";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 
 /// DOM id of this settings section, so other views (e.g. the summary template
 /// dropdown's "Edit templates" link) can deep-link and scroll to it.
@@ -104,99 +105,115 @@ export function TemplateSection({
         Summary Templates
       </h2>
 
-      <Select
-        value={selected}
-        onValueChange={(value) => void handleChange(value as string)}
-        disabled={!!disabled || templates.length === 0}
-      >
-        <SelectTrigger aria-label="Default summary template" className="w-full">
-          <SelectValue>
-            {(value: string | null) =>
-              templates.find((t) => t.id === value)?.name ?? "Recap"
-            }
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          {templates.map((t) => (
-            <SelectItem key={t.id} value={t.id}>
-              {t.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <p className="mt-2 text-xs text-muted-foreground">
-        {description
-          ? `Default for new meetings — ${description}`
-          : "The template applied to new meetings by default."}
-      </p>
-
-      <div className="mt-4 grid gap-2">
-        {templates.map((t) => (
-          <Card
-            key={t.id}
-            className="flex flex-row items-center justify-between gap-3 p-3"
-          >
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="truncate text-sm font-medium">{t.name}</span>
-                {t.builtin && (
-                  <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Built-in
-                  </span>
-                )}
-              </div>
-              {t.description && (
-                <p className="truncate text-xs text-muted-foreground">
-                  {t.description}
-                </p>
-              )}
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                disabled={disabled}
-                onClick={() => onEditTemplate(t.id)}
-                aria-label={`Edit ${t.name}`}
+      <Card>
+        <CardContent>
+          <Field>
+            <FieldLabel>Default summary template</FieldLabel>
+            <Select
+              value={selected}
+              onValueChange={(value) => void handleChange(value as string)}
+              disabled={!!disabled || templates.length === 0}
+            >
+              <SelectTrigger
+                aria-label="Default summary template"
+                className="w-full"
               >
-                <Pencil className="size-4" />
-              </Button>
-              {t.builtin ? (
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  disabled={disabled}
-                  onClick={() => void handleReset(t)}
-                  aria-label={`Reset ${t.name}`}
-                >
-                  <RotateCcw className="size-4" />
-                </Button>
-              ) : (
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  disabled={disabled}
-                  onClick={() => void handleDelete(t)}
-                  aria-label={`Delete ${t.name}`}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              )}
-            </div>
-          </Card>
-        ))}
-      </div>
+                <SelectValue>
+                  {(value: string | null) =>
+                    templates.find((t) => t.id === value)?.name ?? "Recap"
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {templates.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FieldDescription>
+              {"The template applied to new meetings by default."}
+            </FieldDescription>
+          </Field>
+        </CardContent>
 
-      <Button
-        variant="outline"
-        size="sm"
-        className="mt-3"
-        disabled={disabled}
-        onClick={() => onEditTemplate(undefined)}
-      >
-        <Plus className="size-4" />
-        New template
-      </Button>
+        <CardContent>
+          <Field>
+            <FieldLabel>Templates</FieldLabel>
+          </Field>
+
+          <div className="mt-4 grid gap-2">
+            {templates.map((t) => (
+              <Card
+                key={t.id}
+                className="flex flex-row items-center justify-between gap-3 p-3 bg-muted/50"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm font-medium">
+                      {t.name}
+                    </span>
+                    {t.builtin && (
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Built-in
+                      </span>
+                    )}
+                  </div>
+                  {t.description && (
+                    <p className="truncate text-xs text-muted-foreground">
+                      {t.description}
+                    </p>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    disabled={disabled}
+                    onClick={() => onEditTemplate(t.id)}
+                    aria-label={`Edit ${t.name}`}
+                  >
+                    <Pencil className="size-4" />
+                  </Button>
+                  {t.builtin ? (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      disabled={disabled}
+                      onClick={() => void handleReset(t)}
+                      aria-label={`Reset ${t.name}`}
+                    >
+                      <RotateCcw className="size-4" />
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      disabled={disabled}
+                      onClick={() => void handleDelete(t)}
+                      aria-label={`Delete ${t.name}`}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  )}
+                </div>
+              </Card>
+            ))}
+          </div>
+        </CardContent>
+        <CardFooter className="bg-transparent">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={disabled}
+            onClick={() => onEditTemplate(undefined)}
+          >
+            <Plus className="size-4" />
+            New template
+          </Button>
+        </CardFooter>
+      </Card>
     </section>
   );
 }
