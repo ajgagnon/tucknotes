@@ -183,7 +183,6 @@ pub fn create(base_dir: &Path, template: OwnedTemplate) -> Result<OwnedTemplate,
     let mut t = validate(template)?;
     t.id = generate_id(&t.name, &taken);
     t.builtin = false;
-    t.template_example = None;
 
     store.templates.push(t.clone());
     save_store_to(base_dir, &store)?;
@@ -204,15 +203,9 @@ pub fn update(base_dir: &Path, template: OwnedTemplate) -> Result<(), AppError> 
     }
 
     let mut t = validate(template)?;
+    // A built-in's id stays fixed (reserved) and it never becomes a user
+    // template, but its sections — including their examples — are fully editable.
     t.builtin = builtin;
-    // Editing a built-in must not let the user clobber its frozen example or
-    // turn it into a user template; the id stays fixed (reserved).
-    if !builtin {
-        t.template_example = None;
-    } else {
-        // Preserve the seed's frozen template_example.
-        t.template_example = templates::builtin_seed_by_id(&t.id).and_then(|s| s.template_example);
-    }
 
     match store.templates.iter_mut().find(|s| s.id == t.id) {
         Some(existing) => *existing = t,
@@ -320,7 +313,6 @@ mod tests {
                 example: Some("- a note".into()),
             }],
             builtin: false,
-            template_example: None,
         }
     }
 
@@ -415,17 +407,19 @@ mod tests {
     }
 
     #[test]
-    fn editing_builtin_cannot_clobber_frozen_template_example() {
+    fn editing_builtin_persists_per_section_example() {
         let dir = TempDir::new();
         let mut default = templates::builtin_seed_by_id("default").unwrap();
-        // User tries to inject a template_example (not exposed in the UI, but
-        // belt-and-suspenders).
-        default.template_example = Some("HIJACKED".into());
+        // The Recap seed now ships editable per-section examples.
+        assert!(default.sections[0].example.is_some());
+        // The user edits one section's example; it must round-trip.
+        default.sections[0].example = Some("- A fresh example.".into());
         update(dir.path(), default).unwrap();
         let resolved = get_resolved(dir.path(), "default").unwrap().unwrap();
-        // Restored to the seed's frozen example, not the injected value.
-        let seed = templates::builtin_seed_by_id("default").unwrap();
-        assert_eq!(resolved.template_example, seed.template_example);
-        assert_ne!(resolved.template_example.as_deref(), Some("HIJACKED"));
+        assert_eq!(
+            resolved.sections[0].example.as_deref(),
+            Some("- A fresh example.")
+        );
+        assert!(resolved.builtin);
     }
 }

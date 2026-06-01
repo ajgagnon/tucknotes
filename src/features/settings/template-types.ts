@@ -15,5 +15,4 @@ export interface OwnedTemplate {
   description: string;
   sections: OwnedSection[];
   builtin: boolean;
-  template_example?: string | null;
 }

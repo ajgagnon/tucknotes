@@ -46,12 +46,6 @@ pub struct OwnedTemplate {
     /// and reset, but never deleted.
     #[serde(default)]
     pub builtin: bool,
-    /// Built-in-seed-only frozen example block. The shipped Default template
-    /// carries its combined "Example shape" here so its assembled prompt stays
-    /// byte-identical to the legacy prompt. Not surfaced in the editor; user
-    /// templates use per-section [`OwnedSection::example`] instead.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub template_example: Option<String>,
 }
 
 /// Persisted set of templates (built-in overrides + user-created), stored as
@@ -88,7 +82,6 @@ mod tests {
                 },
             ],
             builtin: false,
-            template_example: None,
         };
         let json = serde_json::to_string(&t).unwrap();
         let back: OwnedTemplate = serde_json::from_str(&json).unwrap();
@@ -110,7 +103,6 @@ mod tests {
         let json = r#"{"id":"x","name":"X","description":"","sections":[]}"#;
         let t: OwnedTemplate = serde_json::from_str(json).unwrap();
         assert!(!t.builtin);
-        assert_eq!(t.template_example, None);
     }
 
     #[test]

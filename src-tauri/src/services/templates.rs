@@ -37,7 +37,19 @@ pub struct Section {
     pub always_present: bool,
 }
 
-/// An ordered set of sections plus optional illustrative example.
+/// A section as used within a specific template: the shared [`Section`] plus the
+/// template-specific illustrative example (if any). Examples are paired here, not
+/// on the shared `Section`, so the same section (e.g. Action items) can carry a
+/// Recap-flavored example without leaking it into the Minutes / 1:1 templates.
+pub struct TemplateSection {
+    pub section: &'static Section,
+    /// Optional verbatim example for this section, shown under a `## {heading}`
+    /// line in the prompt's "Example shape" block. Seeds the editable per-section
+    /// example field in the Template Editor.
+    pub example: Option<&'static str>,
+}
+
+/// An ordered set of sections (each with an optional example).
 pub struct SummaryTemplate {
     /// Stable identifier persisted in `meetings.template` and exchanged with
     /// the frontend (`"default"`, `"minutes"`, `"one_on_one"`, `"standup"`).
@@ -46,10 +58,8 @@ pub struct SummaryTemplate {
     pub name: &'static str,
     /// One-line description for the picker / settings UI.
     pub description: &'static str,
-    /// Ordered sections that make up the output.
-    pub sections: &'static [&'static Section],
-    /// Optional verbatim "Example shape …" block appended to the prompt.
-    pub example: Option<&'static str>,
+    /// Ordered sections that make up the output, each with an optional example.
+    pub sections: &'static [TemplateSection],
 }
 
 /// Serializable summary of a template for the frontend pickers.
@@ -68,23 +78,20 @@ pub struct TemplateInfo {
 
 const EMIT_RULE: &str = "Rule for emitting a section: if and only if the section has content, emit its `##` heading on its own line, then a blank line, then the body. If a section has no content, omit both the heading and the body entirely. Never emit a heading with no body beneath it. Never emit body content without its heading directly above it.";
 
-/// The Default template's illustrative example, kept verbatim so the assembled
-/// Default prompt matches the original byte-for-byte.
-const DEFAULT_EXAMPLE: &str = "Example shape (illustrative only, do not copy the content):
-## Summary
-The team agreed to ship v2 onboarding on Friday. QA gets the full week for regression. Dev cuts the release branch tonight; Priya drafts the launch email by Wednesday.
+// The Recap template's illustrative examples, one per section. Assembled into a
+// single "Example shape" block by `build_system_prompt`; kept verbatim so the
+// assembled Recap prompt matches the original byte-for-byte. These seed the
+// editable per-section example fields in the Template Editor.
+const EXAMPLE_SUMMARY: &str = "The team agreed to ship v2 onboarding on Friday. QA gets the full week for regression. Dev cuts the release branch tonight; Priya drafts the launch email by Wednesday.";
 
-## Action items
-- [ ] **You:** Cut the release branch tonight.
+const EXAMPLE_ACTION_ITEMS: &str = "- [ ] **You:** Cut the release branch tonight.
 - [ ] **Them:** Draft the launch email. `— Wed`
-- [ ] Publish the updated dark-mode docs.
+- [ ] Publish the updated dark-mode docs.";
 
-## Decisions
-- Ship v2 onboarding on Friday.
-- Hold the redesigned empty state for v2.1 — not a launch blocker.
+const EXAMPLE_DECISIONS: &str = "- Ship v2 onboarding on Friday.
+- Hold the redesigned empty state for v2.1 — not a launch blocker.";
 
-## Open questions
-- Announce in-app, or just over email?";
+const EXAMPLE_OPEN_QUESTIONS: &str = "- Announce in-app, or just over email?";
 
 // ---------------------------------------------------------------------------
 // Built-in sections (defined once, referenced by multiple templates)
@@ -164,17 +171,21 @@ pub static SECTION_BLOCKERS: Section = Section {
 // Built-in templates
 // ---------------------------------------------------------------------------
 
+/// A template section with no illustrative example.
+const fn plain(section: &'static Section) -> TemplateSection {
+    TemplateSection { section, example: None }
+}
+
 pub static DEFAULT_TEMPLATE: SummaryTemplate = SummaryTemplate {
     id: "default",
     name: "Recap",
     description: "General-purpose summary with decisions, action items, and open questions.",
     sections: &[
-        &SECTION_SUMMARY,
-        &SECTION_ACTION_ITEMS,
-        &SECTION_DECISIONS,
-        &SECTION_OPEN_QUESTIONS,
+        TemplateSection { section: &SECTION_SUMMARY, example: Some(EXAMPLE_SUMMARY) },
+        TemplateSection { section: &SECTION_ACTION_ITEMS, example: Some(EXAMPLE_ACTION_ITEMS) },
+        TemplateSection { section: &SECTION_DECISIONS, example: Some(EXAMPLE_DECISIONS) },
+        TemplateSection { section: &SECTION_OPEN_QUESTIONS, example: Some(EXAMPLE_OPEN_QUESTIONS) },
     ],
-    example: Some(DEFAULT_EXAMPLE),
 };
 
 pub static MINUTES_TEMPLATE: SummaryTemplate = SummaryTemplate {
@@ -182,12 +193,11 @@ pub static MINUTES_TEMPLATE: SummaryTemplate = SummaryTemplate {
     name: "Meeting minutes",
     description: "Formal minutes: agenda, discussion, decisions, and action items.",
     sections: &[
-        &SECTION_AGENDA,
-        &SECTION_DISCUSSION,
-        &SECTION_DECISIONS,
-        &SECTION_ACTION_ITEMS,
+        plain(&SECTION_AGENDA),
+        plain(&SECTION_DISCUSSION),
+        plain(&SECTION_DECISIONS),
+        plain(&SECTION_ACTION_ITEMS),
     ],
-    example: None,
 };
 
 pub static ONE_ON_ONE_TEMPLATE: SummaryTemplate = SummaryTemplate {
@@ -195,19 +205,21 @@ pub static ONE_ON_ONE_TEMPLATE: SummaryTemplate = SummaryTemplate {
     name: "1:1",
     description: "One-on-one notes: discussion, action items, and follow-ups.",
     sections: &[
-        &SECTION_DISCUSSION,
-        &SECTION_ACTION_ITEMS,
-        &SECTION_FOLLOW_UPS,
+        plain(&SECTION_DISCUSSION),
+        plain(&SECTION_ACTION_ITEMS),
+        plain(&SECTION_FOLLOW_UPS),
     ],
-    example: None,
 };
 
 pub static STANDUP_TEMPLATE: SummaryTemplate = SummaryTemplate {
     id: "standup",
     name: "Standup",
     description: "Daily standup: progress, plans, and blockers.",
-    sections: &[&SECTION_PROGRESS, &SECTION_PLANS, &SECTION_BLOCKERS],
-    example: None,
+    sections: &[
+        plain(&SECTION_PROGRESS),
+        plain(&SECTION_PLANS),
+        plain(&SECTION_BLOCKERS),
+    ],
 };
 
 /// All built-in templates, in display order. The first entry is the default.
@@ -257,9 +269,10 @@ fn section_description(s: &Section) -> &str {
     s.body_spec.strip_prefix(prefix.as_str()).unwrap_or(s.body_spec)
 }
 
-/// Convert a built-in `'static` template into its owned (seed) form. The
-/// template-level example (Default only) is carried in `template_example` so
-/// the assembled prompt stays byte-identical to the legacy prompt.
+/// Convert a built-in `'static` template into its owned (seed) form. Each
+/// section's illustrative example is carried into the editable per-section
+/// `example` field, so the assembled prompt stays byte-identical to the legacy
+/// prompt and every example is editable in the Template Editor.
 pub fn builtin_as_owned(t: &SummaryTemplate) -> OwnedTemplate {
     OwnedTemplate {
         id: t.id.to_string(),
@@ -268,15 +281,14 @@ pub fn builtin_as_owned(t: &SummaryTemplate) -> OwnedTemplate {
         sections: t
             .sections
             .iter()
-            .map(|s| OwnedSection {
-                id: s.id.to_string(),
-                heading: s.heading.to_string(),
-                description: section_description(s).to_string(),
-                example: None,
+            .map(|ts| OwnedSection {
+                id: ts.section.id.to_string(),
+                heading: ts.section.heading.to_string(),
+                description: section_description(ts.section).to_string(),
+                example: ts.example.map(|e| e.to_string()),
             })
             .collect(),
         builtin: true,
-        template_example: t.example.map(|e| e.to_string()),
     }
 }
 
@@ -359,9 +371,9 @@ pub fn build_system_prompt(template: &OwnedTemplate) -> String {
         "Rules:\n- Use the em dash character `—` (not `--`) before due dates.\n- Name people only in the Summary and Decisions sections, and only when the transcript clearly attributes the work or decision to them. In Action items, the only allowed attribution is the `**You:**` / `**Them:**` assignee prefix — never a personal name.\n- Skip filler, chit-chat, repeated points, and pleasantries.\n- No editorializing, no summarizing importance, no meta-commentary.\n- Do not invent labels beyond the {count} section headings.\n- Do not give the output a title — the title is generated separately."
     ));
 
-    // (F) Examples. Per-section examples (user templates) take precedence; the
-    // shipped built-in seeds fall back to their frozen template-level example,
-    // which keeps the Default prompt byte-identical to the legacy prompt.
+    // (F) Examples. Each section's optional example is rendered under a
+    // `## {heading}` line. The Recap seed populates these, which keeps its
+    // assembled prompt byte-identical to the legacy prompt.
     let examples: Vec<String> = template
         .sections
         .iter()
@@ -372,8 +384,6 @@ pub fn build_system_prompt(template: &OwnedTemplate) -> String {
             "Example shape (illustrative only, do not copy the content):\n{}",
             examples.join("\n\n")
         ));
-    } else if let Some(ex) = &template.template_example {
-        blocks.push(ex.clone());
     }
 
     blocks.join("\n\n")
@@ -445,8 +455,8 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
             assert!(!prompt.is_empty(), "{} produced an empty prompt", t.id);
             // Every template's headings must appear in order.
             let mut cursor = 0;
-            for section in t.sections {
-                let needle = format!("`## {}`", section.heading);
+            for ts in t.sections {
+                let needle = format!("`## {}`", ts.section.heading);
                 let at = prompt[cursor..].find(&needle).unwrap_or_else(|| {
                     panic!("{}: heading {:?} missing or out of order", t.id, needle)
                 });
@@ -489,7 +499,7 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
 
     #[test]
     fn per_section_example_emits_example_block() {
-        let mut t = builtin_as_owned(&STANDUP_TEMPLATE); // no template_example
+        let mut t = builtin_as_owned(&STANDUP_TEMPLATE); // no examples
         assert!(!build_system_prompt(&t).contains("Example shape"));
         t.sections[0].example = Some("- Shipped the login flow.".to_string());
         let prompt = build_system_prompt(&t);

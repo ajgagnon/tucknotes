@@ -24,7 +24,6 @@ function blankTemplate(): OwnedTemplate {
     description: "",
     sections: [newSection()],
     builtin: false,
-    template_example: null,
   };
 }
 
