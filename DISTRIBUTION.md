@@ -59,10 +59,34 @@ The private key file (`~/.tauri/tucknotes-updater.key`) and its password go into
 
 ## 5. Cutting a release
 
-1. Bump `version` in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` to the same value (e.g. `0.1.1`).
-2. Commit and tag: `git tag v0.1.1 && git push --tags`.
-3. The `release.yml` workflow runs on the tag, builds for `aarch64-apple-darwin` (Apple Silicon only — Intel is unsupported because the bundled inference stack requires Metal on M-series GPUs), signs and notarizes the artifact, and uploads the `.dmg`, `.app.tar.gz`, and signed `latest.json` to a draft GitHub Release.
-4. Open the draft release on GitHub, edit the notes, and publish. The Tauri updater in shipped builds will pick up `latest.json` automatically.
+The pipeline is triggered by **creating a GitHub Release as a pre-release**. It
+stays a pre-release (and so stays out of GitHub's `/releases/latest/` redirect)
+for the entire build, and is only promoted to "Latest" after every asset uploads
+successfully. This guarantees the stable download link and the Tauri updater —
+which both resolve through `…/releases/latest/download/…` — never point at an
+assetless release while a build is in progress or has failed.
+
+1. Create the release as a **pre-release** (this also creates the `vX.Y.Z` git tag;
+   a *draft* would not, and would break the bump step). Either:
+   - Web UI → Draft a new release → tag `vX.Y.Z` → **check "Set as a pre-release"** → Publish; or
+   - `gh release create vX.Y.Z --prerelease --title "vX.Y.Z" --notes "…"`
+
+   You do **not** need to bump version files by hand — `bump.yml` does that.
+2. `bump.yml` fires on `release: published`. It demotes the release to a
+   pre-release (a no-op given step 1, but a safety net), bumps `version` in
+   `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and
+   `src-tauri/Cargo.lock`, force-moves the tag onto the bump commit, fast-forwards
+   `master`, and dispatches `release.yml`.
+3. `release.yml` runs on the moved tag, builds for `aarch64-apple-darwin` (Apple
+   Silicon only — Intel is unsupported because the bundled inference stack requires
+   Metal on M-series GPUs), signs and notarizes, and uploads the `.dmg`,
+   `.app.tar.gz`, signed `latest.json`, and the versionless `TuckNotes-arm64.dmg`.
+   As its final step it promotes the release to non-pre-release + **Latest**. The
+   Tauri updater in shipped builds then picks up the new `latest.json` automatically.
+4. If the build fails, the release stays a pre-release, so `/releases/latest/`
+   keeps serving the previous release's DMG and `latest.json`. Fix the issue and
+   re-run `release.yml` on the tag (`gh workflow run release.yml --ref vX.Y.Z`); it
+   promotes to latest on success.
 
 ## End-to-end smoke test
 
