@@ -34,6 +34,15 @@ pub fn get_meeting(
     })
 }
 
+/// Write UTF-8 text to `path`. The path is chosen by the frontend save dialog
+/// (permitted via `dialog:default`); this command performs the actual write
+/// since no filesystem plugin is enabled.
+#[tauri::command]
+pub fn write_text_file(path: String, contents: String) -> Result<(), AppError> {
+    std::fs::write(&path, contents)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn update_meeting_document_body(
     state: tauri::State<'_, DatabaseState>,

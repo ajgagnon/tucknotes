@@ -163,6 +163,7 @@ pub fn run() {
             list_meetings,
             get_meeting,
             update_meeting_document_body,
+            write_text_file,
             delete_meeting,
             list_available_models,
             get_model_status,

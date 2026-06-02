@@ -43,6 +43,8 @@ import { RecordingErrorBanner } from "./RecordingErrorBanner";
 import { TranscriptFab } from "./TranscriptFab";
 import { MeetingDocumentEditor } from "./MeetingDocumentEditor";
 import { StreamingSummaryToolbarPlaceholder } from "./StreamingSummaryToolbarPlaceholder";
+import { TranscriptActionsMenu } from "./TranscriptActionsMenu";
+import { type TranscriptLine } from "./exportTranscript";
 import { cn } from "@/lib/utils";
 
 /** Sentinel value for the Transcript tab (not a `MeetingDocument` id). */
@@ -150,6 +152,13 @@ export function MeetingDetailView({
       transcriptScrollRef.current?.scrollToTimeMs(timestampMs);
     });
   }, []);
+
+  // Segments backing the transcript copy/export actions. During a live
+  // recording the committed `liveSegments` are authoritative; otherwise the
+  // persisted segments from the loaded meeting detail are used.
+  const transcriptLines: TranscriptLine[] = isLiveRecording
+    ? liveSegments
+    : detail.segments;
 
   const summaryBodyStored = summaryBodyFromDocuments(detail.documents);
 
@@ -442,21 +451,28 @@ export function MeetingDetailView({
             Another meeting is being recorded.
           </p>
         )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="shrink-0 text-muted-foreground hover:text-foreground"
-          aria-label="Open Sound settings (macOS)"
-          title="Sound settings"
-          onClick={() => {
-            invoke("open_sound_settings").catch((e) =>
-              console.error("open_sound_settings:", e),
-            );
-          }}
-        >
-          <Settings2 className="size-4" />
-        </Button>
+        <div className="flex items-center gap-2">
+          <TranscriptActionsMenu
+            meeting={detail.meeting}
+            segments={transcriptLines}
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+            aria-label="Open Sound settings (macOS)"
+            title="Sound settings"
+            onClick={() => {
+              invoke("open_sound_settings").catch((e) =>
+                console.error("open_sound_settings:", e),
+              );
+            }}
+          >
+            <Settings2 className="size-4" />
+          </Button>
+        </div>
       </div>
     </div>
   );
