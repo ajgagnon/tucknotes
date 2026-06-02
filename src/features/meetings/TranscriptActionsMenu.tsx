@@ -20,6 +20,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { MeetingRow } from "./types";
 import {
   buildExportContent,
@@ -77,21 +82,27 @@ export function TranscriptActionsMenu({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className={className}
-            aria-label="Copy or export transcript"
-            title="Copy or export transcript"
-            disabled={!hasTranscript}
-          />
-        }
-      >
-        {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-      </DropdownMenuTrigger>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className={className}
+                  aria-label="Copy or export transcript"
+                  disabled={!hasTranscript}
+                />
+              }
+            />
+          }
+        >
+          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+        </TooltipTrigger>
+        <TooltipContent>Copy or export transcript</TooltipContent>
+      </Tooltip>
       <DropdownMenuContent align="start" className="min-w-60">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Copy transcript</DropdownMenuLabel>

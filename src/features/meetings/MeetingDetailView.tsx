@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles, Settings2, Play, MoreHorizontal } from "lucide-react";
+import { Sparkles, Settings2, ListRestart } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { invoke } from "@tauri-apps/api/core";
@@ -22,11 +22,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { SETTINGS_SECTION_TEMPLATES } from "@/features/settings/TemplateSection";
 import { useLlmDownloadProgress } from "@/features/models";
 import {
@@ -427,25 +426,6 @@ export function MeetingDetailView({
         )}
       </div>
       <div className="mt-0 shrink-0 flex flex-row items-center gap-2 border-t px-4 py-3">
-        {isLiveRecording && recording && (
-          <button
-            type="button"
-            onClick={() => void handleFooterPrimaryAction()}
-            className="text-sm font-medium text-danger hover:underline"
-          >
-            Stop recording
-          </button>
-        )}
-        {canResume && (
-          <button
-            type="button"
-            onClick={() => void handleFooterPrimaryAction()}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:underline"
-          >
-            <Play className="size-3 shrink-0" />
-            Resume
-          </button>
-        )}
         {!isLiveRecording && (recording || paused) && (
           <p className="text-xs text-muted-foreground">
             Another meeting is being recorded.
@@ -455,23 +435,28 @@ export function MeetingDetailView({
           <TranscriptActionsMenu
             meeting={detail.meeting}
             segments={transcriptLines}
-            className="shrink-0 text-muted-foreground hover:text-foreground"
+            className="shrink-0"
           />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="shrink-0 text-muted-foreground hover:text-foreground"
-            aria-label="Open Sound settings (macOS)"
-            title="Sound settings"
-            onClick={() => {
-              invoke("open_sound_settings").catch((e) =>
-                console.error("open_sound_settings:", e),
-              );
-            }}
-          >
-            <Settings2 className="size-4" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Open Sound settings (macOS)"
+                  onClick={() => {
+                    invoke("open_sound_settings").catch((e) =>
+                      console.error("open_sound_settings:", e),
+                    );
+                  }}
+                />
+              }
+            >
+              <Settings2 className="size-4" />
+            </TooltipTrigger>
+            <TooltipContent>Sound settings</TooltipContent>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -606,25 +591,23 @@ export function MeetingDetailView({
               </div>
             )}
 
-            <DropdownMenu>
-              <DropdownMenuTrigger
+            <Tooltip>
+              <TooltipTrigger
                 render={
                   <Button
                     variant="ghost"
                     size="icon-sm"
-                    aria-label="More summary actions"
+                    aria-label={currentSummary ? "Resummarize" : "Summarize"}
+                    onClick={() => void handleSummarize()}
                   />
                 }
               >
-                <MoreHorizontal />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => void handleSummarize()}>
-                  <Sparkles className="size-2.5" />
-                  {currentSummary ? "Resummarize" : "Summarize"}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                <ListRestart className="size-4" />
+              </TooltipTrigger>
+              <TooltipContent>
+                {currentSummary ? "Resummarize" : "Summarize"}
+              </TooltipContent>
+            </Tooltip>
             {summaryError && (
               <p className="min-w-0 flex-1 truncate text-xs text-red-500 dark:text-red-400">
                 {summaryError}
