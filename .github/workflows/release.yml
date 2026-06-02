@@ -86,8 +86,12 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "TuckNotes ${{ github.ref_name }}"
           releaseBody: "See the assets to download and install."
-          releaseDraft: true
-          prerelease: false
+          releaseDraft: false
+          # Upload assets while the release is still a pre-release so it stays out
+          # of GitHub's /releases/latest/ redirect until the build fully succeeds.
+          # The final "Promote release to latest" step flips it once every asset
+          # (DMG, .app.tar.gz, latest.json, versionless DMG) is uploaded.
+          prerelease: true
           args: --target aarch64-apple-darwin
 
       - name: Upload versionless DMG for stable download URL
@@ -107,3 +111,14 @@ jobs:
           STABLE="$RUNNER_TEMP/TuckNotes-arm64.dmg"
           cp "$DMG" "$STABLE"
           gh release upload "${{ github.ref_name }}" "$STABLE" --clobber
+
+      - name: Promote release to latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Only now — after the DMG, .app.tar.gz, latest.json, and the versionless
+        # DMG are all uploaded — flip the release out of pre-release and mark it
+        # "Latest". This is the single point at which /releases/latest/ advances,
+        # so a failed or in-progress build never exposes an assetless "latest"
+        # to either the download link or the Tauri updater (which both resolve
+        # through /releases/latest/download/).
+        run: gh release edit "${{ github.ref_name }}" --prerelease=false --latest=true
