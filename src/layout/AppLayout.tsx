@@ -28,6 +28,7 @@ import {
   SidebarMenuItem,
   SidebarMenuButton,
   SidebarInset,
+  SidebarRail,
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
@@ -608,6 +609,7 @@ function AppLayout() {
         <RecordingProvider>
           <SidebarProvider className="max-h-svh overflow-hidden">
             <Sidebar variant="inset">
+              <SidebarRail />
               <SidebarTrigger className="fixed left-[95px] top-[18px] text-muted-foreground/60 hover:text-muted-foreground" />
               <SidebarHeader
                 className="flex flex-col gap-2 px-3 pb-3 pt-[55px]"
