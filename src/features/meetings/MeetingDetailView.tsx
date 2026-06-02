@@ -28,6 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SETTINGS_SECTION_TEMPLATES } from "@/features/settings/TemplateSection";
+import { useLlmDownloadProgress } from "@/features/models";
 import {
   type MeetingDetail,
   type MeetingTitleInfo,
@@ -164,6 +165,8 @@ export function MeetingDetailView({
     selectedTemplate,
     handleTemplateChange,
   } = useMeetingSummarization(detail.meeting, summaryBodyStored, onTitleChange);
+
+  const llmDownload = useLlmDownloadProgress();
 
   const leaveTranscriptTab = useCallback(() => {
     setSelectedDocId((prev) => {
@@ -332,13 +335,37 @@ export function MeetingDetailView({
         </div>
       </div>
     </div>
-  ) : llmModelReady === false ? (
-    <p className="text-sm text-neutral-400 italic p-5">
-      Download a summarization model in Settings to enable AI summaries.
-    </p>
+  ) : llmModelReady === true ? (
+    <div className="flex flex-col items-start gap-3 p-5">
+      <p className="text-sm text-neutral-400 italic">
+        Generate an AI summary of this meeting.
+      </p>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => void handleSummarize()}
+      >
+        <Sparkles className="size-2.5" />
+        Summarize
+      </Button>
+    </div>
+  ) : llmDownload ? (
+    <div className="flex flex-col gap-2 p-5 text-sm text-neutral-400">
+      <span className="italic">
+        {llmDownload.done
+          ? "Finishing model download…"
+          : `Downloading summarization model… ${Math.round(llmDownload.percent)}%`}
+      </span>
+      <div className="h-1 w-full max-w-xs overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-primary transition-all duration-300 ease-out"
+          style={{ width: `${llmDownload.percent}%` }}
+        />
+      </div>
+    </div>
   ) : (
     <p className="text-sm text-neutral-400 italic p-5">
-      Click &ldquo;Summarize&rdquo; to generate an AI summary.
+      Download a summarization model in Settings to enable AI summaries.
     </p>
   );
 
