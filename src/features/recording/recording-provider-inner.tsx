@@ -9,9 +9,29 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { RecordingContext } from "./recording-context";
-import type { AppError, TranscriptSegment } from "./types";
+import type { TranscriptSegment } from "./types";
 import { toAppError } from "./types";
 import { useTimer } from "./use-timer";
+import { toastError } from "@/lib/toast";
+
+/** Surface a recording failure as a toast, with a settings action for the
+ *  permission case. */
+function notifyRecordingError(e: unknown) {
+  const err = toAppError(e);
+  if (err.kind === "PermissionDenied") {
+    toastError("Permission needed to capture audio", {
+      description: "Enable Screen Recording in macOS settings to get started.",
+      action: {
+        label: "Open System Settings",
+        onClick: () => {
+          void invoke("open_screen_recording_settings");
+        },
+      },
+    });
+    return;
+  }
+  toastError(err.message);
+}
 
 interface RecordingStateEvent {
   recording: boolean;
@@ -38,7 +58,6 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
   const [transcriptFinalizingMeetingId, setTranscriptFinalizingMeetingId] =
     useState<string | null>(null);
   const { elapsed, startTimer, clearTimer } = useTimer();
-  const [error, setError] = useState<AppError | null>(null);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [provisional, setProvisional] = useState<
     Record<string, TranscriptSegment>
@@ -246,7 +265,6 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
 
   const startRecording = useCallback(
     async (resumeMeetingId?: string | null): Promise<string> => {
-      setError(null);
       try {
         const args =
           resumeMeetingId != null && resumeMeetingId !== ""
@@ -254,7 +272,7 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
             : {};
         return await invoke<string>("start_recording", args);
       } catch (e: unknown) {
-        setError(toAppError(e));
+        notifyRecordingError(e);
         throw e;
       }
     },
@@ -268,7 +286,7 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
         setTranscriptFinalizingMeetingId(pending);
       }
     } catch (e: unknown) {
-      setError(toAppError(e));
+      notifyRecordingError(e);
     }
   }, []);
 
@@ -296,20 +314,18 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
   }, []);
 
   const pauseRecording = useCallback(async () => {
-    setError(null);
     try {
       await invoke("pause_recording");
     } catch (e: unknown) {
-      setError(toAppError(e));
+      notifyRecordingError(e);
     }
   }, []);
 
   const resumeRecording = useCallback(async () => {
-    setError(null);
     try {
       await invoke("resume_recording");
     } catch (e: unknown) {
-      setError(toAppError(e));
+      notifyRecordingError(e);
     }
   }, []);
 
@@ -325,7 +341,6 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
       meetingId,
       transcriptFinalizingMeetingId,
       elapsed,
-      error,
       segments,
       provisional,
       startRecording,
@@ -340,7 +355,6 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
       meetingId,
       transcriptFinalizingMeetingId,
       elapsed,
-      error,
       segments,
       provisional,
       startRecording,

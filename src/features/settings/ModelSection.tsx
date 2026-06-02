@@ -33,7 +33,6 @@ export function ModelSection({
     loading,
     downloading,
     progress,
-    error,
     selectModel,
     downloadModel,
     removeModel,
@@ -48,9 +47,6 @@ export function ModelSection({
         {title}
       </h2>
 
-      {error && !downloading && (
-        <p className="text-sm text-destructive mb-2">{error}</p>
-      )}
 
       {loading ? (
         <div className="flex flex-col gap-3">

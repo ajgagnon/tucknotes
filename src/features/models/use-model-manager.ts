@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { ModelInfo, DownloadProgress } from "./types";
+import { toastError } from "@/lib/toast";
 
 export interface ModelManagerConfig {
   listCommand: string;
@@ -57,7 +58,6 @@ export function useModelManager(config: ModelManagerConfig) {
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -102,9 +102,8 @@ export function useModelManager(config: ModelManagerConfig) {
       try {
         await invoke(config.setSelectedCommand, { modelId });
         setSelectedId(modelId);
-        setError(null);
       } catch (err) {
-        setError(errorMessage(err, "Failed to switch model."));
+        toastError(errorMessage(err, "Failed to switch model."));
       }
     },
     [
@@ -119,13 +118,12 @@ export function useModelManager(config: ModelManagerConfig) {
     async (modelId: string) => {
       if (downloading) return;
       setDownloading(modelId);
-      setError(null);
       setProgress(null);
       try {
         await invoke(config.downloadCommand, { modelId });
         setDownloadStatus((prev) => ({ ...prev, [modelId]: true }));
       } catch (err) {
-        setError(errorMessage(err, "Download failed. Please try again."));
+        toastError(errorMessage(err, "Download failed. Please try again."));
       } finally {
         setDownloading(null);
         setProgress(null);
@@ -147,9 +145,8 @@ export function useModelManager(config: ModelManagerConfig) {
         if (selectedId === modelId) {
           setSelectedId(null);
         }
-        setError(null);
       } catch (err) {
-        setError(errorMessage(err, "Failed to remove model."));
+        toastError(errorMessage(err, "Failed to remove model."));
       }
     },
     [selectedId, config.removeCommand, config.removeConfirmMessage],
@@ -162,13 +159,12 @@ export function useModelManager(config: ModelManagerConfig) {
           modelId,
         });
         if (!path) {
-          setError("Model file not found on disk.");
+          toastError("Model file not found on disk.");
           return;
         }
         await revealItemInDir(path);
-        setError(null);
       } catch (err) {
-        setError(errorMessage(err, "Could not show file in folder."));
+        toastError(errorMessage(err, "Could not show file in folder."));
       }
     },
     [config.getFilePathCommand],
@@ -181,7 +177,6 @@ export function useModelManager(config: ModelManagerConfig) {
     loading,
     downloading,
     progress,
-    error,
     selectModel,
     downloadModel,
     removeModel,

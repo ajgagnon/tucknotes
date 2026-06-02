@@ -1,5 +1,5 @@
 import { createContext } from "react";
-import type { AppError, TranscriptSegment } from "./types";
+import type { TranscriptSegment } from "./types";
 
 export interface RecordingContextValue {
   /** True while audio capture is running (not paused). */
@@ -10,7 +10,6 @@ export interface RecordingContextValue {
   /** While set, persisted transcript for this meeting may still be catching up after stop. */
   transcriptFinalizingMeetingId: string | null;
   elapsed: number;
-  error: AppError | null;
   segments: TranscriptSegment[];
   provisional: Record<string, TranscriptSegment>;
   startRecording: (resumeMeetingId?: string | null) => Promise<string>;

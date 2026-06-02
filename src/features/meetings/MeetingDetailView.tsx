@@ -3,11 +3,7 @@ import { Sparkles, Settings2, ListRestart } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  useRecording,
-  type TranscriptSegment,
-  type AppError,
-} from "@/features/recording";
+import { useRecording, type TranscriptSegment } from "@/features/recording";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -38,7 +34,6 @@ import { useMeetingSummarization } from "./useMeetingSummarization";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { LiveTranscript } from "./LiveTranscript";
 import { PersistedTranscript } from "./PersistedTranscript";
-import { RecordingErrorBanner } from "./RecordingErrorBanner";
 import { TranscriptFab } from "./TranscriptFab";
 import { MeetingDocumentEditor } from "./MeetingDocumentEditor";
 import { StreamingSummaryToolbarPlaceholder } from "./StreamingSummaryToolbarPlaceholder";
@@ -56,7 +51,6 @@ interface MeetingDetailViewProps {
   isLiveRecording: boolean;
   liveSegments: TranscriptSegment[];
   provisional: Record<string, TranscriptSegment>;
-  error: AppError | null;
   onTitleChange?: (info: MeetingTitleInfo) => void;
   /** After starting capture for an existing meeting (resume completed). */
   onRecordingStarted?: (meetingId: string) => void;
@@ -74,7 +68,6 @@ export function MeetingDetailView({
   isLiveRecording,
   liveSegments,
   provisional,
-  error,
   onTitleChange,
   onRecordingStarted,
   onRefreshMeeting: _onRefreshMeeting,
@@ -165,7 +158,6 @@ export function MeetingDetailView({
     summarizing,
     streamedSummary,
     thinkingText,
-    summaryError,
     llmModelReady,
     currentSummary,
     handleSummarize,
@@ -469,8 +461,6 @@ export function MeetingDetailView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {error && <RecordingErrorBanner error={error} />}
-
       <div className="p-3 border-b border-muted flex shrink-0 flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium">
           <Tabs
@@ -608,11 +598,6 @@ export function MeetingDetailView({
                 {currentSummary ? "Resummarize" : "Summarize"}
               </TooltipContent>
             </Tooltip>
-            {summaryError && (
-              <p className="min-w-0 flex-1 truncate text-xs text-red-500 dark:text-red-400">
-                {summaryError}
-              </p>
-            )}
           </div>
         )}
       </div>

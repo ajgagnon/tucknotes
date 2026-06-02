@@ -140,6 +140,25 @@ struct ValidateRequest<'a> {
     organization_id: &'a str,
 }
 
+/// Turn a non-success Polar response into a user-friendly error, logging the
+/// raw status/body for debugging. `action` is "activate"/"validate" for logs.
+fn friendly_license_error(
+    action: &str,
+    status: reqwest::StatusCode,
+    text: &str,
+) -> AppError {
+    eprintln!("[licensing] Polar {action} failed ({status}): {text}");
+    let msg = match status.as_u16() {
+        403 | 404 => {
+            "That license key wasn't found. Double-check the key and try again."
+        }
+        409 => "This license key is already activated on the maximum number of devices.",
+        429 => "Too many attempts. Please wait a moment and try again.",
+        _ => "License request failed. Please try again.",
+    };
+    AppError::LicenseValidationFailed(msg.to_string())
+}
+
 /// Activate a license key against Polar. Returns the activation ID Polar
 /// assigned to this device.
 pub async fn polar_activate(
@@ -169,9 +188,7 @@ pub async fn polar_activate(
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        return Err(AppError::LicenseValidationFailed(format!(
-            "Activation failed ({status}): {text}"
-        )));
+        return Err(friendly_license_error("activate", status, &text));
     }
     let parsed: ActivateResponse = resp
         .json()
@@ -206,9 +223,7 @@ pub async fn polar_validate(key: &str, activation_id: &str) -> Result<(), AppErr
     } else {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        Err(AppError::LicenseValidationFailed(format!(
-            "Validation rejected ({status}): {text}"
-        )))
+        Err(friendly_license_error("validate", status, &text))
     }
 }
 
@@ -247,9 +262,7 @@ pub async fn polar_deactivate(key: &str, activation_id: &str) -> Result<(), AppE
     } else {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        Err(AppError::LicenseValidationFailed(format!(
-            "Deactivation rejected ({status}): {text}"
-        )))
+        Err(friendly_license_error("deactivate", status, &text))
     }
 }
 

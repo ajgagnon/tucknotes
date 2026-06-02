@@ -46,6 +46,7 @@ import {
   type PromptInputMessage,
 } from "@/components/ai-elements/prompt-input";
 import { cn } from "@/lib/utils";
+import { toastError } from "@/lib/toast";
 import { Streamdown } from "streamdown";
 
 import {
@@ -93,7 +94,6 @@ export function Chatbot({
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatStatus | undefined>(undefined);
-  const [errorText, setErrorText] = useState<string | null>(null);
   const [dismissedContext, setDismissedContext] = useState(false);
   const [confirmNewChatOpen, setConfirmNewChatOpen] = useState(false);
   const [usage, setUsage] = useState<ChatUsagePayload | null>(null);
@@ -139,7 +139,6 @@ export function Chatbot({
     stop();
     setMessages([]);
     setStatus(undefined);
-    setErrorText(null);
     setUsage(null);
     setConfirmNewChatOpen(false);
     requestAnimationFrame(() => textareaRef.current?.focus());
@@ -206,8 +205,6 @@ export function Chatbot({
       if (!text || status === "submitted" || status === "streaming") return;
       if (!canSubmit) return;
 
-      setErrorText(null);
-
       const userMsg: ChatMessage = { id: newId(), role: "user", text };
       const assistantMsg: ChatMessage = {
         id: newId(),
@@ -243,7 +240,7 @@ export function Chatbot({
         },
         onError: (msg) => {
           setStatus("error");
-          setErrorText(msg);
+          toastError(msg);
         },
         onToolCallStart: (callId, name) => {
           setStatus("streaming");
@@ -402,11 +399,6 @@ export function Chatbot({
                   </Message>
                 );
               })}
-              {errorText && (
-                <p className="text-xs text-red-500 dark:text-red-400">
-                  {errorText}
-                </p>
-              )}
             </ConversationContent>
             <ConversationScrollButton />
           </Conversation>

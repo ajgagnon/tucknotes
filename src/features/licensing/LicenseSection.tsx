@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useLicenseStatus } from "./use-license-status";
 import { BUY_URL, type LicenseStatus } from "./types";
+import { toastError } from "@/lib/toast";
 
 function formatDate(unixSecs: number): string {
   return new Date(unixSecs * 1000).toLocaleDateString(undefined, {
@@ -44,11 +45,9 @@ export function LicenseSection() {
   const { status, refresh } = useLicenseStatus();
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   async function handleActivate() {
     if (busy) return;
-    setError(null);
     setBusy(true);
     try {
       await invoke<LicenseStatus>("activate_license_key", { key });
@@ -56,7 +55,7 @@ export function LicenseSection() {
       await refresh();
     } catch (e: unknown) {
       const err = e as { kind?: string; message?: string };
-      setError(err.message || "Activation failed.");
+      toastError(err.message || "Activation failed.");
     } finally {
       setBusy(false);
     }
@@ -65,13 +64,12 @@ export function LicenseSection() {
   async function handleDeactivate() {
     if (busy) return;
     setBusy(true);
-    setError(null);
     try {
       await invoke<LicenseStatus>("deactivate_license");
       await refresh();
     } catch (e: unknown) {
       const err = e as { message?: string };
-      setError(err.message || "Could not deactivate license.");
+      toastError(err.message || "Could not deactivate license.");
     } finally {
       setBusy(false);
     }
@@ -144,7 +142,6 @@ export function LicenseSection() {
                   {busy ? "Activating…" : "Activate"}
                 </Button>
               </div>
-              {error && <p className="text-xs text-destructive">{error}</p>}
               <p className="text-xs text-muted-foreground">
                 Don't have a key yet?{" "}
                 <button

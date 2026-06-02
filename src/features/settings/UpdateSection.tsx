@@ -70,9 +70,6 @@ export function UpdateSection() {
               You're on the latest version.
             </p>
           )}
-          {state.kind === "error" && (
-            <p className="mt-2 text-xs text-destructive">{state.message}</p>
-          )}
         </CardContent>
       </Card>
     </section>

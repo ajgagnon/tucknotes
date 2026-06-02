@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
 import { Chatbot } from "@/components/chatbot/Chatbot";
 import { AskTuckProvider } from "@/components/chatbot/ask-tuck-context";
 import {
@@ -604,6 +605,7 @@ function AppLayout() {
 
   return (
     <div className="bg-background/50">
+      <Toaster />
       <TooltipProvider>
        <AskTuckProvider>
         <RecordingProvider>

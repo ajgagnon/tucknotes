@@ -13,6 +13,7 @@ import {
   summaryBodyFromDocuments,
 } from "./types";
 import type { DownloadProgress } from "@/features/models";
+import { toastError } from "@/lib/toast";
 
 export function useMeetingSummarization(
   meeting: MeetingRow,
@@ -25,7 +26,6 @@ export function useMeetingSummarization(
   const [summarizing, setSummarizing] = useState(false);
   const [streamedSummary, setStreamedSummary] = useState("");
   const [thinkingText, setThinkingText] = useState("");
-  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [llmModelReady, setLlmModelReady] = useState<boolean | null>(null);
   const [currentSummary, setCurrentSummary] = useState<string | null>(
     summaryBody,
@@ -265,7 +265,6 @@ export function useMeetingSummarization(
       setGeneratingTitle(true);
       setStreamedSummary("");
       setThinkingText("");
-      setSummaryError(null);
       await registerStreamListeners();
     });
     return () => {
@@ -281,7 +280,6 @@ export function useMeetingSummarization(
     setGeneratingTitle(true);
     setStreamedSummary("");
     setThinkingText("");
-    setSummaryError(null);
 
     await registerStreamListeners();
 
@@ -292,7 +290,7 @@ export function useMeetingSummarization(
       });
     } catch (err) {
       const e = err as { message?: string };
-      setSummaryError(e.message ?? "Summarization failed.");
+      toastError(e.message ?? "Summarization failed.");
       cleanupStreamListeners();
       setSummarizing(false);
       setGeneratingTitle(false);
@@ -334,7 +332,6 @@ export function useMeetingSummarization(
     summarizing,
     streamedSummary,
     thinkingText,
-    summaryError,
     llmModelReady,
     currentSummary,
     handleSummarize,

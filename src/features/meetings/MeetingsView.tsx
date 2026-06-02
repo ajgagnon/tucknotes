@@ -27,7 +27,6 @@ export default function MeetingsView({
     meetingId: recordingMeetingId,
     segments: liveSegments,
     provisional,
-    error,
   } = useRecording();
 
   const isLiveRecording =
@@ -105,7 +104,6 @@ export default function MeetingsView({
       isLiveRecording={isLiveRecording}
       liveSegments={liveSegments}
       provisional={provisional}
-      error={error}
       onTitleChange={onTitleChange}
       onRecordingStarted={onRecordingStarted}
       onRefreshMeeting={() => openMeeting(detail.meeting.id)}

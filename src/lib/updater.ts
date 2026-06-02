@@ -1,6 +1,7 @@
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { message } from "@tauri-apps/plugin-dialog";
+import { toastError } from "@/lib/toast";
 
 export type UpdaterState =
   | { kind: "idle" }
@@ -60,6 +61,7 @@ export function checkOnce(): Promise<UpdaterState> {
       }
     } catch (e: unknown) {
       setState({ kind: "error", message: String(e) });
+      toastError(`Update check failed: ${String(e)}`);
     } finally {
       checkPromise = null;
     }
@@ -79,6 +81,7 @@ export function installOnce(): Promise<UpdaterState> {
       setState({ kind: "ready" });
     } catch (e: unknown) {
       setState({ kind: "error", message: String(e) });
+      toastError(`Update failed: ${String(e)}`);
     } finally {
       installPromise = null;
     }
