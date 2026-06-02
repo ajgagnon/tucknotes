@@ -97,8 +97,6 @@ export function TemplateSection({
     }
   }
 
-  const description = templates.find((t) => t.id === selected)?.description;
-
   return (
     <section id={SETTINGS_SECTION_TEMPLATES} className={cn(className)}>
       <h2 className="text-sm font-medium text-muted-foreground mb-4">
