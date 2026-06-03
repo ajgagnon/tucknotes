@@ -23,3 +23,6 @@ src-tauri/target
 *.njsproj
 *.sln
 *.sw?
+
+# Claude Code agent worktrees — each is its own git worktree, never commit them
+.claude/worktrees/
