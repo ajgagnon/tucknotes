@@ -29,7 +29,7 @@ mod macos {
     use crate::services::database::{self, DatabaseState};
     use crate::services::transcription::{TranscriptionService, TranscriptionState};
 
-    const STEP_INTERVAL: Duration = Duration::from_secs(3);
+    const STEP_INTERVAL: Duration = Duration::from_secs(6);
     const WINDOW_MAX_SECS: f64 = 30.0;
     const MIN_DURATION_SECS: f64 = 2.0;
     const MIN_SPEECH_RATIO: f32 = 0.05;
