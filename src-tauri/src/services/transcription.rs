@@ -5,6 +5,16 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 use crate::errors::AppError;
 
+/// 16 kHz samples per Whisper audio-context frame. After the encoder's
+/// stride-2 conv, one frame spans 20 ms = 320 samples at 16 kHz
+/// (1500 frames = the full 30 s window).
+const SAMPLES_PER_AUDIO_CTX_FRAME: usize = 320;
+
+/// Frames of headroom added to a provisional buffer's `audio_ctx` so the tail
+/// isn't truncated by the encoder's receptive field (~1.3 s). Lower for more
+/// speed; raise if the end of provisional captions gets clipped.
+const PROVISIONAL_AUDIO_CTX_MARGIN: i32 = 64;
+
 /// A single Whisper segment with its start/end timestamps (centiseconds
 /// relative to the beginning of the audio buffer).
 pub struct TimestampedSegment {
@@ -63,6 +73,7 @@ impl TranscriptionService {
     fn decode_params(
         initial_prompt: Option<&str>,
         is_provisional: bool,
+        audio_ctx: Option<i32>,
     ) -> FullParams<'static, 'static> {
         let strategy = if is_provisional {
             SamplingStrategy::Greedy { best_of: 3 }
@@ -92,6 +103,13 @@ impl TranscriptionService {
         // explicitly disabled it because it caused hallucinations at the
         // end of audio segments.
         params.set_suppress_blank(true);
+
+        // Provisional passes cap the encoder's audio context to ~the buffer
+        // length — the dominant CPU cost. Finalized passes pass `None` so they
+        // keep whisper's default full 30 s context for accuracy.
+        if let Some(ac) = audio_ctx {
+            params.set_audio_ctx(ac);
+        }
 
         if let Some(prompt) = initial_prompt {
             params.set_initial_prompt(prompt);
@@ -168,6 +186,10 @@ impl TranscriptionService {
             .as_ref()
             .ok_or_else(|| AppError::TranscriptionFailed("Context not loaded".into()))?;
 
+        // Full encoder context for this model (1500 frames = 30 s); provisional
+        // buffers shrink below this in proportion to their length.
+        let max_audio_ctx = ctx.n_audio_ctx();
+
         let mut state = ctx
             .create_state()
             .map_err(|e| AppError::TranscriptionFailed(e.to_string()))?;
@@ -175,8 +197,17 @@ impl TranscriptionService {
         let mut results = Vec::with_capacity(buffers.len());
         for (i, samples) in buffers.iter().enumerate() {
             let prompt = prompts.get(i).and_then(|p| p.as_deref());
+
+            // Provisional (throwaway, display-only) passes cap the encoder
+            // context to ~the buffer length; finalized passes use full context.
+            let audio_ctx = is_provisional.then(|| {
+                let frames =
+                    samples.len().div_ceil(SAMPLES_PER_AUDIO_CTX_FRAME) as i32;
+                (frames + PROVISIONAL_AUDIO_CTX_MARGIN).clamp(1, max_audio_ctx)
+            });
+
             state
-                .full(Self::decode_params(prompt, is_provisional), samples)
+                .full(Self::decode_params(prompt, is_provisional, audio_ctx), samples)
                 .map_err(|e| AppError::TranscriptionFailed(e.to_string()))?;
             results.push(Self::extract_segments(&state));
         }
