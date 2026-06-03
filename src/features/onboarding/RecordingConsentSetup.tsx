@@ -36,7 +36,6 @@ function RecordingConsentSetup({ onComplete }: RecordingConsentSetupProps) {
     >
       <Alert className="text-left p-4 bg-muted/50">
         <TriangleAlert />
-        {/* <AlertTitle>You are responsible for recording legally</AlertTitle> */}
         <AlertDescription>
           You are responsible for complying with the recording laws that apply
           to you, including obtaining any required consent from participants.
