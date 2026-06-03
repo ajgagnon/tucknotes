@@ -190,6 +190,8 @@ pub fn run() {
             delete_summary_template,
             get_default_template,
             set_default_template,
+            get_recording_consent,
+            set_recording_consent,
             chat_send_message,
             chat_stop,
             get_license_status,

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import PermissionSetup from "@/features/onboarding/PermissionSetup";
+import RecordingConsentSetup from "@/features/onboarding/RecordingConsentSetup";
 import ModelSetup from "@/features/onboarding/ModelSetup";
 import SummarizationSetup from "@/features/onboarding/SummarizationSetup";
 import AppLayout from "@/layout/AppLayout";
@@ -9,6 +10,7 @@ import { useAutoUpdateCheck } from "@/hooks/use-auto-update-check";
 type OnboardingStep =
   | "loading"
   | "permissions"
+  | "recording-consent"
   | "model-setup"
   | "summarization-setup"
   | "ready";
@@ -48,7 +50,12 @@ function App() {
     return selected !== null;
   }
 
+  async function checkConsentReady(): Promise<boolean> {
+    return invoke<boolean>("get_recording_consent");
+  }
+
   async function nextStepAfterPermissions(): Promise<OnboardingStep> {
+    if (!(await checkConsentReady())) return "recording-consent";
     if (!(await checkModelReady())) return "model-setup";
     if (!(await checkSummarizationReady())) return "summarization-setup";
     return "ready";
@@ -66,6 +73,13 @@ function App() {
   if (step === "loading") return null;
   if (step === "permissions") {
     return <PermissionSetup onComplete={handlePermissionsComplete} />;
+  }
+  if (step === "recording-consent") {
+    return (
+      <RecordingConsentSetup
+        onComplete={async () => setStep(await nextStepAfterPermissions())}
+      />
+    );
   }
   if (step === "model-setup") {
     return <ModelSetup onComplete={handleModelSetupComplete} />;
