@@ -151,6 +151,26 @@ pub fn set_default_template(app: tauri::AppHandle, template: String) -> Result<(
     model_manager::save_settings(&app, &settings)
 }
 
+// ---------------------------------------------------------------------------
+// Recording-consent acknowledgement
+// ---------------------------------------------------------------------------
+
+/// Whether the user has acknowledged (during onboarding) that they are
+/// responsible for recording legally.
+#[tauri::command]
+pub fn get_recording_consent(app: tauri::AppHandle) -> Result<bool, AppError> {
+    Ok(model_manager::load_settings(&app)?.recording_consent_acknowledged)
+}
+
+/// Mark the recording-consent acknowledgement as accepted. One-way: there is no
+/// command to unset it.
+#[tauri::command]
+pub fn set_recording_consent(app: tauri::AppHandle) -> Result<(), AppError> {
+    let mut settings = model_manager::load_settings(&app)?;
+    settings.recording_consent_acknowledged = true;
+    model_manager::save_settings(&app, &settings)
+}
+
 #[tauri::command]
 pub fn remove_llm_model(app: tauri::AppHandle, model_id: String) -> Result<(), AppError> {
     let model =

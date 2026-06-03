@@ -75,6 +75,12 @@ pub struct AppSettings {
     /// field) loading.
     #[serde(default)]
     pub default_template: Option<String>,
+    /// Whether the user has acknowledged they are responsible for recording
+    /// legally (obtaining any required consent from participants). Set once
+    /// during onboarding. `#[serde(default)]` keeps older `settings.json` files
+    /// loading (as `false`).
+    #[serde(default)]
+    pub recording_consent_acknowledged: bool,
 }
 
 #[cfg(test)]
@@ -131,5 +137,26 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         let back: AppSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.default_template.as_deref(), Some("minutes"));
+    }
+
+    #[test]
+    fn app_settings_recording_consent_is_optional() {
+        // An older settings.json without `recording_consent_acknowledged` loads
+        // as `false`.
+        let legacy = r#"{"selected_model":null,"selected_llm_model":null}"#;
+        let parsed: AppSettings = serde_json::from_str(legacy).unwrap();
+        assert!(!parsed.recording_consent_acknowledged);
+
+        // Default is false.
+        assert!(!AppSettings::default().recording_consent_acknowledged);
+
+        // Round-trips when set.
+        let settings = AppSettings {
+            recording_consent_acknowledged: true,
+            ..AppSettings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: AppSettings = serde_json::from_str(&json).unwrap();
+        assert!(back.recording_consent_acknowledged);
     }
 }
