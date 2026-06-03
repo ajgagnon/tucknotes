@@ -314,10 +314,44 @@ async fn do_summarize(
         (transcript, meeting.template)
     };
 
-    if transcript.is_empty() {
-        return Err(AppError::SummarizationFailed(
-            "No transcript to summarize".into(),
-        ));
+    // Skip the LLM for too-short transcripts (this also covers an empty one).
+    // Persist a short placeholder so the summary tab shows something on both
+    // the auto- and manual-summarize paths instead of wasting an inference run.
+    const MIN_SUMMARY_WORDS: usize = 50;
+    const TOO_SHORT_SUMMARY: &str = "This meeting was too short to summarize.";
+
+    if transcript.split_whitespace().count() < MIN_SUMMARY_WORDS {
+        {
+            let conn = lock_or_err(&db_state.conn)?;
+            database::set_summary_body(&conn, meeting_id, TOO_SHORT_SUMMARY)?;
+        }
+        let _ = app.emit("summary:complete", meeting_id);
+
+        // Mirror the finalize steps the title-gen task would otherwise do: clear
+        // the title spinner (re-emit the current title, no LLM), release the
+        // active slot, and advance the queue. Skipping these would hang the
+        // spinner and leave active_meeting_id set, blocking all future runs.
+        let current_title = {
+            let conn = lock_or_err(&db_state.conn)?;
+            database::get_meeting_title(&conn, meeting_id)
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+        };
+        let _ = app.emit(
+            "summary:title",
+            TitlePayload {
+                meeting_id,
+                title: current_title.as_str(),
+            },
+        );
+
+        if let Ok(mut active) = summ_state.active_meeting_id.lock() {
+            *active = None;
+        }
+        process_next_in_queue(app);
+
+        return Ok(TOO_SHORT_SUMMARY.to_string());
     }
 
     // 2. Resolve model path
