@@ -212,7 +212,7 @@ impl SummarizationService {
         // n_cur tracks the absolute position in the context (prompt + generated)
         let mut n_cur = n_prompt as i32;
         let mut decoder = encoding_rs::UTF_8.new_decoder();
-        let mut sampler = LlamaSampler::greedy();
+        let mut sampler = build_sampler();
         let mut output = String::new();
 
         let mut inside_think = false;
@@ -719,7 +719,7 @@ impl SummarizationService {
 
         let mut n_cur = n_prompt as i32;
         let mut decoder = encoding_rs::UTF_8.new_decoder();
-        let mut sampler = LlamaSampler::greedy();
+        let mut sampler = build_sampler();
         let mut output = String::new();
         let mut inside_think = false;
         let mut title_text = String::new();
@@ -790,6 +790,7 @@ impl SummarizationService {
 ///  - `<|tool_response>...<channel|>` (Gemma hallucinated tool reply) —
 ///    suppressed; the model is imagining a tool response that hasn't happened
 ///    yet.
+///  - `<|tool_call_start|>...<|tool_call_end|>` (LFM2) — suppressed.
 ///
 /// Buffers across token boundaries so tags split across pieces are still
 /// recognised.
@@ -805,7 +806,7 @@ enum FilterState {
     Plain,
     InThink,
     /// In a suppressed block; the close marker is one of TOOL_CLOSE,
-    /// GEMMA_TOOL_CLOSE, or GEMMA_RESPONSE_CLOSE.
+    /// GEMMA_TOOL_CLOSE, GEMMA_RESPONSE_CLOSE, or LFM2_TOOL_CLOSE.
     Suppressed { close: &'static str },
 }
 
@@ -827,6 +828,12 @@ const OPEN_MARKERS: &[(&str, FilterState)] = &[
             close: GEMMA_RESPONSE_CLOSE,
         },
     ),
+    (
+        LFM2_TOOL_OPEN,
+        FilterState::Suppressed {
+            close: LFM2_TOOL_CLOSE,
+        },
+    ),
 ];
 
 const TOOL_OPEN: &str = "<tool_call>";
@@ -842,6 +849,10 @@ const GEMMA_RESPONSE_OPEN: &str = "<|tool_response>";
 const GEMMA_RESPONSE_CLOSE: &str = "<channel|>";
 /// Gemma-specific string-literal markers used inside tool-call bodies.
 const GEMMA_STR_MARKER: &str = "<|\"|>";
+/// LFM2-family tool-call markers. The body is a Pythonic list of calls, e.g.
+/// `[get_weather(city="Paris"), get_time()]`.
+const LFM2_TOOL_OPEN: &str = "<|tool_call_start|>";
+const LFM2_TOOL_CLOSE: &str = "<|tool_call_end|>";
 
 impl StreamFilter {
     fn new() -> Self {
@@ -972,7 +983,7 @@ impl StreamFilter {
     }
 }
 
-/// Extract structured tool calls from raw assistant output. Three sources are
+/// Extract structured tool calls from raw assistant output. Four sources are
 /// scanned, in order:
 ///
 ///  1. `<tool_call>...</tool_call>` blocks (Qwen-family). The block body may
@@ -980,7 +991,9 @@ impl StreamFilter {
 ///     (`<function=NAME><parameter=K>V</parameter></function>`).
 ///  2. `<|tool_call>...<tool_call|>` blocks (Gemma-family). Body is
 ///     `call:NAME{KEY:<|"|>VALUE<|"|>, ...}`.
-///  3. Fenced code blocks with language tags `tool_code`, `tool_call`,
+///  3. `<|tool_call_start|>...<|tool_call_end|>` blocks (LFM2-family). Body is
+///     a Pythonic list of calls, e.g. `[name(k="v"), other()]`.
+///  4. Fenced code blocks with language tags `tool_code`, `tool_call`,
 ///     `python`, or `json`. The body may be a Python-style call
 ///     (`print(name(k="v"))` or `name(k="v")`) or a JSON object.
 ///
@@ -1027,7 +1040,36 @@ fn extract_tool_calls(text: &str) -> Vec<ToolCallSpec> {
         }
     }
 
-    // 3. Fenced code blocks.
+    // 3. LFM2-style <|tool_call_start|>[ name(...), name(...) ]<|tool_call_end|>
+    //    blocks. The body is a Pythonic list of calls; split it into individual
+    //    `name(...)` calls and reuse the Python-style parser for each.
+    let mut cursor = 0;
+    while let Some(rel_start) = text[cursor..].find(LFM2_TOOL_OPEN) {
+        let body_start = cursor + rel_start + LFM2_TOOL_OPEN.len();
+        let Some(rel_end) = text[body_start..].find(LFM2_TOOL_CLOSE) else {
+            break;
+        };
+        let body = text[body_start..body_start + rel_end].trim();
+        cursor = body_start + rel_end + LFM2_TOOL_CLOSE.len();
+
+        // Strip the surrounding list brackets if present, then split on
+        // top-level commas (commas inside each call's parens/strings are kept).
+        let inner = body
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+            .unwrap_or(body);
+        for call in split_top_level_commas(inner) {
+            let call = call.trim();
+            if call.is_empty() {
+                continue;
+            }
+            if let Some((name, arguments)) = parse_python_style_call(call) {
+                push(name, arguments, &mut out);
+            }
+        }
+    }
+
+    // 4. Fenced code blocks.
     for (lang, body) in iter_code_fences(text) {
         let lang_lower = lang.to_ascii_lowercase();
         if !matches!(
@@ -1344,6 +1386,29 @@ fn python_literal_to_json(s: &str) -> serde_json::Value {
     serde_json::from_str(s).unwrap_or_else(|_| serde_json::Value::String(s.to_string()))
 }
 
+/// Sampling parameters for free-text generation. Pure greedy decoding can fall
+/// into phrase-repetition loops on some models (observed with LFM2.5 burning the
+/// whole token budget repeating one sentence). Instead of a repetition penalty
+/// (whose llama.cpp implementation is notoriously finicky — it has to flip the
+/// multiply/divide for negative logits because the paper's formula misbehaves
+/// there), we use min-p truncation + temperature: min-p drops the unlikely tail
+/// so output stays coherent, and a high temperature flattens the survivors
+/// enough to break out of loops. All tunable.
+const MIN_P: f32 = 0.05;
+const TEMPERATURE: f32 = 1.5;
+/// Fixed seed so the same input yields the same output across runs.
+const SAMPLER_SEED: u32 = 0xC0FFEE;
+
+/// Free-text generation sampler: min-p truncation, then temperature, then a
+/// seeded distribution sample. Used by summarization, plain chat, and titles.
+fn build_sampler() -> LlamaSampler {
+    LlamaSampler::chain_simple([
+        LlamaSampler::min_p(MIN_P, 1),
+        LlamaSampler::temp(TEMPERATURE),
+        LlamaSampler::dist(SAMPLER_SEED),
+    ])
+}
+
 /// Sampler for the tool-aware chat path. We deliberately **do not** use the
 /// grammar-constrained sampler produced by the chat template: llama.cpp's
 /// grammar implementation has a `GGML_ASSERT(!stacks.empty())` invariant that
@@ -1353,6 +1418,8 @@ fn python_literal_to_json(s: &str) -> serde_json::Value {
 /// without coaxing, and `parse_response_oaicompat` extracts them at the end of
 /// the turn either way.
 fn build_tool_sampler() -> LlamaSampler {
+    // Tool calls are structured output — keep greedy for deterministic,
+    // well-formed calls rather than sampling.
     LlamaSampler::greedy()
 }
 
@@ -1624,6 +1691,58 @@ mod tests {
             "Sure!<|tool",
             "_call>call:search_meetings{query:<|\"|>x<|",
             "\"|>}<tool_call|>",
+        ]));
+        assert_eq!(c, "Sure!");
+    }
+
+    // --- LFM2 `<|tool_call_start|>[...]<|tool_call_end|>` format ------------
+
+    #[test]
+    fn extract_tool_calls_lfm2_single_call() {
+        let text = "<|tool_call_start|>[get_weather(city=\"Paris\")]<|tool_call_end|>";
+        let calls = extract_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "get_weather");
+        let args: serde_json::Value = serde_json::from_str(&calls[0].arguments).unwrap();
+        assert_eq!(args["city"], "Paris");
+    }
+
+    #[test]
+    fn extract_tool_calls_lfm2_multiple_calls() {
+        let text =
+            "<|tool_call_start|>[search_meetings(query=\"x\", limit=5), get_time()]<|tool_call_end|>";
+        let calls = extract_tool_calls(text);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "search_meetings");
+        let args0: serde_json::Value = serde_json::from_str(&calls[0].arguments).unwrap();
+        assert_eq!(args0["query"], "x");
+        assert_eq!(args0["limit"], 5);
+        assert_eq!(calls[1].name, "get_time");
+    }
+
+    #[test]
+    fn extract_tool_calls_lfm2_comma_inside_string() {
+        let text = "<|tool_call_start|>[search_meetings(query=\"foo, bar\")]<|tool_call_end|>";
+        let calls = extract_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        let args: serde_json::Value = serde_json::from_str(&calls[0].arguments).unwrap();
+        assert_eq!(args["query"], "foo, bar");
+    }
+
+    #[test]
+    fn filter_suppresses_lfm2_tool_call_block() {
+        let (c, _) = collapsed(&run_filter(&[
+            "Sure!<|tool_call_start|>[get_weather(city=\"Paris\")]<|tool_call_end|>",
+        ]));
+        assert_eq!(c, "Sure!");
+    }
+
+    #[test]
+    fn filter_suppresses_lfm2_block_split_across_pieces() {
+        let (c, _) = collapsed(&run_filter(&[
+            "Sure!<|tool_call",
+            "_start|>[get_weather(city=\"Paris\")]<|tool_call",
+            "_end|>",
         ]));
         assert_eq!(c, "Sure!");
     }

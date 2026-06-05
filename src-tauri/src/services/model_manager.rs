@@ -291,13 +291,22 @@ pub fn list_whisper_models() -> Vec<ModelInfo<WhisperModel>> {
 pub fn list_llm_models() -> Vec<ModelInfo<LlmModel>> {
     vec![
         ModelInfo {
+            id: LlmModel::Lfm2_2_6B_Q8,
+            name: "LFM2 2.6B (Q8_0)".into(),
+            description: "Liquid AI on-device model — fast, direct summaries with no reasoning step."
+                .into(),
+            size_bytes: 2_730_000_000,
+            filename: LlmModel::Lfm2_2_6B_Q8.filename().into(),
+            recommended: Some(true),
+        },
+        ModelInfo {
             id: LlmModel::Gemma4_E2B_Q8,
             name: "Gemma 4 E2B (Q8_0)".into(),
             description: "Google's Gemma 4 model, 8-bit quantized. Higher quality, larger download."
                 .into(),
             size_bytes: 5_050_000_000,
             filename: LlmModel::Gemma4_E2B_Q8.filename().into(),
-            recommended: Some(true),
+            recommended: None,
         },
         ModelInfo {
             id: LlmModel::Qwen3_5_4B_Q4KM,
@@ -515,11 +524,16 @@ mod tests {
     #[test]
     fn list_llm_models_returns_catalog() {
         let models = list_llm_models();
-        assert_eq!(models.len(), 2);
-        assert_eq!(models[0].id, LlmModel::Gemma4_E2B_Q8);
-        assert_eq!(models[1].id, LlmModel::Qwen3_5_4B_Q4KM);
-        // The recommended model is listed first.
+        assert_eq!(models.len(), 3);
+        assert_eq!(models[0].id, LlmModel::Lfm2_2_6B_Q8);
+        assert_eq!(models[1].id, LlmModel::Gemma4_E2B_Q8);
+        assert_eq!(models[2].id, LlmModel::Qwen3_5_4B_Q4KM);
+        // The recommended model is listed first, and exactly one is recommended.
         assert_eq!(models[0].recommended, Some(true));
+        assert_eq!(
+            models.iter().filter(|m| m.recommended == Some(true)).count(),
+            1
+        );
     }
 
     #[test]

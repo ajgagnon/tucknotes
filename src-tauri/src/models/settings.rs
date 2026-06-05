@@ -69,6 +69,7 @@ pub struct DownloadProgress {
 #[derive(Serialize, Deserialize, Default)]
 pub struct AppSettings {
     pub selected_model: Option<WhisperModel>,
+    #[serde(default, deserialize_with = "deserialize_optional_llm_model")]
     pub selected_llm_model: Option<LlmModel>,
     /// App-wide default summary template id (`None` = the Default template).
     /// `#[serde(default)]` keeps older `settings.json` files (without this
@@ -81,6 +82,17 @@ pub struct AppSettings {
     /// loading (as `false`).
     #[serde(default)]
     pub recording_consent_acknowledged: bool,
+}
+
+/// Deserialize `selected_llm_model` tolerantly: an id for a model that has been
+/// removed from the catalog (e.g. after swapping the default model) maps to
+/// `None` rather than failing the entire settings load.
+fn deserialize_optional_llm_model<'de, D>(deserializer: D) -> Result<Option<LlmModel>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    Ok(raw.as_deref().and_then(LlmModel::from_id))
 }
 
 #[cfg(test)]
@@ -158,5 +170,20 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         let back: AppSettings = serde_json::from_str(&json).unwrap();
         assert!(back.recording_consent_acknowledged);
+    }
+
+    #[test]
+    fn app_settings_unknown_llm_model_deserializes_to_none() {
+        // An id for a model removed from the catalog must not break settings load.
+        let json = r#"{"selected_model":null,"selected_llm_model":"Lfm2_5_8B_A1B_Q4KM"}"#;
+        let parsed: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.selected_llm_model, None);
+    }
+
+    #[test]
+    fn app_settings_known_llm_model_still_deserializes() {
+        let json = r#"{"selected_model":null,"selected_llm_model":"Gemma4_E2B_Q8"}"#;
+        let parsed: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.selected_llm_model, Some(LlmModel::Gemma4_E2B_Q8));
     }
 }
