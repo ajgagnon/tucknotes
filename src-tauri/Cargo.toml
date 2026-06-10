@@ -46,6 +46,9 @@ llama-cpp-2 = { path = "../vendor/llama-cpp-rs/llama-cpp-2", features = ["metal"
 llama-cpp-sys-2 = { path = "../vendor/llama-cpp-rs/llama-cpp-sys-2" }
 encoding_rs = "0.8"
 
+[dev-dependencies]
+httpmock = "0.7"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 screencapturekit = "1.5"
 objc2 = "0.6"

@@ -1,7 +1,7 @@
 use tauri::Manager;
 
 use crate::errors::{lock_or_err, AppError};
-use crate::models::licensing::{LicenseRecord, LicenseStatus, LicensingState};
+use crate::models::licensing::{LicenseStatus, LicensingState};
 use crate::services::licensing as licensing_svc;
 
 fn data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, AppError> {
@@ -27,25 +27,13 @@ pub async fn activate_license_key(
     state: tauri::State<'_, LicensingState>,
     key: String,
 ) -> Result<LicenseStatus, AppError> {
-    let trimmed = key.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::LicenseValidationFailed(
-            "License key is empty.".into(),
-        ));
-    }
-
     let label = licensing_svc::device_label();
     let app_version = app.package_info().version.to_string();
-    let activation_id = licensing_svc::polar_activate(trimmed, &label, &app_version).await?;
-
     let dir = data_dir(&app)?;
-    let mut storage = lock_or_err(&state.storage)?;
-    let record = LicenseRecord {
-        key: trimmed.to_string(),
-        activation_id,
-        last_validated_at: licensing_svc::now_unix_secs(),
-    };
-    licensing_svc::store_license(&dir, &mut storage, record)
+    let status =
+        licensing_svc::activate_key(&dir, &state.storage, &key, &label, &app_version).await?;
+    licensing_svc::emit_status(&app, &status);
+    Ok(status)
 }
 
 #[tauri::command]
@@ -71,50 +59,17 @@ pub async fn deactivate_license(
 
     let dir = data_dir(&app)?;
     let mut storage = lock_or_err(&state.storage)?;
-    licensing_svc::clear_license(&dir, &mut storage)
+    let status = licensing_svc::clear_license(&dir, &mut storage)?;
+    licensing_svc::emit_status(&app, &status);
+    Ok(status)
 }
 
 /// Re-check a stored license against Polar. Updates `last_validated_at`
-/// on success; returns the resulting status (which may flip to
-/// `LicenseInvalid` if Polar rejects).
+/// on success; clears the license only if Polar definitively rejects it
+/// (transient failures keep the offline grace period running).
 #[tauri::command]
-pub async fn revalidate_license(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, LicensingState>,
-) -> Result<LicenseStatus, AppError> {
-    let snapshot = {
-        let storage = lock_or_err(&state.storage)?;
-        storage.license.clone()
-    };
-    let Some(record) = snapshot else {
-        // Nothing to revalidate; surface current trial state.
-        let storage = lock_or_err(&state.storage)?;
-        return Ok(licensing_svc::compute_status(
-            &storage,
-            licensing_svc::now_unix_secs(),
-        ));
-    };
-
-    match licensing_svc::polar_validate(&record.key, &record.activation_id).await {
-        Ok(()) => {
-            let dir = data_dir(&app)?;
-            let mut storage = lock_or_err(&state.storage)?;
-            let updated = LicenseRecord {
-                last_validated_at: licensing_svc::now_unix_secs(),
-                ..record
-            };
-            licensing_svc::store_license(&dir, &mut storage, updated)
-        }
-        Err(AppError::LicenseValidationFailed(reason)) => {
-            // Server explicitly rejected: clear stored license. Caller
-            // sees `LicenseInvalid` next time it asks for status.
-            let dir = data_dir(&app)?;
-            let mut storage = lock_or_err(&state.storage)?;
-            licensing_svc::clear_license(&dir, &mut storage)?;
-            Ok(LicenseStatus::LicenseInvalid { reason })
-        }
-        Err(other) => Err(other),
-    }
+pub async fn revalidate_license(app: tauri::AppHandle) -> Result<LicenseStatus, AppError> {
+    licensing_svc::revalidate(&app).await
 }
 
 /// Internal helper used by gated commands (recording, summarization) to

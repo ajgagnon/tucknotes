@@ -90,6 +90,26 @@ pub fn run() {
                 .expect("failed to init license storage");
             app.manage(LicensingState::new(license_storage));
 
+            // Periodically re-validate the stored license so the offline
+            // grace window keeps sliding while the user is online. Without
+            // this, every license "expires" 7 days after activation.
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    // Let the network stack / UI settle before the first check.
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    loop {
+                        if let Err(e) = licensing_svc::revalidate(&handle).await {
+                            eprintln!("[licensing] background revalidation error: {e}");
+                        }
+                        tokio::time::sleep(std::time::Duration::from_secs(
+                            licensing_svc::REVALIDATE_INTERVAL_SECS,
+                        ))
+                        .await;
+                    }
+                });
+            }
+
             let win_builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                     .title("TuckNotes")
