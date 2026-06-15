@@ -39,6 +39,8 @@ pub fn run() {
         wall_time_offset_secs: Mutex::new(0.0),
         transcribe_task: Mutex::new(None),
         finalize_in_progress: Arc::new(AtomicBool::new(false)),
+        capture_starting: AtomicBool::new(false),
+        capture_epoch: std::sync::atomic::AtomicU64::new(0),
     };
 
     #[cfg(not(target_os = "macos"))]
@@ -149,7 +151,8 @@ pub fn run() {
         })
         .manage(recording_state)
         .manage(detector_state)
-        .manage(summarization_state);
+        .manage(summarization_state)
+        .manage(services::live_minutes::LiveMinutesState::default());
 
     #[cfg(target_os = "macos")]
     {
@@ -212,6 +215,8 @@ pub fn run() {
             set_default_template,
             get_recording_consent,
             set_recording_consent,
+            get_live_minutes_enabled,
+            set_live_minutes_enabled,
             chat_send_message,
             chat_stop,
             get_license_status,

@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -152,6 +152,12 @@ pub struct RecordingState {
     pub wall_time_offset_secs: Mutex<f64>,
     pub transcribe_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub finalize_in_progress: Arc<AtomicBool>,
+    /// True while a background capture-init task is running (between the
+    /// start/resume command returning and the captures being installed).
+    pub capture_starting: AtomicBool,
+    /// Bumped by start/pause/stop so a stale capture-init task can detect it
+    /// lost the race and tear down its captures instead of installing them.
+    pub capture_epoch: AtomicU64,
 }
 
 #[cfg(not(target_os = "macos"))]

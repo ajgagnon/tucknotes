@@ -20,7 +20,7 @@ export interface TemplateInfo {
 export interface MeetingDocument {
   id: string;
   meeting_id: string;
-  kind: "summary" | "notes";
+  kind: "summary" | "notes" | "minutes";
   title: string;
   body: string | null;
   sort_order: number;

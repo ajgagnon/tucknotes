@@ -308,10 +308,13 @@ export function SimpleEditor({
 
   useEffect(() => {
     return () => {
-      if (markdownEmitDebounceRef.current) {
-        clearTimeout(markdownEmitDebounceRef.current)
-        markdownEmitDebounceRef.current = null
-      }
+      // Flush only a pending (debounced) change on unmount. Emitting
+      // unconditionally would round-trip the untouched document through the
+      // markdown serializer, and the normalized output reads as an edit to
+      // consumers — overwriting externally-updated bodies (live minutes).
+      if (!markdownEmitDebounceRef.current) return
+      clearTimeout(markdownEmitDebounceRef.current)
+      markdownEmitDebounceRef.current = null
       const emit = onMarkdownChangeRef.current
       if (editor && !editor.isDestroyed && emit) {
         emit(editor.getMarkdown())

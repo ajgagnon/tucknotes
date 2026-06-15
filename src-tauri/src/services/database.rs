@@ -109,7 +109,7 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
         CREATE TABLE IF NOT EXISTS meeting_documents (
             id           TEXT PRIMARY KEY,
             meeting_id   TEXT NOT NULL,
-            kind         TEXT NOT NULL CHECK (kind IN ('summary', 'notes')),
+            kind         TEXT NOT NULL CHECK (kind IN ('summary', 'notes', 'minutes')),
             title        TEXT NOT NULL,
             body         TEXT,
             sort_order   INTEGER NOT NULL,
@@ -117,7 +117,7 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_summary_notes
-            ON meeting_documents(meeting_id, kind) WHERE kind IN ('summary', 'notes');
+            ON meeting_documents(meeting_id, kind) WHERE kind IN ('summary', 'notes', 'minutes');
         CREATE INDEX IF NOT EXISTS idx_documents_meeting_sort
             ON meeting_documents(meeting_id, sort_order, created_at);",
     )?;
@@ -202,14 +202,26 @@ fn migrate_database(conn: &Connection) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Rebuilds `meeting_documents` with `kind IN ('summary', 'notes')` and rewrites data from dev-era CHECKs.
-/// Always run (idempotent for DBs that are already on the new schema).
+/// Rebuilds `meeting_documents` with `kind IN ('summary', 'notes', 'minutes')` and rewrites data
+/// from older CHECKs.
+///
+/// Skipped once the live table already carries the current CHECK (containing both `'summary'`
+/// and `'minutes'`): the legacy remap below treats `'minutes'` rows as a dev-era alias for the
+/// summary, which would destroy live-minutes documents if it ever re-ran against them.
 ///
 /// Rename the table *before* rewriting any rows: older dev DBs had a CHECK like
 /// `kind IN ('minutes','notes','custom','enhanced','enhanced_raw')` that rejects `'summary'`,
 /// so any UPDATE on the original table would fail. Remapping happens in the INSERT ... SELECT
 /// into the freshly created table, which has the new CHECK.
 fn migrate_meeting_documents_to_summary_schema(conn: &Connection) -> Result<(), AppError> {
+    let table_sql: String = conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'meeting_documents'",
+        [],
+        |row| row.get(0),
+    )?;
+    if table_sql.contains("'summary'") && table_sql.contains("'minutes'") {
+        return Ok(());
+    }
     // After RENAME, SQLite keeps the same index *names* on `meeting_documents_old`, so we must
     // drop them before reusing those names (init_schema already created them on the pre-rename
     // table).
@@ -223,7 +235,7 @@ fn migrate_meeting_documents_to_summary_schema(conn: &Connection) -> Result<(), 
         "CREATE TABLE meeting_documents (
             id           TEXT PRIMARY KEY,
             meeting_id   TEXT NOT NULL,
-            kind         TEXT NOT NULL CHECK (kind IN ('summary', 'notes')),
+            kind         TEXT NOT NULL CHECK (kind IN ('summary', 'notes', 'minutes')),
             title        TEXT NOT NULL,
             body         TEXT,
             sort_order   INTEGER NOT NULL,
@@ -231,7 +243,7 @@ fn migrate_meeting_documents_to_summary_schema(conn: &Connection) -> Result<(), 
             FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
         );
         CREATE UNIQUE INDEX idx_meeting_summary_notes
-            ON meeting_documents(meeting_id, kind) WHERE kind IN ('summary', 'notes');
+            ON meeting_documents(meeting_id, kind) WHERE kind IN ('summary', 'notes', 'minutes');
         CREATE INDEX idx_documents_meeting_sort
             ON meeting_documents(meeting_id, sort_order, created_at);",
     )?;
@@ -411,6 +423,30 @@ pub fn set_summary_body(conn: &Connection, meeting_id: &str, body: &str) -> Resu
         return Err(AppError::DatabaseError(format!(
             "No summary document for meeting: {meeting_id}"
         )));
+    }
+    Ok(())
+}
+
+/// Write the live-minutes document body, creating the `kind='minutes'` document on first
+/// write. UPDATE-then-INSERT rather than ON CONFLICT: the uniqueness of (meeting_id, kind)
+/// comes from a partial index, which upsert conflict targets don't match.
+pub fn upsert_minutes_body(
+    conn: &Connection,
+    meeting_id: &str,
+    body: &str,
+    now: i64,
+) -> Result<(), AppError> {
+    let n = conn.execute(
+        "UPDATE meeting_documents SET body = ?1 WHERE meeting_id = ?2 AND kind = 'minutes'",
+        rusqlite::params![body, meeting_id],
+    )?;
+    if n == 0 {
+        let id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO meeting_documents (id, meeting_id, kind, title, body, sort_order, created_at)
+             VALUES (?1, ?2, 'minutes', 'Minutes', ?3, 2, ?4)",
+            rusqlite::params![id, meeting_id, body, now],
+        )?;
     }
     Ok(())
 }
@@ -827,6 +863,71 @@ mod tests {
         let summary = docs.iter().find(|d| d.kind == "summary").unwrap();
         assert_eq!(summary.title, "Summary");
         assert_eq!(summary.body.as_deref(), Some("body-a"));
+    }
+
+    #[test]
+    fn minutes_document_survives_repeat_migration() {
+        // Regression: the meeting_documents rebuild used to run on every open and remapped
+        // 'minutes' rows to 'summary' (or deleted them when a summary existed). Once the
+        // table carries the current CHECK, the migration must be a no-op.
+        let conn = open_db_memory().unwrap();
+        create_meeting(&conn, "m1", Some("M"), 1).unwrap();
+        upsert_minutes_body(&conn, "m1", "- discussed roadmap", 2).unwrap();
+
+        // Simulate a second app launch against the same DB.
+        init_schema(&conn).unwrap();
+        migrate_database(&conn).unwrap();
+
+        let docs = list_meeting_documents(&conn, "m1").unwrap();
+        let minutes = docs.iter().find(|d| d.kind == "minutes").unwrap();
+        assert_eq!(minutes.title, "Minutes");
+        assert_eq!(minutes.body.as_deref(), Some("- discussed roadmap"));
+        // The pre-existing summary doc is untouched.
+        assert!(docs.iter().any(|d| d.kind == "summary"));
+    }
+
+    #[test]
+    fn upsert_minutes_body_creates_then_updates() {
+        let conn = open_db_memory().unwrap();
+        create_meeting(&conn, "m1", Some("M"), 1).unwrap();
+
+        upsert_minutes_body(&conn, "m1", "- first bullet", 2).unwrap();
+        let docs = list_meeting_documents(&conn, "m1").unwrap();
+        let minutes = docs.iter().find(|d| d.kind == "minutes").unwrap();
+        assert_eq!(minutes.body.as_deref(), Some("- first bullet"));
+        let first_id = minutes.id.clone();
+
+        upsert_minutes_body(&conn, "m1", "- first bullet\n- second bullet", 3).unwrap();
+        let docs = list_meeting_documents(&conn, "m1").unwrap();
+        let minutes_docs: Vec<_> = docs.iter().filter(|d| d.kind == "minutes").collect();
+        assert_eq!(minutes_docs.len(), 1, "must update in place, not duplicate");
+        assert_eq!(minutes_docs[0].id, first_id);
+        assert_eq!(
+            minutes_docs[0].body.as_deref(),
+            Some("- first bullet\n- second bullet")
+        );
+    }
+
+    #[test]
+    fn upsert_minutes_body_missing_meeting_errors() {
+        let conn = open_db_memory().unwrap();
+        assert!(upsert_minutes_body(&conn, "ghost", "- x", 1).is_err());
+    }
+
+    #[test]
+    fn minutes_document_cascades_on_meeting_delete() {
+        let conn = open_db_memory().unwrap();
+        create_meeting(&conn, "m1", Some("M"), 1).unwrap();
+        upsert_minutes_body(&conn, "m1", "- bullet", 2).unwrap();
+        delete_meeting(&conn, "m1").unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM meeting_documents WHERE meeting_id = 'm1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]
