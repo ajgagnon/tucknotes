@@ -87,7 +87,7 @@ export function TranscriptFab({
         variant="secondary"
         className="rounded-l-none rounded-r-full"
       >
-        <Square className="size-2.5 fill-destructive" strokeWidth={0} />
+        <Square className="size-2.5 fill-danger" strokeWidth={0} />
       </Button>
     </div>
   );

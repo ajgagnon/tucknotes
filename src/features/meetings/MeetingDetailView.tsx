@@ -314,7 +314,13 @@ export function MeetingDetailView({
       }
     }
     wasLiveRecordingRef.current = isLiveRecording;
-  }, [isLiveRecording, docIds, detail.documents, minutesExpected, minutesDocId]);
+  }, [
+    isLiveRecording,
+    docIds,
+    detail.documents,
+    minutesExpected,
+    minutesDocId,
+  ]);
 
   const selectedDoc =
     isTranscriptTab || isSyntheticMinutesTab
@@ -473,18 +479,21 @@ export function MeetingDetailView({
   const isSummaryTab = selectedDoc?.kind === "summary";
   // During recording the LLM owns the minutes document (each pass replaces
   // the whole body), so it renders read-only; editable once recording ends.
-  const isLiveMinutesTab =
-    selectedDoc?.kind === "minutes" && isLiveRecording;
-  const panelMode: "streaming" | "placeholder" | "editor" | "live-minutes" | null =
-    !selectedDoc
-      ? null
-      : isLiveMinutesTab
-        ? "live-minutes"
-        : isSummaryTab && summarizing
-          ? "streaming"
-          : isSummaryTab && !currentSummary
-            ? "placeholder"
-            : "editor";
+  const isLiveMinutesTab = selectedDoc?.kind === "minutes" && isLiveRecording;
+  const panelMode:
+    | "streaming"
+    | "placeholder"
+    | "editor"
+    | "live-minutes"
+    | null = !selectedDoc
+    ? null
+    : isLiveMinutesTab
+      ? "live-minutes"
+      : isSummaryTab && summarizing
+        ? "streaming"
+        : isSummaryTab && !currentSummary
+          ? "placeholder"
+          : "editor";
   const editorInitialBody = isSummaryTab
     ? currentSummary
     : (selectedDoc?.body ?? null);
@@ -628,7 +637,7 @@ export function MeetingDetailView({
                 >
                   Minutes
                   <span
-                    className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-red-500"
+                    className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-danger"
                     aria-label="Live"
                   />
                 </TabsTrigger>
@@ -652,7 +661,7 @@ export function MeetingDetailView({
                   )}
                   {isLiveRecording && doc.kind === "minutes" && (
                     <span
-                      className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-red-500"
+                      className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-destructive"
                       aria-label="Live"
                     />
                   )}
