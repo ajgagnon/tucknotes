@@ -1,99 +1,180 @@
 #import <AVFoundation/AVFoundation.h>
-#import <AudioToolbox/AudioToolbox.h>
+#import <CoreMedia/CoreMedia.h>
+#import <string.h>
 #import "voice_capture.h"
 
-static AVAudioEngine *gEngine = nil;
+// Microphone capture via AVCaptureSession. Unlike AVAudioEngine, this opens
+// only the input device — never the output — so it is immune to input/output
+// sample-rate mismatches (e.g. a 48 kHz mic alongside 44.1 kHz speakers), and
+// it uses no AUVoiceProcessingIO, so it never ducks other system audio. Echo
+// between the mic and system streams is removed downstream at the transcript
+// level (see services/dedup.rs).
 
-/// Minimize VoiceProcessingIO audio ducking as much as the API allows.
-/// Note: VoiceProcessingIO always ducks other audio to some degree —
-/// there is no way to fully disable it. This is a known trade-off
-/// for getting hardware-tuned AEC.
-static void minimize_ducking(AVAudioEngine *engine) {
-    if (@available(macOS 14.0, *)) {
-        AudioUnit au = engine.inputNode.audioUnit;
-        if (au) {
-            AUVoiceIOOtherAudioDuckingConfiguration cfg;
-            cfg.mEnableAdvancedDucking = true;
-            cfg.mDuckingLevel = kAUVoiceIOOtherAudioDuckingLevelMin;
-            AudioUnitSetProperty(
-                au,
-                kAUVoiceIOProperty_OtherAudioDuckingConfiguration,
-                kAudioUnitScope_Global, 0,
-                &cfg, sizeof(cfg)
-            );
+@interface VCDelegate : NSObject <AVCaptureAudioDataOutputSampleBufferDelegate>
+@property(nonatomic, assign) VoiceCaptureCallback callback;
+@property(nonatomic, assign) void *context;
+@end
+
+@implementation VCDelegate
+- (void)captureOutput:(AVCaptureOutput *)output
+    didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
+           fromConnection:(AVCaptureConnection *)connection {
+    VoiceCaptureCallback cb = self.callback;
+    if (!cb || sampleBuffer == NULL || !CMSampleBufferIsValid(sampleBuffer)) {
+        return;
+    }
+
+    CMFormatDescriptionRef fmt = CMSampleBufferGetFormatDescription(sampleBuffer);
+    const AudioStreamBasicDescription *asbd =
+        fmt ? CMAudioFormatDescriptionGetStreamBasicDescription(fmt) : NULL;
+    // We request 32-bit float PCM below; bail if we somehow get something else.
+    if (!asbd || !(asbd->mFormatFlags & kAudioFormatFlagIsFloat)) {
+        return;
+    }
+
+    uint32_t sampleRate = (uint32_t)asbd->mSampleRate;
+    uint32_t channels = asbd->mChannelsPerFrame ? asbd->mChannelsPerFrame : 1;
+
+    CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+    double timestamp = CMTIME_IS_VALID(pts) ? CMTimeGetSeconds(pts) : 0.0;
+
+    // Size-query then allocate so any channel/interleaving layout is handled.
+    size_t ablSize = 0;
+    if (CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer, &ablSize, NULL, 0, NULL, NULL, 0, NULL) != noErr ||
+        ablSize == 0) {
+        return;
+    }
+    AudioBufferList *abl = (AudioBufferList *)malloc(ablSize);
+    if (!abl) {
+        return;
+    }
+    CMBlockBufferRef blockBuffer = NULL;
+    OSStatus status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+        sampleBuffer, NULL, abl, ablSize, NULL, NULL,
+        kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, &blockBuffer);
+    if (status != noErr || blockBuffer == NULL || abl->mNumberBuffers == 0) {
+        if (blockBuffer) CFRelease(blockBuffer);
+        free(abl);
+        return;
+    }
+
+    const float *buf0 = (const float *)abl->mBuffers[0].mData;
+    uint32_t buf0Floats = abl->mBuffers[0].mDataByteSize / (uint32_t)sizeof(float);
+
+    if (buf0 && buf0Floats > 0) {
+        if (channels <= 1 || abl->mNumberBuffers > 1) {
+            // Mono, or non-interleaved (channel 0 is its own buffer): pass directly.
+            cb(self.context, buf0, buf0Floats, sampleRate, timestamp);
+        } else {
+            // Interleaved multi-channel: extract channel 0 into a mono buffer.
+            uint32_t frameCount = buf0Floats / channels;
+            float *mono = (float *)malloc((size_t)frameCount * sizeof(float));
+            if (mono) {
+                for (uint32_t i = 0; i < frameCount; i++) {
+                    mono[i] = buf0[(size_t)i * channels];
+                }
+                cb(self.context, mono, frameCount, sampleRate, timestamp);
+                free(mono);
+            }
         }
+    }
 
-        AVAudioVoiceProcessingOtherAudioDuckingConfiguration hlConfig;
-        hlConfig.enableAdvancedDucking = YES;
-        hlConfig.duckingLevel = AVAudioVoiceProcessingOtherAudioDuckingLevelMin;
-        engine.inputNode.voiceProcessingOtherAudioDuckingConfiguration = hlConfig;
+    CFRelease(blockBuffer);
+    free(abl);
+}
+@end
+
+static AVCaptureSession *gSession = nil;
+static VCDelegate *gDelegate = nil;
+static dispatch_queue_t gQueue = NULL;
+
+static void set_error(char *error_out, int error_out_len, NSString *msg) {
+    if (error_out && error_out_len > 0 && msg) {
+        strlcpy(error_out, msg.UTF8String, (size_t)error_out_len);
     }
 }
 
-bool voice_capture_start(bool use_voice_processing,
-                         VoiceCaptureCallback callback,
-                         void *context) {
-    if (gEngine) {
-        return false; // already running
-    }
-
-    AVAudioEngine *engine = [[AVAudioEngine alloc] init];
-
-    // When use_voice_processing is true we engage AUVoiceProcessingIO for
-    // hardware AEC/noise suppression/AGC. This unconditionally ducks other
-    // system audio, which is acceptable only when the user is on built-in
-    // speakers (otherwise the bleed AEC fixes wasn't a problem in the first
-    // place). When false we use the plain input node — no AEC, no ducking.
-    if (use_voice_processing) {
-        NSError *vpError = nil;
-        if (![engine.inputNode setVoiceProcessingEnabled:YES error:&vpError]) {
-            NSLog(@"[voice_capture] failed to enable voice processing: %@", vpError);
-        }
-    }
-
-    AVAudioFormat *inputFormat = [engine.inputNode inputFormatForBus:0];
-    NSLog(@"[voice_capture] input format: %@", inputFormat);
-
-    // Install a tap on the input node to receive PCM buffers.
-    [engine.inputNode installTapOnBus:0
-                           bufferSize:4096
-                               format:inputFormat
-                                block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
-        if (!callback || buffer.frameLength == 0) return;
-
-        const float *channelData = buffer.floatChannelData[0];
-        uint32_t frameCount = (uint32_t)buffer.frameLength;
-        uint32_t sampleRate = (uint32_t)buffer.format.sampleRate;
-        double timestamp = (double)when.sampleTime / sampleRate;
-
-        callback(context, channelData, frameCount, sampleRate, timestamp);
-    }];
-
-    [engine prepare];
-
-    NSError *startError = nil;
-    if (![engine startAndReturnError:&startError]) {
-        NSLog(@"[voice_capture] failed to start engine: %@", startError);
-        [engine.inputNode removeTapOnBus:0];
+bool voice_capture_start(VoiceCaptureCallback callback,
+                         void *context,
+                         char *error_out,
+                         int error_out_len) {
+    if (gSession) {
+        set_error(error_out, error_out_len, @"capture already running");
         return false;
     }
 
-    if (use_voice_processing) {
-        // Minimize ducking after engine start (AU must be instantiated first).
-        minimize_ducking(engine);
+    AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio];
+    if (!device) {
+        set_error(error_out, error_out_len, @"no microphone input device available");
+        return false;
+    }
+    NSLog(@"[voice_capture] input device: %@", device.localizedName);
+
+    NSError *inputError = nil;
+    AVCaptureDeviceInput *input = [AVCaptureDeviceInput deviceInputWithDevice:device
+                                                                       error:&inputError];
+    if (!input) {
+        set_error(error_out, error_out_len,
+                  inputError.localizedDescription ?: @"failed to open microphone input");
+        return false;
     }
 
-    gEngine = engine;
-    NSLog(@"[voice_capture] started (voice_processing=%s)",
-          use_voice_processing ? "yes" : "no");
+    AVCaptureSession *session = [[AVCaptureSession alloc] init];
+    if (![session canAddInput:input]) {
+        set_error(error_out, error_out_len, @"cannot add microphone input to session");
+        return false;
+    }
+    [session addInput:input];
+
+    AVCaptureAudioDataOutput *output = [[AVCaptureAudioDataOutput alloc] init];
+    // Request 32-bit float mono PCM at the device's native rate; downstream
+    // resamples to 16 kHz.
+    output.audioSettings = @{
+        (NSString *)AVFormatIDKey : @(kAudioFormatLinearPCM),
+        (NSString *)AVLinearPCMBitDepthKey : @32,
+        (NSString *)AVLinearPCMIsFloatKey : @YES,
+        (NSString *)AVLinearPCMIsNonInterleaved : @NO,
+        (NSString *)AVNumberOfChannelsKey : @1,
+    };
+
+    VCDelegate *delegate = [[VCDelegate alloc] init];
+    delegate.callback = callback;
+    delegate.context = context;
+    dispatch_queue_t queue =
+        dispatch_queue_create("com.tucknotes.voicecapture", DISPATCH_QUEUE_SERIAL);
+    [output setSampleBufferDelegate:delegate queue:queue];
+
+    if (![session canAddOutput:output]) {
+        set_error(error_out, error_out_len, @"cannot add audio output to session");
+        return false;
+    }
+    [session addOutput:output];
+
+    [session startRunning];
+    if (!session.isRunning) {
+        set_error(error_out, error_out_len, @"AVCaptureSession failed to start");
+        return false;
+    }
+
+    // Retain session, delegate (output holds it unretained), and queue.
+    gSession = session;
+    gDelegate = delegate;
+    gQueue = queue;
+    NSLog(@"[voice_capture] started (AVCaptureSession)");
     return true;
 }
 
 void voice_capture_stop(void) {
-    if (!gEngine) return;
+    if (!gSession) return;
 
-    [gEngine.inputNode removeTapOnBus:0];
-    [gEngine stop];
-    gEngine = nil;
+    [gSession stopRunning]; // blocks until stopped; no more delegate callbacks after this
+    if (gDelegate) {
+        gDelegate.callback = NULL;
+        gDelegate.context = NULL;
+    }
+    gSession = nil;
+    gDelegate = nil;
+    gQueue = NULL;
     NSLog(@"[voice_capture] stopped");
 }

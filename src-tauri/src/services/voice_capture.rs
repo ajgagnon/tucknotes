@@ -14,9 +14,10 @@ type VoiceCaptureCallback = extern "C" fn(
 
 extern "C" {
     fn voice_capture_start(
-        use_voice_processing: bool,
         callback: VoiceCaptureCallback,
         context: *mut std::ffi::c_void,
+        error_out: *mut std::ffi::c_char,
+        error_out_len: i32,
     ) -> bool;
     fn voice_capture_stop();
 }
@@ -61,28 +62,34 @@ pub struct VoiceCapture {
 }
 
 impl VoiceCapture {
-    /// Start microphone capture using AVAudioEngine. When `use_voice_processing`
-    /// is true, AUVoiceProcessingIO is engaged for hardware AEC (at the cost of
-    /// unconditional system-audio ducking). When false, uses a plain input node.
+    /// Start microphone capture using AVAudioEngine's plain input node.
+    /// Captures in the hardware-native sample rate (reported per chunk); no
+    /// echo cancellation and no system-audio ducking.
     /// Audio chunks are sent to `tx` tagged as `AudioSource::Microphone`.
-    pub fn start(
-        use_voice_processing: bool,
-        tx: mpsc::Sender<AudioChunk>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn start(tx: mpsc::Sender<AudioChunk>) -> Result<Self, Box<dyn std::error::Error>> {
         let context = Box::new(CallbackContext { tx });
         // Lend a raw pointer to C. The Box stays alive in `VoiceCapture._context`.
         let raw: *mut CallbackContext = &*context as *const _ as *mut _;
 
+        let mut err_buf = [0u8; 256];
         let ok = unsafe {
             voice_capture_start(
-                use_voice_processing,
                 on_audio_buffer,
                 raw as *mut std::ffi::c_void,
+                err_buf.as_mut_ptr() as *mut std::ffi::c_char,
+                err_buf.len() as i32,
             )
         };
 
         if !ok {
-            return Err("Failed to start voice capture engine".into());
+            let end = err_buf.iter().position(|&b| b == 0).unwrap_or(err_buf.len());
+            let reason = String::from_utf8_lossy(&err_buf[..end]);
+            let reason = if reason.is_empty() {
+                "unknown error".into()
+            } else {
+                reason
+            };
+            return Err(format!("Failed to start voice capture engine: {reason}").into());
         }
 
         Ok(VoiceCapture { _context: context })

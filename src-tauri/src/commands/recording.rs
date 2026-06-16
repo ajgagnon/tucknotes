@@ -27,6 +27,7 @@ mod macos {
         RecordingStateEvent, TranscriptEvent,
     };
     use crate::services::database::{self, DatabaseState};
+    use crate::services::dedup::{self, Candidate, RecentSegments};
     use crate::services::transcription::{TranscriptionService, TranscriptionState};
 
     const STEP_INTERVAL: Duration = Duration::from_secs(6);
@@ -69,14 +70,6 @@ mod macos {
         items
     }
 
-    /// A segment with its source label and absolute timestamp for interleaving.
-    struct TaggedSegment {
-        text: String,
-        source: String,
-        /// Absolute timestamp in ms (buffer start + Whisper offset).
-        timestamp_ms: u64,
-    }
-
     /// Run batch transcription, interleave segments from all sources by
     /// timestamp, then emit events in chronological order.
     /// Updates `prev_texts` with the latest transcript per source for cross-window context.
@@ -88,6 +81,7 @@ mod macos {
         app: &tauri::AppHandle,
         model_path: &std::path::Path,
         prev_texts: &Mutex<HashMap<String, String>>,
+        recent_segments: &Mutex<RecentSegments>,
         meeting_id: &str,
     ) {
         if items.is_empty() {
@@ -117,16 +111,53 @@ mod macos {
                     // Provisional: emit one combined event per source so the
                     // frontend can display the full in-progress text (it stores
                     // provisional as Record<source, segment>, so per-segment
-                    // emission would lose all but the last segment).
+                    // emission would lose all but the last segment). Mic segments
+                    // that echo a system segment are dropped so the live view
+                    // shows each utterance once. This is stateless — it never
+                    // touches `recent_segments`, since the provisional pass
+                    // re-transcribes the same growing audio every tick.
+                    let mut sys_segs: Vec<(u64, u64, Vec<String>)> = Vec::new();
+                    for (item, segments) in items.iter().zip(segment_lists.iter()) {
+                        if item.label != "system" {
+                            continue;
+                        }
+                        for seg in segments {
+                            let start = item.timestamp_ms + seg.start_cs.max(0) as u64 * 10;
+                            let end =
+                                item.timestamp_ms + seg.end_cs.max(seg.start_cs).max(0) as u64 * 10;
+                            sys_segs.push((start, end, dedup::normalize(&seg.text)));
+                        }
+                    }
+
                     for (item, segments) in items.iter().zip(segment_lists.iter()) {
                         if segments.is_empty() {
                             continue;
                         }
-                        let full_text: String = segments
-                            .iter()
-                            .map(|s| s.text.as_str())
-                            .collect::<Vec<_>>()
-                            .join(" ");
+                        let parts: Vec<&str> = if item.label == "microphone" {
+                            segments
+                                .iter()
+                                .filter(|seg| {
+                                    let start =
+                                        item.timestamp_ms + seg.start_cs.max(0) as u64 * 10;
+                                    let end = item.timestamp_ms
+                                        + seg.end_cs.max(seg.start_cs).max(0) as u64 * 10;
+                                    let toks = dedup::normalize(&seg.text);
+                                    !sys_segs.iter().any(|(ss, se, st)| {
+                                        dedup::is_duplicate(&toks, start, end, st, *ss, *se, true)
+                                    })
+                                })
+                                .map(|seg| seg.text.as_str())
+                                .collect()
+                        } else {
+                            segments.iter().map(|seg| seg.text.as_str()).collect()
+                        };
+                        if parts.is_empty() {
+                            continue;
+                        }
+                        let full_text = parts.join(" ");
+                        if full_text.trim().is_empty() {
+                            continue;
+                        }
                         let _ = app.emit(
                             "transcript-segment",
                             TranscriptEvent {
@@ -138,17 +169,22 @@ mod macos {
                         );
                     }
                 } else {
-                    // Finalized: emit per-segment events interleaved by
-                    // timestamp so the conversation is in chronological order.
-                    let mut all_segments: Vec<TaggedSegment> = Vec::new();
+                    // Finalized: build candidates from all sources, deduplicate
+                    // against the rolling buffer (cross-stream echo + window-
+                    // boundary repeats), then emit + persist the survivors in
+                    // chronological order.
+                    let mut candidates: Vec<Candidate> = Vec::new();
 
                     for (item, segments) in items.iter().zip(segment_lists.iter()) {
                         for seg in segments {
-                            let abs_ms = item.timestamp_ms + (seg.start_cs as u64 * 10);
-                            all_segments.push(TaggedSegment {
-                                text: seg.text.clone(),
+                            let start_ms = item.timestamp_ms + seg.start_cs.max(0) as u64 * 10;
+                            let end_ms =
+                                item.timestamp_ms + seg.end_cs.max(seg.start_cs).max(0) as u64 * 10;
+                            candidates.push(Candidate {
                                 source: item.label.clone(),
-                                timestamp_ms: abs_ms,
+                                start_ms,
+                                end_ms,
+                                text: seg.text.clone(),
                             });
                         }
 
@@ -165,15 +201,20 @@ mod macos {
                         }
                     }
 
-                    all_segments.sort_by_key(|s| s.timestamp_ms);
+                    candidates.sort_by_key(|c| c.start_ms);
 
-                    for seg in &all_segments {
+                    let accepted = {
+                        let recent = recent_segments.lock().unwrap_or_else(|e| e.into_inner());
+                        dedup::dedup_finalized(&recent, candidates)
+                    };
+
+                    for seg in &accepted {
                         let _ = app.emit(
                             "transcript-segment",
                             TranscriptEvent {
                                 text: seg.text.clone(),
                                 source: seg.source.clone(),
-                                timestamp_ms: seg.timestamp_ms,
+                                timestamp_ms: seg.start_ms,
                                 is_provisional: false,
                             },
                         );
@@ -186,7 +227,7 @@ mod macos {
                                     &meeting_id,
                                     &seg.text,
                                     &seg.source,
-                                    seg.timestamp_ms as i64,
+                                    seg.start_ms as i64,
                                     None,
                                     database::now_unix_ms(),
                                 ) {
@@ -196,6 +237,11 @@ mod macos {
                             Err(e) => eprintln!("[transcribe] db lock poisoned: {e}"),
                         }
                     }
+
+                    recent_segments
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .extend_and_prune(&accepted);
                 }
             }
             Ok((_, Err(e))) => eprintln!("[transcribe] error: {e}"),
@@ -211,6 +257,7 @@ mod macos {
         base_dir: &std::path::Path,
         busy: &AtomicBool,
         prev_texts: &Mutex<HashMap<String, String>>,
+        recent_segments: &Mutex<RecentSegments>,
         meeting_id: &str,
     ) {
         if busy
@@ -248,6 +295,7 @@ mod macos {
             app,
             &model_path,
             prev_texts,
+            recent_segments,
             meeting_id,
         )
         .await;
@@ -262,6 +310,7 @@ mod macos {
         app: &tauri::AppHandle,
         base_dir: &std::path::Path,
         prev_texts: &Mutex<HashMap<String, String>>,
+        recent_segments: &Mutex<RecentSegments>,
         meeting_id: &str,
     ) {
         let model_path = match crate::services::model_manager::resolve_whisper_path(base_dir) {
@@ -277,7 +326,17 @@ mod macos {
         };
 
         let items = collect_batch_items(sources);
-        transcribe_and_emit(items, false, service, app, &model_path, prev_texts, meeting_id).await;
+        transcribe_and_emit(
+            items,
+            false,
+            service,
+            app,
+            &model_path,
+            prev_texts,
+            recent_segments,
+            meeting_id,
+        )
+        .await;
     }
 
     pub(super) fn snapshot_recording_state(
@@ -334,11 +393,8 @@ mod macos {
             }
         });
 
-        let use_vp = crate::services::audio_output::is_builtin_speakers();
-        eprintln!("[recording] mic capture mode: voice_processing={use_vp}");
-        let voice_cap =
-            crate::services::voice_capture::VoiceCapture::start(use_vp, shared_tx)
-                .map_err(|e| AppError::CaptureFailed(format!("VoiceCapture: {e}")))?;
+        let voice_cap = crate::services::voice_capture::VoiceCapture::start(shared_tx)
+            .map_err(|e| AppError::CaptureFailed(format!("VoiceCapture: {e}")))?;
         {
             let mut vc_guard = lock_or_err(&state.voice_capture)?;
             *vc_guard = Some(voice_cap);
@@ -401,6 +457,7 @@ mod macos {
         let handle = tokio::spawn(async move {
             let busy = Arc::new(AtomicBool::new(false));
             let prev_texts = Mutex::new(HashMap::<String, String>::new());
+            let recent_segments = Mutex::new(RecentSegments::new());
             let mut interval = tokio::time::interval(STEP_INTERVAL);
             interval.tick().await;
 
@@ -414,6 +471,7 @@ mod macos {
                             &base_dir,
                             &busy,
                             &prev_texts,
+                            &recent_segments,
                             &meeting_id_owned,
                         ).await;
                     }
@@ -424,6 +482,7 @@ mod macos {
                             &app_for_transcribe,
                             &base_dir,
                             &prev_texts,
+                            &recent_segments,
                             &meeting_id_owned,
                         ).await;
                         break;
@@ -446,6 +505,19 @@ mod macos {
         if !unsafe { crate::services::permissions::CGPreflightScreenCaptureAccess() } {
             return Err(AppError::PermissionDenied(
                 "Screen recording permission is required to capture audio.".into(),
+            ));
+        }
+
+        // Microphone permission is required for mic capture. Without it the
+        // AVAudioEngine input node fails to start with an opaque error, so check
+        // it up front and surface a clear, actionable message. A `tauri dev`
+        // rebuild can silently reset this grant even after onboarding.
+        // (3 == AVAuthorizationStatusAuthorized.)
+        if crate::services::permissions::microphone_authorization_status() != 3 {
+            return Err(AppError::PermissionDenied(
+                "Microphone permission is required to capture audio. Enable it in \
+                 System Settings → Privacy & Security → Microphone, then try again."
+                    .into(),
             ));
         }
 
@@ -679,7 +751,7 @@ mod macos {
             }
         }
 
-        // Stop voice capture (AVAudioEngine + VoiceProcessingIO)
+        // Stop voice capture (AVAudioEngine)
         {
             let mut vc_guard = lock_or_err(&state.voice_capture)?;
             // Dropping VoiceCapture calls voice_capture_stop() via Drop

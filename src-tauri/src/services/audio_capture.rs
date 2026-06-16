@@ -116,8 +116,7 @@ impl AudioCapture {
             .with_captures_audio(true)
             .with_sample_rate(16000)
             .with_channel_count(1);
-        // Microphone is now captured separately via VoiceCapture (AVAudioEngine
-        // with VoiceProcessingIO) for hardware-tuned echo cancellation.
+        // Microphone is captured separately via VoiceCapture (AVAudioEngine).
 
         let (tx, rx) = mpsc::channel(1024);
 
