@@ -66,7 +66,7 @@ pub struct DownloadProgress {
     pub total_bytes: u64,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 pub struct AppSettings {
     pub selected_model: Option<WhisperModel>,
     pub selected_llm_model: Option<LlmModel>,
@@ -81,6 +81,26 @@ pub struct AppSettings {
     /// loading (as `false`).
     #[serde(default)]
     pub recording_consent_acknowledged: bool,
+    /// Whether to generate live meeting minutes during recording. Defaults to
+    /// on; the feature silently no-ops when no LLM model is downloaded.
+    #[serde(default = "default_true")]
+    pub live_minutes_enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        AppSettings {
+            selected_model: None,
+            selected_llm_model: None,
+            default_template: None,
+            recording_consent_acknowledged: false,
+            live_minutes_enabled: true,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -137,6 +157,25 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         let back: AppSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.default_template.as_deref(), Some("minutes"));
+    }
+
+    #[test]
+    fn app_settings_live_minutes_defaults_on() {
+        // Older settings.json without `live_minutes_enabled` loads as `true`.
+        let legacy = r#"{"selected_model":null,"selected_llm_model":null}"#;
+        let parsed: AppSettings = serde_json::from_str(legacy).unwrap();
+        assert!(parsed.live_minutes_enabled);
+
+        assert!(AppSettings::default().live_minutes_enabled);
+
+        // An explicit `false` round-trips.
+        let settings = AppSettings {
+            live_minutes_enabled: false,
+            ..AppSettings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: AppSettings = serde_json::from_str(&json).unwrap();
+        assert!(!back.live_minutes_enabled);
     }
 
     #[test]

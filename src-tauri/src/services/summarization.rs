@@ -21,6 +21,11 @@ const THINK_CLOSE: &str = "</think>";
 
 const MAX_SUMMARIZATION_TOKENS: i32 = 4096;
 const MAX_CHAT_TOKENS: i32 = 1024;
+const MAX_MINUTES_TOKENS: i32 = 1024;
+/// Hard cap on top-level bullets kept from one live-minutes pass (the revised
+/// recent window only — frozen bullets are stitched back on by the caller;
+/// sub-bullets don't count against the cap).
+const MAX_MINUTES_LINES: usize = 10;
 /// Token budget for one tool-aware chat turn. Models tend to chain-of-thought
 /// for a paragraph or two before emitting the `<tool_call>` block, then
 /// produce a final answer after the tool result comes back, so we need
@@ -334,6 +339,67 @@ impl SummarizationService {
         )?;
         let cleaned = strip_think_tags(raw.trim());
         Ok(cleaned.trim().to_string())
+    }
+
+    /// `true` while another inference holds the model. Used by the live-minutes
+    /// pass to skip (rather than queue behind) user-initiated work.
+    pub fn is_busy(&self) -> bool {
+        self.model.try_lock().is_err()
+    }
+
+    /// One live-minutes pass: given the frozen earlier minutes (context only),
+    /// the recent window the model may still revise, and the transcript
+    /// accumulated since the last pass, return the revised recent window as a
+    /// bullet list. The caller stitches frozen + revised back together, so the
+    /// model can never drop earlier content. Output is post-processed to
+    /// bullet lines only (one level of sub-bullets preserved) and capped at
+    /// [`MAX_MINUTES_LINES`] top-level bullets.
+    ///
+    /// **Blocking** — call from `spawn_blocking`. Clears `interrupt` after
+    /// taking the model lock (same hand-off convention as `generate_chat`);
+    /// returns `AppError::Interrupted` if chat preempts mid-generation.
+    pub fn update_live_minutes(
+        &self,
+        model_path: &Path,
+        frozen_minutes: &str,
+        recent_minutes: &str,
+        new_transcript: &str,
+        interrupt: &AtomicBool,
+    ) -> Result<String, AppError> {
+        self.ensure_loaded(model_path)?;
+
+        let guard = lock_or_err(&self.model)?;
+        let (_, model) = guard
+            .as_ref()
+            .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
+
+        interrupt.store(false, Ordering::Relaxed);
+
+        let frozen_block = if frozen_minutes.trim().is_empty() {
+            "(none)"
+        } else {
+            frozen_minutes
+        };
+        let recent_block = if recent_minutes.trim().is_empty() {
+            "(none yet)"
+        } else {
+            recent_minutes
+        };
+        let user_message = format!(
+            "EARLIER MINUTES (final, context only):\n{frozen_block}\n\n\
+             RECENT MINUTES (revise these):\n{recent_block}\n\n\
+             NEW TRANSCRIPT:\n{new_transcript}"
+        );
+        let messages_json = serde_json::json!([
+            {"role": "system", "content": templates::live_minutes_system_prompt()},
+            {"role": "user", "content": user_message}
+        ])
+        .to_string();
+        let prompt = Self::apply_template(model, &messages_json, false)?;
+
+        let raw =
+            self.run_inference(model, &prompt, MAX_MINUTES_TOKENS, interrupt, |_, _| {})?;
+        Ok(extract_bullet_lines(&strip_think_tags(raw.trim())))
     }
 
     /// Run a chat completion against the supplied pre-built OpenAI-format
@@ -1372,6 +1438,44 @@ fn strip_think_tags(s: &str) -> String {
     result
 }
 
+/// Keep only markdown bullet lines from live-minutes output, capped at
+/// [`MAX_MINUTES_LINES`] top-level bullets. Drops any preamble, headings, or
+/// commentary the model emitted despite the prompt. One level of nesting is
+/// preserved: an indented bullet becomes a sub-bullet normalized to exactly
+/// two spaces of indent (what remarkGfm needs to nest under a `- ` parent);
+/// deeper levels flatten to that single sub level. An indented bullet before
+/// any top-level one is promoted rather than dropped. The cap `break`s rather
+/// than skipping so a dropped topic's sub-bullets can't attach to the
+/// previous topic.
+fn extract_bullet_lines(s: &str) -> String {
+    let mut out = Vec::new();
+    let mut top_count = 0usize;
+    for line in s.lines() {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+        else {
+            continue;
+        };
+        let rest = rest.trim();
+        if rest.is_empty() {
+            continue;
+        }
+        let indented = trimmed.len() != line.len();
+        if indented && top_count > 0 {
+            out.push(format!("  - {rest}"));
+        } else {
+            if top_count == MAX_MINUTES_LINES {
+                break;
+            }
+            top_count += 1;
+            out.push(format!("- {rest}"));
+        }
+    }
+    out.join("\n")
+}
+
 /// Tauri managed-state wrapper. The `Arc` allows cloning a handle into
 /// spawned Tokio tasks that outlive the command handler's borrow.
 pub struct SummarizationState {
@@ -1392,7 +1496,62 @@ pub struct SummarizationState {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_tool_calls, strip_think_tags, InferenceEvent, StreamFilter};
+    use super::{
+        extract_bullet_lines, extract_tool_calls, strip_think_tags, InferenceEvent, StreamFilter,
+        MAX_MINUTES_LINES,
+    };
+
+    #[test]
+    fn extract_bullet_lines_keeps_only_bullets() {
+        let raw = "Here are the minutes:\n- first point\n\n## Heading\n- second point\nnot a bullet\n  - indented bullet";
+        assert_eq!(
+            extract_bullet_lines(raw),
+            "- first point\n- second point\n  - indented bullet"
+        );
+    }
+
+    #[test]
+    fn extract_bullet_lines_caps_top_level_count() {
+        let raw = (0..50)
+            .map(|i| format!("- bullet {i}\n  - detail {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let out = extract_bullet_lines(&raw);
+        // Sub-bullets don't count against the cap; the cut is clean — no
+        // sub-bullet from a dropped topic attaches to the last kept one.
+        assert_eq!(out.lines().count(), MAX_MINUTES_LINES * 2);
+        assert!(out.ends_with(&format!(
+            "- bullet {i}\n  - detail {i}",
+            i = MAX_MINUTES_LINES - 1
+        )));
+    }
+
+    #[test]
+    fn extract_bullet_lines_empty_for_no_bullets() {
+        assert_eq!(extract_bullet_lines("nothing here"), "");
+        assert_eq!(extract_bullet_lines(""), "");
+    }
+
+    #[test]
+    fn extract_bullet_lines_normalizes_markers_and_indent() {
+        let raw = "* star topic\n\t- tab detail\n    - deep detail";
+        assert_eq!(
+            extract_bullet_lines(raw),
+            "- star topic\n  - tab detail\n  - deep detail"
+        );
+    }
+
+    #[test]
+    fn extract_bullet_lines_promotes_leading_orphan_sub_bullet() {
+        let raw = "  - orphan detail\n- real topic";
+        assert_eq!(extract_bullet_lines(raw), "- orphan detail\n- real topic");
+    }
+
+    #[test]
+    fn extract_bullet_lines_drops_empty_bullets() {
+        let raw = "- \n- real point\n  -  ";
+        assert_eq!(extract_bullet_lines(raw), "- real point");
+    }
 
     #[test]
     fn extract_tool_calls_handles_object_arguments() {

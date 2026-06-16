@@ -2,6 +2,7 @@ pub mod audio;
 pub mod database;
 pub mod dedup;
 pub mod licensing;
+pub mod live_minutes;
 pub mod model_manager;
 pub mod summarization;
 pub mod template_store;

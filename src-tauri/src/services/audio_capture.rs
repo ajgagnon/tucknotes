@@ -95,7 +95,12 @@ impl SCStreamOutputTrait for CaptureHandler {
 
 impl AudioCapture {
     pub fn start() -> Result<(Self, mpsc::Receiver<AudioChunk>), Box<dyn std::error::Error>> {
-        let content = SCShareableContent::get()?;
+        // Only displays are needed; the unfiltered query enumerates every
+        // window (including off-screen ones) and can take several seconds.
+        let content = SCShareableContent::create()
+            .with_exclude_desktop_windows(true)
+            .with_on_screen_windows_only(true)
+            .get()?;
         let display = content
             .displays()
             .into_iter()

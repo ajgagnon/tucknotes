@@ -242,6 +242,18 @@ mod macos {
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
                         .extend_and_prune(&accepted);
+
+                    if !accepted.is_empty() {
+                        let lines: Vec<(String, String)> = accepted
+                            .iter()
+                            .map(|s| (s.source.clone(), s.text.clone()))
+                            .collect();
+                        crate::services::live_minutes::on_finalized_window(
+                            &app,
+                            &meeting_id,
+                            &lines,
+                        );
+                    }
                 }
             }
             Ok((_, Err(e))) => eprintln!("[transcribe] error: {e}"),
@@ -342,7 +354,11 @@ mod macos {
     pub(super) fn snapshot_recording_state(
         state: &RecordingState,
     ) -> Result<RecordingStateEvent, AppError> {
-        let recording = lock_or_err(&state.capture)?.is_some();
+        // A session whose captures are still starting counts as recording —
+        // otherwise the init window would read as paused (session set, no
+        // capture), and the UI wouldn't navigate to the new meeting.
+        let recording = lock_or_err(&state.capture)?.is_some()
+            || state.capture_starting.load(Ordering::SeqCst);
         let meeting_id = lock_or_err(&state.session_id)?.clone();
         let paused = meeting_id.is_some()
             && !recording
@@ -363,28 +379,34 @@ mod macos {
         })
     }
 
-    /// Starts SCK + mic capture and the transcription loop. Caller must set `session_id` and
-    /// `started_at` before calling (and create the DB meeting row for new sessions).
-    async fn begin_capture_for_session(
-        state: &RecordingState,
-        app: &tauri::AppHandle,
-        meeting_id: &str,
-    ) -> Result<(), AppError> {
-        let mut guard = lock_or_err(&state.capture)?;
-        if guard.is_some() {
-            return Err(AppError::CaptureFailed("Already recording".into()));
+    /// Captures created by `create_captures`, not yet wired into shared state.
+    /// Must not be silently dropped: VoiceCapture stops via Drop, but dropping
+    /// an SCStream only releases the reference — the system keeps capturing —
+    /// so discard paths must call `discard()`.
+    struct PendingCaptures {
+        capture: crate::services::audio_capture::AudioCapture,
+        voice_capture: crate::services::voice_capture::VoiceCapture,
+        shared_rx: tokio::sync::mpsc::Receiver<crate::services::audio_capture::AudioChunk>,
+    }
+
+    impl PendingCaptures {
+        /// Tear down captures that never got installed.
+        fn discard(mut self) {
+            if let Err(e) = self.capture.stop() {
+                eprintln!("[recording] failed to stop discarded capture: {e}");
+            }
+            // voice_capture stops via Drop.
         }
+    }
 
-        let wall_origin = lock_or_err(&state.started_at)?
-            .ok_or_else(|| AppError::CaptureFailed("Missing session clock".into()))?;
-        let wall_offset_secs = *lock_or_err(&state.wall_time_offset_secs)?;
+    /// The slow, state-free half of capture startup: SCK stream + AVAudioEngine.
+    /// Takes seconds (window enumeration, VoiceProcessingIO spin-up) — must run
+    /// on a blocking thread, off the start_recording command's critical path.
+    fn create_captures() -> Result<PendingCaptures, AppError> {
+        let (shared_tx, shared_rx) = tokio::sync::mpsc::channel(1024);
 
-        let (shared_tx, mut shared_rx) = tokio::sync::mpsc::channel(1024);
-
-        let (capture, mut sys_rx) = crate::services::audio_capture::AudioCapture::start()
+        let (mut capture, mut sys_rx) = crate::services::audio_capture::AudioCapture::start()
             .map_err(|e| AppError::CaptureFailed(e.to_string()))?;
-        *guard = Some(capture);
-        drop(guard);
 
         let sys_tx = shared_tx.clone();
         tokio::task::spawn_blocking(move || {
@@ -393,11 +415,84 @@ mod macos {
             }
         });
 
-        let voice_cap = crate::services::voice_capture::VoiceCapture::start(shared_tx)
-            .map_err(|e| AppError::CaptureFailed(format!("VoiceCapture: {e}")))?;
+        let voice_capture =
+            match crate::services::voice_capture::VoiceCapture::start(shared_tx) {
+                Ok(vc) => vc,
+                Err(e) => {
+                    // Dropping the SCStream doesn't stop the capture — do it
+                    // explicitly so a half-failed init doesn't leak a stream.
+                    let _ = capture.stop();
+                    return Err(AppError::CaptureFailed(format!("VoiceCapture: {e}")));
+                }
+            };
+
+        Ok(PendingCaptures {
+            capture,
+            voice_capture,
+            shared_rx,
+        })
+    }
+
+    /// Wires freshly created captures into shared state and starts the
+    /// transcription loop. Returns `Ok(false)` (dropping the captures) when the
+    /// session was stopped/paused while they were starting — detected by the
+    /// epoch check under the capture mutex, which stop/pause bump before taking
+    /// the capture.
+    fn install_captures(
+        state: &RecordingState,
+        app: &tauri::AppHandle,
+        meeting_id: &str,
+        epoch: u64,
+        pending: PendingCaptures,
+    ) -> Result<bool, AppError> {
+        // Everything installs under the capture mutex so stop/pause either see
+        // none of it or all of it.
+        let mut guard = match lock_or_err(&state.capture) {
+            Ok(g) => g,
+            Err(e) => {
+                pending.discard();
+                return Err(e);
+            }
+        };
+        if state.capture_epoch.load(Ordering::SeqCst) != epoch || guard.is_some() {
+            drop(guard);
+            pending.discard();
+            return Ok(false);
+        }
+        // The session clock was set by start/resume before spawning this init;
+        // it must stay continuous across pause/resume so new audio timestamps
+        // sort after existing segments.
+        let wall_origin = match lock_or_err(&state.started_at)
+            .map(|s| *s)
+            .and_then(|s| s.ok_or_else(|| AppError::CaptureFailed("Missing session clock".into())))
+        {
+            Ok(origin) => origin,
+            Err(e) => {
+                drop(guard);
+                pending.discard();
+                return Err(e);
+            }
+        };
+        let wall_offset_secs = match lock_or_err(&state.wall_time_offset_secs) {
+            Ok(w) => *w,
+            Err(e) => {
+                drop(guard);
+                pending.discard();
+                return Err(e);
+            }
+        };
+
+        let PendingCaptures {
+            capture,
+            voice_capture,
+            mut shared_rx,
+        } = pending;
+
+        *guard = Some(capture);
+
         {
             let mut vc_guard = lock_or_err(&state.voice_capture)?;
-            *vc_guard = Some(voice_cap);
+            *vc_guard = Some(voice_capture);
         }
 
         {
@@ -492,7 +587,81 @@ mod macos {
         });
         *lock_or_err(&state.transcribe_task)? = Some(handle);
 
-        Ok(())
+        state.capture_starting.store(false, Ordering::SeqCst);
+
+        Ok(true)
+    }
+
+    /// What a failed capture init should do to the session it was starting.
+    enum CaptureInitFailure {
+        /// Fresh start: end the session (meeting row is kept; retrying from
+        /// the meeting page goes through the resume path).
+        EndSession,
+        /// Resume: leave the meeting paused.
+        StayPaused,
+    }
+
+    /// Runs the slow capture startup in the background and installs the result.
+    /// On failure (and only if no stop/pause superseded this attempt), rolls
+    /// the session back per `failure` and surfaces the error to the frontend
+    /// via a `recording-error` event.
+    fn spawn_capture_init(
+        app: tauri::AppHandle,
+        meeting_id: String,
+        epoch: u64,
+        failure: CaptureInitFailure,
+    ) {
+        // Serializes init tasks: VoiceCapture wraps a process-global engine, so
+        // when a quick stop-then-restart supersedes an init, the stale one must
+        // finish (and discard its engine) before the next may create one.
+        static INIT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+        tokio::spawn(async move {
+            let _init_guard = INIT_LOCK.lock().await;
+            let t0 = std::time::Instant::now();
+            let created = tokio::task::spawn_blocking(create_captures).await;
+            let state: tauri::State<'_, RecordingState> = app.state();
+
+            let result = match created {
+                Ok(Ok(pending)) => {
+                    eprintln!("[recording] capture init took {:.2?}", t0.elapsed());
+                    install_captures(&state, &app, &meeting_id, epoch, pending)
+                }
+                Ok(Err(e)) => Err(e),
+                Err(e) => Err(AppError::CaptureFailed(format!(
+                    "capture init panicked: {e}"
+                ))),
+            };
+
+            match result {
+                Ok(true) => {
+                    crate::services::live_minutes::start_session(&app, &meeting_id);
+                    if let Ok(snap) = snapshot_recording_state(&state) {
+                        let _ = app.emit("recording-state-changed", snap);
+                    }
+                }
+                // Lost the race to stop/pause; the fresh captures were dropped.
+                Ok(false) => {}
+                Err(e) => {
+                    eprintln!("[recording] capture init failed: {e}");
+                    // A stop/pause that superseded this attempt already owns
+                    // the session state — don't touch it.
+                    if state.capture_epoch.load(Ordering::SeqCst) != epoch {
+                        return;
+                    }
+                    state.capture_starting.store(false, Ordering::SeqCst);
+                    if let CaptureInitFailure::EndSession = failure {
+                        if let Err(e2) = finalize_session_after_transcribe(&state, &app) {
+                            eprintln!("[recording] rollback after failed init: {e2}");
+                        }
+                    }
+                    if let Ok(snap) = snapshot_recording_state(&state) {
+                        let _ = app.emit("recording-state-changed", snap);
+                    }
+                    let _ = app.emit("recording-error", e);
+                }
+            }
+        });
     }
 
     /// Core implementation of start_recording for macOS.
@@ -532,7 +701,7 @@ mod macos {
 
         {
             let guard = lock_or_err(&state.capture)?;
-            if guard.is_some() {
+            if guard.is_some() || state.capture_starting.load(Ordering::SeqCst) {
                 return Err(AppError::CaptureFailed("Already recording".into()));
             }
         }
@@ -586,7 +755,18 @@ mod macos {
             new_id
         };
 
-        begin_capture_for_session(&state, &app, &meeting_id).await?;
+        // The slow capture startup (SCK + AVAudioEngine, several seconds) runs
+        // in the background so this command — and the UI's navigation to the
+        // meeting — returns immediately. `live_minutes::start_session` runs on
+        // its success path.
+        let epoch = state.capture_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+        state.capture_starting.store(true, Ordering::SeqCst);
+        spawn_capture_init(
+            app.clone(),
+            meeting_id.clone(),
+            epoch,
+            CaptureInitFailure::EndSession,
+        );
 
         {
             let det: tauri::State<'_, MeetingDetectorState> = app.state();
@@ -607,11 +787,23 @@ mod macos {
             ));
         }
 
-        {
-            let guard = lock_or_err(&state.capture)?;
-            if guard.is_none() {
-                return Ok(());
-            }
+        // Invalidate any in-flight capture init *before* taking the capture, so
+        // a background init task can never install captures after we've looked.
+        // Pause-while-starting cancels the init and leaves the session paused.
+        let was_starting = state.capture_starting.swap(false, Ordering::SeqCst);
+        state.capture_epoch.fetch_add(1, Ordering::SeqCst);
+
+        let capture = {
+            let mut cap_guard = lock_or_err(&state.capture)?;
+            cap_guard.take()
+        };
+        if capture.is_none() && !was_starting {
+            return Ok(());
+        }
+        if let Some(mut capture) = capture {
+            capture
+                .stop()
+                .map_err(|e| AppError::CaptureFailed(e.to_string()))?;
         }
 
         match state.cancel_token.lock() {
@@ -621,15 +813,6 @@ mod macos {
                 }
             }
             Err(e) => eprintln!("[pause_recording] cancel_token lock poisoned: {e}"),
-        }
-
-        {
-            let mut cap_guard = lock_or_err(&state.capture)?;
-            if let Some(mut capture) = cap_guard.take() {
-                capture
-                    .stop()
-                    .map_err(|e| AppError::CaptureFailed(e.to_string()))?;
-            }
         }
 
         {
@@ -659,7 +842,7 @@ mod macos {
 
         {
             let guard = lock_or_err(&state.capture)?;
-            if guard.is_some() {
+            if guard.is_some() || state.capture_starting.load(Ordering::SeqCst) {
                 return Ok(());
             }
         }
@@ -671,7 +854,9 @@ mod macos {
         lock_or_err(&state.started_at)?
             .ok_or_else(|| AppError::CaptureFailed("Missing session clock".into()))?;
 
-        begin_capture_for_session(&state, &app, &meeting_id).await?;
+        let epoch = state.capture_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+        state.capture_starting.store(true, Ordering::SeqCst);
+        spawn_capture_init(app, meeting_id, epoch, CaptureInitFailure::StayPaused);
 
         Ok(())
     }
@@ -733,14 +918,11 @@ mod macos {
             return Ok(None);
         }
 
-        match state.cancel_token.lock() {
-            Ok(mut token) => {
-                if let Some(token) = token.take() {
-                    token.cancel();
-                }
-            }
-            Err(e) => eprintln!("[stop_recording] cancel_token lock poisoned: {e}"),
-        }
+        // Invalidate any in-flight capture init *before* taking the capture, so
+        // a background init task can never install captures (and a transcribe
+        // task we'd miss cancelling) after we've looked.
+        state.capture_starting.store(false, Ordering::SeqCst);
+        state.capture_epoch.fetch_add(1, Ordering::SeqCst);
 
         {
             let mut guard = lock_or_err(&state.capture)?;
@@ -749,6 +931,15 @@ mod macos {
                     .stop()
                     .map_err(|e| AppError::CaptureFailed(e.to_string()))?;
             }
+        }
+
+        match state.cancel_token.lock() {
+            Ok(mut token) => {
+                if let Some(token) = token.take() {
+                    token.cancel();
+                }
+            }
+            Err(e) => eprintln!("[stop_recording] cancel_token lock poisoned: {e}"),
         }
 
         // Stop voice capture (AVAudioEngine)
@@ -774,24 +965,41 @@ mod macos {
                         self.0.store(false, Ordering::SeqCst);
                     }
                 }
-                let _clear = ClearFinalizeFlag(Arc::clone(&finalize_flag));
 
-                if let Err(e) = handle.await {
-                    eprintln!("[stop_recording] transcribe task panicked: {e}");
-                }
+                // Scope the finalize flag to the transcript flush only: the
+                // live-minutes flush below can take seconds (one LLM pass) and
+                // doesn't touch capture/accumulator state, so it must not
+                // block starting the next recording.
+                let meeting_id = {
+                    let _clear = ClearFinalizeFlag(Arc::clone(&finalize_flag));
 
-                let recording_state: tauri::State<'_, RecordingState> = app_bg.state();
+                    if let Err(e) = handle.await {
+                        eprintln!("[stop_recording] transcribe task panicked: {e}");
+                    }
 
-                let meeting_id = match finalize_session_after_transcribe(&recording_state, &app_bg) {
-                    Ok(mid) => mid,
-                    Err(e) => {
-                        eprintln!("[stop_recording] finalize session after transcribe: {e}");
-                        None
+                    let recording_state: tauri::State<'_, RecordingState> = app_bg.state();
+
+                    match finalize_session_after_transcribe(&recording_state, &app_bg) {
+                        Ok(mid) => mid,
+                        Err(e) => {
+                            eprintln!("[stop_recording] finalize session after transcribe: {e}");
+                            None
+                        }
                     }
                 };
 
                 let finalized_id = meeting_id.or(notify_meeting_id);
                 if let Some(mid) = finalized_id {
+                    // Flush the live-minutes tail before announcing the
+                    // recording finalized (which triggers auto-summarize).
+                    // Bounded: every earlier pass already persisted, so a
+                    // timeout only risks the final tail (which still lands
+                    // late via its own persist).
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(15),
+                        crate::services::live_minutes::finalize_session(&app_bg, &mid),
+                    )
+                    .await;
                     let _ = app_bg.emit(
                         "recording-finalized",
                         RecordingFinalizedEvent { meeting_id: mid },
@@ -802,6 +1010,14 @@ mod macos {
             Ok(pending_meeting_id)
         } else {
             finalize_session_after_transcribe(&state, &app)?;
+            // No transcription ran, so there's no tail to flush — just drop
+            // any live-minutes session left from this recording.
+            if let Some(mid) = pending_meeting_id {
+                let app_bg = app.clone();
+                tokio::spawn(async move {
+                    crate::services::live_minutes::finalize_session(&app_bg, &mid).await;
+                });
+            }
             Ok(None)
         }
     }

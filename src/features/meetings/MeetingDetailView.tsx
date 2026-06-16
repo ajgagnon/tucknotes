@@ -31,6 +31,7 @@ import {
   summaryBodyFromDocuments,
 } from "./types";
 import { useMeetingSummarization } from "./useMeetingSummarization";
+import { useLiveMinutes } from "./useLiveMinutes";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { LiveTranscript } from "./LiveTranscript";
 import { PersistedTranscript } from "./PersistedTranscript";
@@ -43,6 +44,17 @@ import { cn } from "@/lib/utils";
 
 /** Sentinel value for the Transcript tab (not a `MeetingDocument` id). */
 const TRANSCRIPT_TAB = "__transcript__";
+/** Sentinel for the Minutes tab while recording, before the minutes document
+ *  exists (the backend creates it on the first LLM pass). */
+const MINUTES_TAB = "__minutes__";
+
+/** Tab display order by document kind (Transcript always renders last).
+ *  During recording the summary is hidden, so this yields Minutes → Notes. */
+const KIND_TAB_ORDER: Record<string, number> = {
+  summary: 0,
+  minutes: 1,
+  notes: 2,
+};
 /// Sentinel value for the "Edit templates…" action in the template Select.
 const EDIT_TEMPLATES_VALUE = "__edit_templates__";
 
@@ -70,7 +82,7 @@ export function MeetingDetailView({
   provisional,
   onTitleChange,
   onRecordingStarted,
-  onRefreshMeeting: _onRefreshMeeting,
+  onRefreshMeeting,
   onMeetingDocumentBodyUpdated,
   onOpenSettings,
 }: MeetingDetailViewProps) {
@@ -78,6 +90,9 @@ export function MeetingDetailView({
   const transcriptScrollRef = useRef<TranscriptScrollHandle | null>(null);
   const wasLiveRecordingRef = useRef(false);
   const lastNonTranscriptTabRef = useRef<string>("");
+  // Once the user explicitly picks a tab, auto-selection (e.g. the Minutes
+  // default while recording) backs off until the next recording session.
+  const userPickedTabRef = useRef(false);
   const docIds = useMemo(
     () => detail.documents.map((d) => d.id).join(","),
     [detail.documents],
@@ -99,13 +114,16 @@ export function MeetingDetailView({
     transcriptFinalizingMeetingId === detail.meeting.id;
 
   const summaryHidden = isLiveRecording;
-  const visibleDocuments = useMemo(
-    () =>
-      summaryHidden
-        ? detail.documents.filter((d) => d.kind !== "summary")
-        : detail.documents,
-    [detail.documents, summaryHidden],
-  );
+  const visibleDocuments = useMemo(() => {
+    const docs = summaryHidden
+      ? detail.documents.filter((d) => d.kind !== "summary")
+      : detail.documents;
+    return [...docs].sort(
+      (a, b) =>
+        (KIND_TAB_ORDER[a.kind] ?? 9) - (KIND_TAB_ORDER[b.kind] ?? 9) ||
+        a.sort_order - b.sort_order,
+    );
+  }, [detail.documents, summaryHidden]);
 
   const capturingThisMeeting = isLiveRecording && recording && !paused;
   const canResume =
@@ -127,18 +145,8 @@ export function MeetingDetailView({
     [docIds, visibleDocuments],
   );
 
-  const effectiveTabId = useMemo(() => {
-    if (selectedDocId === TRANSCRIPT_TAB) return TRANSCRIPT_TAB;
-    if (visibleDocuments.some((d) => d.id === selectedDocId)) {
-      return selectedDocId;
-    }
-    if (defaultDocumentTabId) return defaultDocumentTabId;
-    return TRANSCRIPT_TAB;
-  }, [selectedDocId, defaultDocumentTabId, docIds, visibleDocuments]);
-
-  const isTranscriptTab = effectiveTabId === TRANSCRIPT_TAB;
-
   const handleSeekTranscript = useCallback((timestampMs: number) => {
+    userPickedTabRef.current = true;
     setSelectedDocId(TRANSCRIPT_TAB);
     requestAnimationFrame(() => {
       transcriptScrollRef.current?.scrollToTimeMs(timestampMs);
@@ -168,6 +176,69 @@ export function MeetingDetailView({
 
   const llmDownload = useLlmDownloadProgress();
 
+  const minutesDocId = useMemo(
+    () => detail.documents.find((d) => d.kind === "minutes")?.id,
+    [detail.documents],
+  );
+  const hasMinutesDoc = minutesDocId != null;
+  // Bumped on every external minutes update (LLM pass) so the post-meeting
+  // editor remounts with the fresh body — it only reads initialBody at mount.
+  // User edits save through onDocumentBodySaved and never bump this.
+  const [minutesRev, setMinutesRev] = useState(0);
+  const minutesDocIdRef = useRef(minutesDocId);
+  minutesDocIdRef.current = minutesDocId;
+  const onMeetingDocumentBodyUpdatedRef = useRef(onMeetingDocumentBodyUpdated);
+  onMeetingDocumentBodyUpdatedRef.current = onMeetingDocumentBodyUpdated;
+  const handleMinutesBody = useCallback((body: string) => {
+    const docId = minutesDocIdRef.current;
+    if (docId == null) return;
+    onMeetingDocumentBodyUpdatedRef.current?.(docId, body);
+    setMinutesRev((rev) => rev + 1);
+  }, []);
+  const { liveMinutesBody } = useLiveMinutes(
+    detail.meeting.id,
+    isLiveRecording,
+    hasMinutesDoc,
+    onRefreshMeeting,
+    handleMinutesBody,
+  );
+
+  // Mirrors the backend's session gating (setting on + model downloaded) so
+  // the Minutes tab can appear immediately — before the first LLM pass
+  // creates the document — without promising minutes that will never come.
+  const [liveMinutesEnabled, setLiveMinutesEnabled] = useState(false);
+  useEffect(() => {
+    invoke<boolean>("get_live_minutes_enabled")
+      .then(setLiveMinutesEnabled)
+      .catch(() => setLiveMinutesEnabled(false));
+  }, []);
+  const minutesExpected = liveMinutesEnabled && llmModelReady === true;
+  const showSyntheticMinutesTab =
+    isLiveRecording && minutesExpected && !hasMinutesDoc;
+
+  const effectiveTabId = useMemo(() => {
+    if (selectedDocId === TRANSCRIPT_TAB) return TRANSCRIPT_TAB;
+    if (selectedDocId === MINUTES_TAB) {
+      // Hands off to the real document once the first pass creates it.
+      if (minutesDocId) return minutesDocId;
+      if (showSyntheticMinutesTab) return MINUTES_TAB;
+    } else if (visibleDocuments.some((d) => d.id === selectedDocId)) {
+      return selectedDocId;
+    }
+    if (defaultDocumentTabId) return defaultDocumentTabId;
+    return TRANSCRIPT_TAB;
+  }, [
+    selectedDocId,
+    defaultDocumentTabId,
+    docIds,
+    visibleDocuments,
+    showSyntheticMinutesTab,
+    minutesDocId,
+  ]);
+
+  const isTranscriptTab = effectiveTabId === TRANSCRIPT_TAB;
+  const isSyntheticMinutesTab = effectiveTabId === MINUTES_TAB;
+
   const leaveTranscriptTab = useCallback(() => {
     setSelectedDocId((prev) => {
       if (prev !== TRANSCRIPT_TAB) return prev;
@@ -177,6 +248,7 @@ export function MeetingDetailView({
 
   const handleTabValueChange = useCallback(
     (v: string) => {
+      userPickedTabRef.current = true;
       if (v === TRANSCRIPT_TAB) {
         if (effectiveTabId !== TRANSCRIPT_TAB) {
           lastNonTranscriptTabRef.current = effectiveTabId;
@@ -192,8 +264,15 @@ export function MeetingDetailView({
   useEffect(() => {
     setSelectedDocId((prev) => {
       if (prev === TRANSCRIPT_TAB) return prev;
+      // The Minutes sentinel stays selected while it's still meaningful
+      // (synthetic tab showing, or resolvable to the real document).
+      if (prev === MINUTES_TAB && (showSyntheticMinutesTab || minutesDocId)) {
+        return prev;
+      }
       if (visibleDocuments.some((d) => d.id === prev)) return prev;
       if (isLiveRecording) {
+        if (minutesDocId) return minutesDocId;
+        if (showSyntheticMinutesTab) return MINUTES_TAB;
         return (
           visibleDocuments.find((d) => d.kind === "notes")?.id ??
           visibleDocuments[0]?.id ??
@@ -206,20 +285,48 @@ export function MeetingDetailView({
         ""
       );
     });
-  }, [detail.meeting.id, docIds, isLiveRecording, visibleDocuments]);
+  }, [
+    detail.meeting.id,
+    docIds,
+    isLiveRecording,
+    visibleDocuments,
+    showSyntheticMinutesTab,
+    minutesDocId,
+  ]);
 
   useEffect(() => {
-    if (isLiveRecording && !wasLiveRecordingRef.current) {
-      const notesId = detail.documents.find((d) => d.kind === "notes")?.id;
-      if (notesId) setSelectedDocId(notesId);
+    userPickedTabRef.current = false;
+  }, [detail.meeting.id]);
+
+  useEffect(() => {
+    const sessionStarted = isLiveRecording && !wasLiveRecordingRef.current;
+    if (sessionStarted) {
+      userPickedTabRef.current = false;
+    }
+    if (isLiveRecording && !userPickedTabRef.current) {
+      if (minutesExpected) {
+        // Keep following the minutes tab as the async gates (setting + model
+        // ready) resolve after mount — not just on the session-start edge.
+        setSelectedDocId(minutesDocId ?? MINUTES_TAB);
+      } else if (sessionStarted) {
+        const notesId = detail.documents.find((d) => d.kind === "notes")?.id;
+        if (notesId) setSelectedDocId(notesId);
+      }
     }
     wasLiveRecordingRef.current = isLiveRecording;
-  }, [isLiveRecording, docIds, detail.documents]);
+  }, [
+    isLiveRecording,
+    docIds,
+    detail.documents,
+    minutesExpected,
+    minutesDocId,
+  ]);
 
-  const selectedDoc = isTranscriptTab
-    ? undefined
-    : (visibleDocuments.find((d) => d.id === effectiveTabId) ??
-      visibleDocuments[0]);
+  const selectedDoc =
+    isTranscriptTab || isSyntheticMinutesTab
+      ? undefined
+      : (visibleDocuments.find((d) => d.id === effectiveTabId) ??
+        visibleDocuments[0]);
 
   useEffect(() => {
     if (isLiveRecording && isTranscriptTab) {
@@ -370,20 +477,58 @@ export function MeetingDetailView({
   );
 
   const isSummaryTab = selectedDoc?.kind === "summary";
-  const panelMode: "streaming" | "placeholder" | "editor" | null = !selectedDoc
+  // During recording the LLM owns the minutes document (each pass replaces
+  // the whole body), so it renders read-only; editable once recording ends.
+  const isLiveMinutesTab = selectedDoc?.kind === "minutes" && isLiveRecording;
+  const panelMode:
+    | "streaming"
+    | "placeholder"
+    | "editor"
+    | "live-minutes"
+    | null = !selectedDoc
     ? null
-    : isSummaryTab && summarizing
-      ? "streaming"
-      : isSummaryTab && !currentSummary
-        ? "placeholder"
-        : "editor";
+    : isLiveMinutesTab
+      ? "live-minutes"
+      : isSummaryTab && summarizing
+        ? "streaming"
+        : isSummaryTab && !currentSummary
+          ? "placeholder"
+          : "editor";
   const editorInitialBody = isSummaryTab
     ? currentSummary
     : (selectedDoc?.body ?? null);
 
+  const liveMinutesContent = liveMinutesBody ?? selectedDoc?.body ?? "";
+  // Plain editor shell (no `meeting-summary-prose`): the live view inherits
+  // the editor's native list styling so it matches the post-recording editor,
+  // instead of the summary's flush-left em-dash markers.
+  const liveMinutesPanel = liveMinutesContent ? (
+    <div className="simple-editor-wrapper">
+      <StreamingSummaryToolbarPlaceholder />
+      <div className="simple-editor-content">
+        <div
+          className="tiptap ProseMirror simple-editor"
+          style={{ whiteSpace: "normal" }}
+        >
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {liveMinutesContent}
+          </ReactMarkdown>
+        </div>
+      </div>
+    </div>
+  ) : (
+    <p className="text-sm text-neutral-400 italic p-5">
+      Minutes will appear here as the meeting progresses.
+    </p>
+  );
+
   const documentPanel = !selectedDoc ? null : panelMode === "editor" ? (
     <MeetingDocumentEditor
-      key={selectedDoc.id}
+      key={
+        selectedDoc.kind === "minutes"
+          ? `${selectedDoc.id}:${minutesRev}`
+          : selectedDoc.id
+      }
       documentId={selectedDoc.id}
       initialBody={editorInitialBody}
       onDocumentBodySaved={onMeetingDocumentBodyUpdated}
@@ -392,6 +537,8 @@ export function MeetingDetailView({
       className={isSummaryTab ? "meeting-summary-prose" : undefined}
       summaryActions={isSummaryTab}
     />
+  ) : panelMode === "live-minutes" ? (
+    liveMinutesPanel
   ) : (
     summaryPanel
   );
@@ -457,7 +604,11 @@ export function MeetingDetailView({
   const showSummarizeAction =
     isSummaryTab && !summarizing && llmModelReady && !transcriptFinalizing;
 
-  const mainPanel = isTranscriptTab ? transcriptPanel : documentPanel;
+  const mainPanel = isTranscriptTab
+    ? transcriptPanel
+    : isSyntheticMinutesTab
+      ? liveMinutesPanel
+      : documentPanel;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -472,6 +623,25 @@ export function MeetingDetailView({
               variant="line"
               className="h-auto min-h-8 flex-wrap gap-1 bg-transparent p-0"
             >
+              {showSyntheticMinutesTab && (
+                <TabsTrigger
+                  value={MINUTES_TAB}
+                  className={cn(
+                    "h-8 shrink-0 rounded-full border px-3 text-muted-foreground text-xs",
+                    "border-muted data-active:border-muted data-active:text-foreground",
+                    "data-active:bg-muted",
+                    "group-data-[variant=line]/tabs-list:data-active:bg-muted",
+                    "dark:group-data-[variant=line]/tabs-list:data-active:bg-muted",
+                    "after:hidden",
+                  )}
+                >
+                  Minutes
+                  <span
+                    className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-danger"
+                    aria-label="Live"
+                  />
+                </TabsTrigger>
+              )}
               {visibleDocuments.map((doc) => (
                 <TabsTrigger
                   key={doc.id}
@@ -488,6 +658,12 @@ export function MeetingDetailView({
                   {doc.title}
                   {summarizing && doc.kind === "summary" && (
                     <span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground" />
+                  )}
+                  {isLiveRecording && doc.kind === "minutes" && (
+                    <span
+                      className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-destructive"
+                      aria-label="Live"
+                    />
                   )}
                 </TabsTrigger>
               ))}

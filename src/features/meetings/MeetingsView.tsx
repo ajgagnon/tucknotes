@@ -34,8 +34,14 @@ export default function MeetingsView({
     detail != null &&
     recordingMeetingId === detail.meeting.id;
 
+  const detailRef = useRef<MeetingDetail | null>(null);
+  detailRef.current = detail;
+
   const openMeeting = useCallback(async (id: string) => {
-    setLoading(true);
+    // Refreshing the already-open meeting (live minutes appearing, recording
+    // finalized) keeps the current view instead of flashing the loader.
+    const silent = detailRef.current?.meeting.id === id;
+    if (!silent) setLoading(true);
     try {
       const result = await invoke<MeetingDetail>("get_meeting", {
         meetingId: id,

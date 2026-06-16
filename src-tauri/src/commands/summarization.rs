@@ -171,6 +171,24 @@ pub fn set_recording_consent(app: tauri::AppHandle) -> Result<(), AppError> {
     model_manager::save_settings(&app, &settings)
 }
 
+// ---------------------------------------------------------------------------
+// Live minutes toggle
+// ---------------------------------------------------------------------------
+
+/// Whether live meeting minutes are generated during recording.
+#[tauri::command]
+pub fn get_live_minutes_enabled(app: tauri::AppHandle) -> Result<bool, AppError> {
+    Ok(model_manager::load_settings(&app)?.live_minutes_enabled)
+}
+
+/// Enable or disable live minutes. Applies from the next recording session.
+#[tauri::command]
+pub fn set_live_minutes_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), AppError> {
+    let mut settings = model_manager::load_settings(&app)?;
+    settings.live_minutes_enabled = enabled;
+    model_manager::save_settings(&app, &settings)
+}
+
 #[tauri::command]
 pub fn remove_llm_model(app: tauri::AppHandle, model_id: String) -> Result<(), AppError> {
     let model =

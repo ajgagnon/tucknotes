@@ -9,7 +9,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { RecordingContext } from "./recording-context";
-import type { TranscriptSegment } from "./types";
+import type { AppError, TranscriptSegment } from "./types";
 import { toAppError } from "./types";
 import { useTimer } from "./use-timer";
 import { toastError } from "@/lib/toast";
@@ -167,6 +167,25 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
       unlisten?.();
     };
   }, [clearTimer, hideAutoStopOverlay, resetAutoStopForNewSession, startTimer]);
+
+  // Capture startup runs in the background after start_recording returns;
+  // failures there arrive as events instead of a rejected invoke.
+  useEffect(() => {
+    let mounted = true;
+    let unlisten: UnlistenFn | null = null;
+    (async () => {
+      const fn_ = await listen<AppError>("recording-error", (event) => {
+        if (!mounted) return;
+        notifyRecordingError(event.payload);
+      });
+      if (mounted) unlisten = fn_;
+      else fn_();
+    })();
+    return () => {
+      mounted = false;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     let mounted = true;

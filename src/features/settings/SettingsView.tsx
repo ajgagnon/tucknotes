@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { AppearanceSection } from "./AppearanceSection";
 import { ModelSection } from "./ModelSection";
+import { RecordingSection } from "./RecordingSection";
 import { TemplateSection } from "./TemplateSection";
 import { UpdateSection } from "./UpdateSection";
 import { LLM_MODEL_CONFIG, WHISPER_MODEL_CONFIG } from "@/features/models";
@@ -51,6 +52,7 @@ function SettingsView({
           radioIdPrefix="llm-model"
           disabled={summarizing}
         />
+        <RecordingSection disabled={recording || paused} />
         <TemplateSection disabled={summarizing} onEditTemplate={onEditTemplate} />
         <UpdateSection />
       </div>
