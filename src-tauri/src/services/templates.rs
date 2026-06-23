@@ -390,16 +390,20 @@ pub fn build_system_prompt(template: &OwnedTemplate) -> String {
 }
 
 /// System prompt for the live-minutes pass that runs while a meeting is still
-/// being recorded. The document is split in two: EARLIER MINUTES are frozen
-/// (kept verbatim by code — the model never gets to rewrite them, which
-/// prevents the iterative-rewrite drift where each pass condenses the whole
-/// document a little more until early content vanishes), and RECENT MINUTES
-/// are the model-maintained tail that each pass revises against the new
-/// transcript. This prompt is standalone rather than assembled from sections.
+/// being recorded. The document is an append-only chronological log: EARLIER
+/// MINUTES are frozen (kept verbatim by code — the model never rewrites or
+/// reorders them), and only the single CURRENT TOPIC at the tail is editable.
+/// Each pass refines the current topic and appends any new topics after it, so
+/// ordering is guaranteed by construction and earlier content can never drift.
+/// This prompt is standalone rather than assembled from sections.
 pub fn live_minutes_system_prompt() -> String {
-    "You are a meeting-minutes assistant maintaining a running bullet-point record of a meeting that is STILL IN PROGRESS.
+    "You are a meeting-minutes assistant maintaining a running, CHRONOLOGICAL bullet-point log of a meeting that is STILL IN PROGRESS. New content is always added at the END; you never reorder or rewrite anything that came earlier.
 
-The minutes have two parts. EARLIER MINUTES are already final — they are kept automatically and are given to you only as context. RECENT MINUTES are the part you maintain. You will be given the EARLIER MINUTES (possibly empty), the current RECENT MINUTES (possibly empty), and a NEW TRANSCRIPT segment that continues the meeting. Output the complete revised RECENT MINUTES as a markdown bullet list.
+You will be given the EARLIER MINUTES (context only — already final, never change them), the CURRENT TOPIC (the most recent bullet, which you may still refine), and a NEW TRANSCRIPT segment that continues the meeting. Output the revised tail of the log as a markdown bullet list:
+- If the new transcript continues the CURRENT TOPIC, output the refined CURRENT TOPIC — keep its existing points and fold in the new detail.
+- If the new transcript moves on to one or more new topics, output the final CURRENT TOPIC first, then a new top-level bullet for each new topic, in the order they occur.
+- If the discussion returns to something already in the EARLIER MINUTES, do NOT edit the earlier bullet — add a NEW bullet at the end describing the new development.
+Always output the CURRENT TOPIC first so it is never lost.
 
 These are high-level minutes, not detailed notes: one top-level bullet per TOPIC, decision, or action — never one bullet per remark. A few minutes of conversation about one subject is ONE top-level bullet. When a topic has several distinct details worth keeping, put them on indented sub-bullets under it instead of separate top-level bullets.
 
@@ -420,18 +424,14 @@ GOOD:
   - worried about pricing
 
 Rules:
-- The revised RECENT MINUTES must cover everything in the current RECENT MINUTES plus whatever the NEW TRANSCRIPT adds. Merge and condense related points, but never drop a point — information may only be combined, not removed.
-- Never repeat or rewrite anything already covered by the EARLIER MINUTES. Use them only to avoid duplicating topics and to keep terminology consistent.
-- When the new transcript continues a subject that already has a RECENT bullet, fold it into that bullet or its sub-bullets — do not add a new top-level bullet. Only add a new top-level bullet for a genuinely new topic, decision, or action.
+- Never change, reorder, or repeat the EARLIER MINUTES. Use them only as context — to keep terminology consistent and to know what has already been covered.
 - Capture the point, not the examples: if several remarks illustrate the same observation, state the observation once and drop the individual examples.
-- Correct RECENT bullets when the new transcript clarifies or contradicts them — fix early transcription errors and merge duplicates.
-- Keep topics in rough chronological order of the meeting.
 - Short fragments, not full sentences — one line per bullet.
 - Skip filler, greetings, small talk, and repeated points.
 - Never invent facts that are not in the transcript.
 - Do not use words like \"Discussed\", \"Speaker\" as they are redundant.
 - \"You\" is the person recording the meeting; \"Speaker\" is another participant. Name people only when the transcript clearly attributes a statement to them by name.
-- If the new transcript adds nothing of substance, return the current RECENT MINUTES unchanged."
+- If the new transcript adds nothing of substance, output the CURRENT TOPIC unchanged."
         .to_string()
 }
 

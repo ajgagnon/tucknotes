@@ -1,6 +1,6 @@
 //! Live meeting minutes: while a recording is active, each finalized
-//! transcript window feeds a low-priority LLM pass that maintains a rolling
-//! bullet-list document (`meeting_documents.kind = 'minutes'`).
+//! transcript window feeds a low-priority LLM pass that maintains a running,
+//! append-only bullet-list document (`meeting_documents.kind = 'minutes'`).
 //!
 //! Scheduling model: at most one pass in flight per recording. New transcript
 //! accumulates in `pending` and is coalesced — when a pass finishes and more
@@ -23,11 +23,12 @@ const MIN_PASS_WORDS: usize = 20;
 /// Consecutive failed passes before the session disables itself for the rest
 /// of the recording (avoids burning inference on a persistent error).
 const MAX_FAILURES: u8 = 3;
-/// Size of the editable recent window, in topic groups (a top-level bullet
-/// plus its sub-bullets). Groups beyond this graduate to the frozen list,
-/// which the model only ever sees as read-only context — so a pass can refine
-/// the last few topics but can never erode earlier ones.
-const RECENT_KEEP: usize = 6;
+/// Size of the editable window, in topic groups (a top-level bullet plus its
+/// sub-bullets). Only the single in-progress ("current") topic stays editable;
+/// once a newer topic begins, the current one graduates to the frozen list —
+/// kept verbatim, in order, never rewritten — so the document is an append-only
+/// chronological log and earlier bullets can never move or be eroded.
+const RECENT_KEEP: usize = 1;
 
 #[derive(Clone, serde::Serialize)]
 struct MinutesUpdatedPayload<'a> {
@@ -276,26 +277,18 @@ fn group_topics(body: &str) -> Vec<String> {
     groups
 }
 
-/// Fold a pass's revised recent window back into the document: drop topic
-/// groups whose head line duplicates a frozen group's head (the model
-/// ignoring "don't repeat earlier minutes" — heads are compared rather than
-/// whole groups because one reworded sub-bullet would otherwise defeat the
-/// check), then graduate everything beyond the last [`RECENT_KEEP`] groups
-/// into `frozen`, where later passes can no longer rewrite it.
+/// Fold a pass's revised tail back into the document. The model returns the
+/// (refined) current topic followed by any new topics the segment started;
+/// everything beyond the last [`RECENT_KEEP`] groups graduates into `frozen`,
+/// in order, where later passes can no longer touch it. `frozen` only ever
+/// grows by appending, so the document stays an append-only chronological log —
+/// a topic the meeting returns to becomes a new bullet at the end rather than a
+/// rewrite of an earlier one. Groups with an empty head are dropped.
 /// Returns the new recent window.
 fn integrate_revised(frozen: &mut Vec<String>, revised: Vec<String>) -> Vec<String> {
-    let frozen_heads: std::collections::HashSet<String> = frozen
-        .iter()
-        .filter_map(|g| g.lines().next().map(str::to_string))
-        .collect();
     let mut recent: Vec<String> = revised
         .into_iter()
-        .filter(|g| {
-            g.lines()
-                .next()
-                .map(|h| !frozen_heads.contains(h))
-                .unwrap_or(false)
-        })
+        .filter(|g| g.lines().next().map(|h| !h.trim().is_empty()).unwrap_or(false))
         .collect();
     while recent.len() > RECENT_KEEP {
         frozen.push(recent.remove(0));
@@ -400,11 +393,22 @@ mod tests {
     }
 
     #[test]
-    fn integrate_keeps_small_window_editable() {
+    fn integrate_keeps_only_current_topic_editable() {
+        // Only the last group stays editable; earlier ones graduate in order.
         let mut frozen = bullets(&["- a"]);
         let recent = integrate_revised(&mut frozen, bullets(&["- b", "- c"]));
-        assert_eq!(frozen, bullets(&["- a"]));
-        assert_eq!(recent, bullets(&["- b", "- c"]));
+        assert_eq!(frozen, bullets(&["- a", "- b"]));
+        assert_eq!(recent, bullets(&["- c"]));
+    }
+
+    #[test]
+    fn integrate_appends_in_order_across_passes() {
+        // Refined current topic C' plus a new topic D: C' graduates after the
+        // existing frozen bullets, D becomes the new current topic.
+        let mut frozen = bullets(&["- a", "- b"]);
+        let recent = integrate_revised(&mut frozen, bullets(&["- c prime", "- d"]));
+        assert_eq!(frozen, bullets(&["- a", "- b", "- c prime"]));
+        assert_eq!(recent, bullets(&["- d"]));
     }
 
     #[test]
@@ -414,25 +418,26 @@ mod tests {
             .map(|i| format!("- bullet {i}"))
             .collect();
         let recent = integrate_revised(&mut frozen, revised);
-        // The two oldest revised bullets graduate, in chronological order.
+        // Everything but the last bullet graduates, in chronological order.
         assert_eq!(frozen, bullets(&["- a", "- bullet 0", "- bullet 1"]));
         assert_eq!(recent.len(), RECENT_KEEP);
         assert_eq!(recent[0], "- bullet 2");
     }
 
     #[test]
-    fn integrate_drops_frozen_duplicates_by_head_line() {
-        let mut frozen = bullets(&["- discussed roadmap\n  - q3 launch"]);
-        // Same head with reworded sub-bullets still counts as a duplicate.
+    fn integrate_keeps_revisited_topic_as_new_bullet() {
+        // Append-only: a group whose head matches a frozen one is a revisit,
+        // kept and appended in order rather than dropped.
+        let mut frozen = bullets(&["- roadmap\n  - q3 launch"]);
         let recent = integrate_revised(
             &mut frozen,
-            bullets(&[
-                "- discussed roadmap\n  - launch moved to q4",
-                "- decided on pricing",
-            ]),
+            bullets(&["- roadmap\n  - launch moved to q4", "- pricing"]),
         );
-        assert_eq!(recent, bullets(&["- decided on pricing"]));
-        assert_eq!(frozen, bullets(&["- discussed roadmap\n  - q3 launch"]));
+        assert_eq!(
+            frozen,
+            bullets(&["- roadmap\n  - q3 launch", "- roadmap\n  - launch moved to q4"])
+        );
+        assert_eq!(recent, bullets(&["- pricing"]));
     }
 
     #[test]
