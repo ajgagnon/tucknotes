@@ -87,6 +87,7 @@ export function MeetingDetailView({
   onOpenSettings,
 }: MeetingDetailViewProps) {
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const liveMinutesEndRef = useRef<HTMLDivElement>(null);
   const transcriptScrollRef = useRef<TranscriptScrollHandle | null>(null);
   const wasLiveRecordingRef = useRef(false);
   const lastNonTranscriptTabRef = useRef<string>("");
@@ -514,6 +515,7 @@ export function MeetingDetailView({
             {liveMinutesContent}
           </ReactMarkdown>
         </div>
+        <div ref={liveMinutesEndRef} />
       </div>
     </div>
   ) : (
@@ -521,6 +523,17 @@ export function MeetingDetailView({
       Minutes will appear here as the meeting progresses.
     </p>
   );
+
+  useEffect(() => {
+    if (isLiveRecording && (isLiveMinutesTab || isSyntheticMinutesTab)) {
+      liveMinutesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [
+    liveMinutesContent,
+    isLiveRecording,
+    isLiveMinutesTab,
+    isSyntheticMinutesTab,
+  ]);
 
   const documentPanel = !selectedDoc ? null : panelMode === "editor" ? (
     <MeetingDocumentEditor
