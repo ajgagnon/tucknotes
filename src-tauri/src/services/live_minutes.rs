@@ -19,16 +19,19 @@ use crate::services::model_manager;
 use crate::services::summarization::SummarizationState;
 
 /// Minimum words of new transcript before a pass is worth an inference run.
-const MIN_PASS_WORDS: usize = 20;
+/// Set high enough that each pass sees a whole thought to summarize into one
+/// clean bullet rather than firing on every couple of sentences.
+const MIN_PASS_WORDS: usize = 50;
 /// Consecutive failed passes before the session disables itself for the rest
 /// of the recording (avoids burning inference on a persistent error).
 const MAX_FAILURES: u8 = 3;
-/// Size of the editable window, in topic groups (a top-level bullet plus its
-/// sub-bullets). Only the single in-progress ("current") topic stays editable;
-/// once a newer topic begins, the current one graduates to the frozen list —
-/// kept verbatim, in order, never rewritten — so the document is an append-only
-/// chronological log and earlier bullets can never move or be eroded.
-const RECENT_KEEP: usize = 1;
+/// How many trailing recorded bullets to show the model as context so it can
+/// avoid repeating points already logged — without re-feeding the whole
+/// (unbounded) document to a small model on every pass.
+const CONTEXT_TAIL_BULLETS: usize = 10;
+/// Hard backstop on new bullets appended by a single pass. Real output is 0–2;
+/// this only guards a model that ignores the "stay sparse" instruction.
+const NEW_BULLETS_PER_PASS_MAX: usize = 2;
 
 #[derive(Clone, serde::Serialize)]
 struct MinutesUpdatedPayload<'a> {
@@ -45,10 +48,9 @@ struct Session {
     meeting_id: String,
     /// Finalized transcript lines accumulated since the last consumed chunk.
     pending: String,
-    /// Bullets the model may no longer touch (kept verbatim across passes).
-    frozen: Vec<String>,
-    /// The editable tail of the document; each pass rewrites this window.
-    recent: Vec<String>,
+    /// Every bullet recorded so far, in order. Append-only: a pass may add new
+    /// groups at the end but never edits or reorders existing ones.
+    bullets: Vec<String>,
     pass_running: bool,
     /// Handle of the in-flight pass so `finalize_session` can await it.
     handle: Option<tokio::task::JoinHandle<()>>,
@@ -95,8 +97,7 @@ pub fn start_session(app: &tauri::AppHandle, meeting_id: &str) {
         *guard = Some(Session {
             meeting_id: meeting_id.to_string(),
             pending: String::new(),
-            frozen: Vec::new(),
-            recent: Vec::new(),
+            bullets: Vec::new(),
             pass_running: false,
             handle: None,
             finalizing: false,
@@ -162,8 +163,7 @@ fn maybe_spawn_pass(app: &tauri::AppHandle, force: bool) {
     }
     session.pass_running = true;
     let meeting_id = session.meeting_id.clone();
-    let frozen = session.frozen.join("\n");
-    let recent = session.recent.join("\n");
+    let recorded_tail = tail_context(&session.bullets);
     let chunk = std::mem::take(&mut session.pending);
 
     let app = app.clone();
@@ -180,7 +180,7 @@ fn maybe_spawn_pass(app: &tauri::AppHandle, force: bool) {
             Some(path) => {
                 let chunk_in = chunk.clone();
                 tokio::task::spawn_blocking(move || {
-                    service.update_live_minutes(&path, &frozen, &recent, &chunk_in, &interrupt)
+                    service.update_live_minutes(&path, &recorded_tail, &chunk_in, &interrupt)
                 })
                 .await
                 .unwrap_or_else(|e| {
@@ -217,19 +217,17 @@ fn finish_pass(
         match result {
             Ok(body) => {
                 session.failures = 0;
-                // An empty result (model emitted no bullets) is not worth
-                // overwriting the recent window with.
+                // Empty output is the model staying silent — nothing noteworthy
+                // in this chunk — so the document is left unchanged. Otherwise
+                // append the new bullets; existing ones are never touched.
                 if !body.is_empty() {
-                    let revised = group_topics(&body);
-                    session.recent = integrate_revised(&mut session.frozen, revised);
-                    let doc = session
-                        .frozen
-                        .iter()
-                        .chain(session.recent.iter())
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    persist = Some(doc);
+                    let mut new_groups = group_topics(&body);
+                    dedupe_against_recorded(&session.bullets, &mut new_groups);
+                    new_groups.truncate(NEW_BULLETS_PER_PASS_MAX);
+                    if !new_groups.is_empty() {
+                        session.bullets.extend(new_groups);
+                        persist = Some(session.bullets.join("\n"));
+                    }
                 }
                 rerun = !session.pending.trim().is_empty() && !session.finalizing;
             }
@@ -277,23 +275,40 @@ fn group_topics(body: &str) -> Vec<String> {
     groups
 }
 
-/// Fold a pass's revised tail back into the document. The model returns the
-/// (refined) current topic followed by any new topics the segment started;
-/// everything beyond the last [`RECENT_KEEP`] groups graduates into `frozen`,
-/// in order, where later passes can no longer touch it. `frozen` only ever
-/// grows by appending, so the document stays an append-only chronological log —
-/// a topic the meeting returns to becomes a new bullet at the end rather than a
-/// rewrite of an earlier one. Groups with an empty head are dropped.
-/// Returns the new recent window.
-fn integrate_revised(frozen: &mut Vec<String>, revised: Vec<String>) -> Vec<String> {
-    let mut recent: Vec<String> = revised
-        .into_iter()
-        .filter(|g| g.lines().next().map(|h| !h.trim().is_empty()).unwrap_or(false))
-        .collect();
-    while recent.len() > RECENT_KEEP {
-        frozen.push(recent.remove(0));
-    }
-    recent
+/// The trailing recorded bullets shown to the model as de-dup context — the
+/// last [`CONTEXT_TAIL_BULLETS`] groups, joined. Bounding this keeps the prompt
+/// small for a tiny model even as the document grows long.
+fn tail_context(bullets: &[String]) -> String {
+    let start = bullets.len().saturating_sub(CONTEXT_TAIL_BULLETS);
+    bullets[start..].join("\n")
+}
+
+/// Normalize a group's head line for cheap duplicate detection: drop the
+/// leading marker and indentation and lowercase it, so a trivial re-statement
+/// of an already-recorded point collapses to the same key.
+fn norm_head(group: &str) -> String {
+    group
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_start_matches(|c| c == '-' || c == '*' || c == ' ')
+        .trim()
+        .to_lowercase()
+}
+
+/// Drop new groups that merely restate a recently recorded bullet (a small
+/// model occasionally repeats despite the prompt) or an earlier group in the
+/// same batch, plus any group with an empty head. Compares against the same
+/// trailing window the model was shown.
+fn dedupe_against_recorded(recorded: &[String], new_groups: &mut Vec<String>) {
+    let start = recorded.len().saturating_sub(CONTEXT_TAIL_BULLETS);
+    let mut seen: std::collections::HashSet<String> =
+        recorded[start..].iter().map(|g| norm_head(g)).collect();
+    new_groups.retain(|g| {
+        let key = norm_head(g);
+        !key.is_empty() && seen.insert(key)
+    });
 }
 
 fn persist_and_emit(app: &tauri::AppHandle, meeting_id: &str, body: &str) {
@@ -365,7 +380,9 @@ pub async fn finalize_session(app: &tauri::AppHandle, meeting_id: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{group_topics, integrate_revised, RECENT_KEEP};
+    use super::{
+        dedupe_against_recorded, group_topics, norm_head, tail_context, CONTEXT_TAIL_BULLETS,
+    };
 
     fn bullets(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
@@ -393,60 +410,44 @@ mod tests {
     }
 
     #[test]
-    fn integrate_keeps_only_current_topic_editable() {
-        // Only the last group stays editable; earlier ones graduate in order.
-        let mut frozen = bullets(&["- a"]);
-        let recent = integrate_revised(&mut frozen, bullets(&["- b", "- c"]));
-        assert_eq!(frozen, bullets(&["- a", "- b"]));
-        assert_eq!(recent, bullets(&["- c"]));
-    }
-
-    #[test]
-    fn integrate_appends_in_order_across_passes() {
-        // Refined current topic C' plus a new topic D: C' graduates after the
-        // existing frozen bullets, D becomes the new current topic.
-        let mut frozen = bullets(&["- a", "- b"]);
-        let recent = integrate_revised(&mut frozen, bullets(&["- c prime", "- d"]));
-        assert_eq!(frozen, bullets(&["- a", "- b", "- c prime"]));
-        assert_eq!(recent, bullets(&["- d"]));
-    }
-
-    #[test]
-    fn integrate_graduates_overflow_in_order() {
-        let mut frozen = bullets(&["- a"]);
-        let revised: Vec<String> = (0..RECENT_KEEP + 2)
+    fn tail_context_returns_trailing_bullets() {
+        let all: Vec<String> = (0..CONTEXT_TAIL_BULLETS + 3)
             .map(|i| format!("- bullet {i}"))
             .collect();
-        let recent = integrate_revised(&mut frozen, revised);
-        // Everything but the last bullet graduates, in chronological order.
-        assert_eq!(frozen, bullets(&["- a", "- bullet 0", "- bullet 1"]));
-        assert_eq!(recent.len(), RECENT_KEEP);
-        assert_eq!(recent[0], "- bullet 2");
+        let tail = tail_context(&all);
+        // Only the last CONTEXT_TAIL_BULLETS are shown to the model, in order.
+        assert_eq!(tail.lines().count(), CONTEXT_TAIL_BULLETS);
+        assert_eq!(tail.lines().next(), Some("- bullet 3"));
+        let last = format!("- bullet {}", CONTEXT_TAIL_BULLETS + 2);
+        assert_eq!(tail.lines().last(), Some(last.as_str()));
     }
 
     #[test]
-    fn integrate_keeps_revisited_topic_as_new_bullet() {
-        // Append-only: a group whose head matches a frozen one is a revisit,
-        // kept and appended in order rather than dropped.
-        let mut frozen = bullets(&["- roadmap\n  - q3 launch"]);
-        let recent = integrate_revised(
-            &mut frozen,
-            bullets(&["- roadmap\n  - launch moved to q4", "- pricing"]),
-        );
-        assert_eq!(
-            frozen,
-            bullets(&["- roadmap\n  - q3 launch", "- roadmap\n  - launch moved to q4"])
-        );
-        assert_eq!(recent, bullets(&["- pricing"]));
+    fn tail_context_handles_short_or_empty_document() {
+        assert_eq!(tail_context(&bullets(&["- a", "- b"])), "- a\n- b");
+        assert_eq!(tail_context(&[]), "");
     }
 
     #[test]
-    fn integrate_graduates_topic_with_sub_bullets_as_one_unit() {
-        let mut frozen = Vec::new();
-        let mut revised: Vec<String> = vec!["- topic 0\n  - detail".to_string()];
-        revised.extend((1..=RECENT_KEEP).map(|i| format!("- topic {i}")));
-        let recent = integrate_revised(&mut frozen, revised);
-        assert_eq!(frozen, bullets(&["- topic 0\n  - detail"]));
-        assert_eq!(recent.len(), RECENT_KEEP);
+    fn norm_head_strips_marker_and_lowercases() {
+        assert_eq!(norm_head("- Demo Friday"), "demo friday");
+        // Only the head line matters; sub-bullets are ignored.
+        assert_eq!(norm_head("  - Sub detail\n  - more"), "sub detail");
+    }
+
+    #[test]
+    fn dedupe_drops_repeat_of_recorded_bullet() {
+        let recorded = bullets(&["- demo friday", "- pricing agreed"]);
+        let mut new_groups = bullets(&["- Demo Friday", "- new point"]);
+        dedupe_against_recorded(&recorded, &mut new_groups);
+        // The restated bullet is dropped; the genuinely new one is kept.
+        assert_eq!(new_groups, bullets(&["- new point"]));
+    }
+
+    #[test]
+    fn dedupe_drops_within_batch_dupes_and_empty_heads() {
+        let mut new_groups = bullets(&["- a", "- A", "-   ", "- b"]);
+        dedupe_against_recorded(&[], &mut new_groups);
+        assert_eq!(new_groups, bullets(&["- a", "- b"]));
     }
 }

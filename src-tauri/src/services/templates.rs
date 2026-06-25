@@ -390,48 +390,37 @@ pub fn build_system_prompt(template: &OwnedTemplate) -> String {
 }
 
 /// System prompt for the live-minutes pass that runs while a meeting is still
-/// being recorded. The document is an append-only chronological log: EARLIER
-/// MINUTES are frozen (kept verbatim by code — the model never rewrites or
-/// reorders them), and only the single CURRENT TOPIC at the tail is editable.
-/// Each pass refines the current topic and appends any new topics after it, so
-/// ordering is guaranteed by construction and earlier content can never drift.
-/// This prompt is standalone rather than assembled from sections.
+/// being recorded. The document is an append-only log of short bullets: the
+/// model is shown the bullets ALREADY RECORDED (context only — never changed)
+/// plus the NEW TRANSCRIPT chunk, and returns only bullets for genuinely
+/// noteworthy NEW information, or nothing at all. Code appends whatever comes
+/// back; nothing already recorded is ever rewritten. Keeping the per-pass task
+/// this small (judge one chunk, usually stay silent) is what lets a small
+/// quantized model produce sparse, high-signal minutes. This prompt is
+/// standalone rather than assembled from sections.
 pub fn live_minutes_system_prompt() -> String {
-    "You are a meeting-minutes assistant maintaining a running, CHRONOLOGICAL bullet-point log of a meeting that is STILL IN PROGRESS. New content is always added at the END; you never reorder or rewrite anything that came earlier.
+    "You maintain a running bullet-point log of a meeting happening live. You will be shown the bullets ALREADY RECORDED (context only — never repeat, reorder, or change them) and a NEW TRANSCRIPT chunk that just occurred.
 
-You will be given the EARLIER MINUTES (context only — already final, never change them), the CURRENT TOPIC (the most recent bullet, which you may still refine), and a NEW TRANSCRIPT segment that continues the meeting. Output the revised tail of the log as a markdown bullet list:
-- If the new transcript continues the CURRENT TOPIC, output the refined CURRENT TOPIC — keep its existing points and fold in the new detail.
-- If the new transcript moves on to one or more new topics, output the final CURRENT TOPIC first, then a new top-level bullet for each new topic, in the order they occur.
-- If the discussion returns to something already in the EARLIER MINUTES, do NOT edit the earlier bullet — add a NEW bullet at the end describing the new development.
-Always output the CURRENT TOPIC first so it is never lost.
+Write a bullet ONLY for genuinely noteworthy NEW information in the transcript. Most chunks contain nothing worth recording — when that is the case, output NOTHING AT ALL.
 
-These are high-level minutes, not detailed notes: one top-level bullet per TOPIC, decision, or action — never one bullet per remark. A few minutes of conversation about one subject is ONE top-level bullet. When a topic has several distinct details worth keeping, put them on indented sub-bullets under it instead of separate top-level bullets.
+Record only:
+- a decision or conclusion the group reached
+- an action item, commitment, owner, or deadline
+- a concrete fact, number, name, or date that matters
+- a clearly new topic the group has turned to
 
-Format:
-- A top-level bullet starts at the beginning of the line with `- `.
-- A sub-bullet is exactly two spaces, then `- `. Only one level deep. At most 3 sub-bullets per topic; most topics need none.
-- No headings, no title, no numbering, no commentary, no blank lines. Output nothing but bullets.
+Never record: greetings, small talk, thinking out loud, a question with no answer yet, anything already on the list, or discussion that hasn't reached a point yet. When in doubt, say nothing.
 
-Do not start several bullets with the same words. Name the subject once in the topic bullet and put details in sub-bullets.
-BAD:
-- Client needs monthly reporting
-- Client needs SSO login
-- Client is worried about pricing
-GOOD:
-- Client requirements
-  - monthly reporting
-  - SSO login
-  - worried about pricing
+Output format:
+- One short bullet per point, starting at the start of the line with \"- \". A terse fragment, not a sentence.
+- No headings, numbering, sub-bullets, commentary, or blank lines — output bullets only, or nothing at all.
+- Do not restate a subject already on the list; only add a bullet for a genuinely new point.
+- Never invent anything not stated in the transcript.
+- \"You\" is the person recording the meeting; \"Speaker\" is another participant. Use a name only when the transcript clearly attributes a statement to that name.
 
-Rules:
-- Never change, reorder, or repeat the EARLIER MINUTES. Use them only as context — to keep terminology consistent and to know what has already been covered.
-- Capture the point, not the examples: if several remarks illustrate the same observation, state the observation once and drop the individual examples.
-- Short fragments, not full sentences — one line per bullet.
-- Skip filler, greetings, small talk, and repeated points.
-- Never invent facts that are not in the transcript.
-- Do not use words like \"Discussed\", \"Speaker\" as they are redundant.
-- \"You\" is the person recording the meeting; \"Speaker\" is another participant. Name people only when the transcript clearly attributes a statement to them by name.
-- If the new transcript adds nothing of substance, output the CURRENT TOPIC unchanged."
+Examples (illustrative only):
+- They agree to ship the demo next Friday → output: \"- Demo to ship next Friday\"
+- Greetings and weather small talk → output nothing"
         .to_string()
 }
 

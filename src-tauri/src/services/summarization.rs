@@ -21,15 +21,15 @@ const THINK_CLOSE: &str = "</think>";
 
 const MAX_SUMMARIZATION_TOKENS: i32 = 4096;
 const MAX_CHAT_TOKENS: i32 = 1024;
-/// Per-pass generation budget for live minutes. Append-only output is small (the
-/// current topic plus any topics the new segment started) regardless of meeting
-/// length, so this never truncates the newest content.
-const MAX_MINUTES_TOKENS: i32 = 1024;
+/// Per-pass generation budget for live minutes. One pass emits only a few new
+/// bullets (often none), so this is generous headroom; the per-pass bullet count
+/// is bounded in `live_minutes.rs`. Thinking is disabled for this pass, so the
+/// budget needn't cover a reasoning preamble.
+const MAX_MINUTES_TOKENS: i32 = 512;
 /// Safety cap on top-level bullets from one live-minutes pass — a runaway-output
-/// backstop only. One pass emits just the current topic plus any newly-started
-/// topics, well under this (sub-bullets don't count). Kept high so the cap can
-/// never drop the NEWEST bullets, which would break chronological order; overall
-/// document length is bounded by the frozen list, which this never touches.
+/// backstop only. One pass emits only a handful of new bullets, well under this
+/// (sub-bullets don't count); `NEW_BULLETS_PER_PASS_MAX` in `live_minutes.rs` is
+/// the tighter, intended limit.
 const MAX_MINUTES_LINES: usize = 40;
 /// Token budget for one tool-aware chat turn. Models tend to chain-of-thought
 /// for a paragraph or two before emitting the `<tool_call>` block, then
@@ -352,13 +352,13 @@ impl SummarizationService {
         self.model.try_lock().is_err()
     }
 
-    /// One live-minutes pass: given the frozen earlier minutes (context only),
-    /// the current topic the model may still refine, and the transcript
-    /// accumulated since the last pass, return the revised tail (the refined
-    /// current topic followed by any new topics) as a bullet list. The caller
-    /// appends graduated topics to `frozen` in order, so earlier content is
-    /// never reordered or dropped. Output is post-processed to bullet lines only
-    /// (one level of sub-bullets preserved) and capped at
+    /// One live-minutes pass: given a short tail of the bullets ALREADY RECORDED
+    /// (context only, so the model can avoid repeating them) and the transcript
+    /// accumulated since the last pass, return only bullets for genuinely
+    /// noteworthy NEW information — or an empty string when the chunk contains
+    /// nothing worth recording. The caller appends whatever comes back; nothing
+    /// already recorded is ever rewritten. Output is post-processed to bullet
+    /// lines only (one level of sub-bullets preserved) and capped at
     /// [`MAX_MINUTES_LINES`] top-level bullets.
     ///
     /// **Blocking** — call from `spawn_blocking`. Clears `interrupt` after
@@ -367,8 +367,7 @@ impl SummarizationService {
     pub fn update_live_minutes(
         &self,
         model_path: &Path,
-        frozen_minutes: &str,
-        recent_minutes: &str,
+        recorded_tail: &str,
         new_transcript: &str,
         interrupt: &AtomicBool,
     ) -> Result<String, AppError> {
@@ -381,19 +380,13 @@ impl SummarizationService {
 
         interrupt.store(false, Ordering::Relaxed);
 
-        let frozen_block = if frozen_minutes.trim().is_empty() {
-            "(none)"
+        let recorded_block = if recorded_tail.trim().is_empty() {
+            "(nothing recorded yet)"
         } else {
-            frozen_minutes
-        };
-        let recent_block = if recent_minutes.trim().is_empty() {
-            "(no current topic yet)"
-        } else {
-            recent_minutes
+            recorded_tail
         };
         let user_message = format!(
-            "EARLIER MINUTES (context only, do not change):\n{frozen_block}\n\n\
-             CURRENT TOPIC (you may refine this):\n{recent_block}\n\n\
+            "ALREADY RECORDED (context only, do not repeat or change):\n{recorded_block}\n\n\
              NEW TRANSCRIPT:\n{new_transcript}"
         );
         let messages_json = serde_json::json!([
