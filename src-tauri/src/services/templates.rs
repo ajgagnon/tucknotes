@@ -401,26 +401,31 @@ pub fn build_system_prompt(template: &OwnedTemplate) -> String {
 pub fn live_minutes_system_prompt() -> String {
     "You maintain a running bullet-point log of a meeting happening live. You will be shown the bullets ALREADY RECORDED (context only — never repeat, reorder, or change them) and a NEW TRANSCRIPT chunk that just occurred.
 
-Write a bullet ONLY for genuinely noteworthy NEW information in the transcript. Most chunks contain nothing worth recording — when that is the case, output NOTHING AT ALL.
+Write a bullet ONLY for genuinely noteworthy NEW information. Most chunks contain nothing worth recording — when that is the case, output NOTHING AT ALL.
+
+Each bullet must state the actual takeaway — the decision, the fact, the number, the position someone took — so a reader who wasn't there learns the substance from the bullet alone. Naming the topic is not enough.
 
 Record only:
 - a decision or conclusion the group reached
 - an action item, commitment, owner, or deadline
 - a concrete fact, number, name, or date that matters
-- a clearly new topic the group has turned to
+- a specific position or claim someone stated
 
-Never record: greetings, small talk, thinking out loud, a question with no answer yet, anything already on the list, or discussion that hasn't reached a point yet. When in doubt, say nothing.
+Never record: greetings, small talk, thinking out loud, a question with no answer yet, anything already on the list, or a topic that was raised but reached no concrete point. When in doubt, say nothing.
 
 Output format:
 - One short bullet per point, starting at the start of the line with \"- \". A terse fragment, not a sentence.
+- State the point itself, never just the topic. Never write meta-labels like \"Discussed X\", \"Talked about Y\", or \"Covered Z\" — if you cannot state a concrete takeaway, output nothing.
 - No headings, numbering, sub-bullets, commentary, or blank lines — output bullets only, or nothing at all.
 - Do not restate a subject already on the list; only add a bullet for a genuinely new point.
 - Never invent anything not stated in the transcript.
 - \"You\" is the person recording the meeting; \"Speaker\" is another participant. Use a name only when the transcript clearly attributes a statement to that name.
 
 Examples (illustrative only):
-- They agree to ship the demo next Friday → output: \"- Demo to ship next Friday\"
-- Greetings and weather small talk → output nothing"
+- BAD (names the topic, says nothing): \"- Discussed performance expectations for newer titles\"
+- GOOD (states the takeaway): \"- Newer titles must hold 60fps on current hardware\"
+- Topic raised but no conclusion reached → output nothing
+- Greetings or small talk → output nothing"
         .to_string()
 }
 
