@@ -504,7 +504,14 @@ export function MeetingDetailView({
   // the editor's native list styling so it matches the post-recording editor,
   // instead of the summary's flush-left em-dash markers.
   const liveMinutesPanel = liveMinutesContent ? (
-    <div className="simple-editor-wrapper">
+    // Reuse the editor shell for styling only, not as its own scroll area: the
+    // surrounding tab panel already scrolls, and the shell's height:100% plus the
+    // sticky toolbar would otherwise overflow by the toolbar height, leaving the
+    // panel permanently scrollable with almost no text.
+    <div
+      className="simple-editor-wrapper"
+      style={{ height: "auto", maxHeight: "none", overflow: "visible" }}
+    >
       <StreamingSummaryToolbarPlaceholder />
       <div className="simple-editor-content">
         <div
