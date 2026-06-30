@@ -366,9 +366,12 @@ pub fn build_system_prompt(template: &OwnedTemplate) -> String {
     // (D) Section bodies.
     blocks.push(format!("Section bodies:\n{bodies}"));
 
-    // (E) Rules.
+    // (E) Rules — universal only. Anything specific to a section (e.g. the
+    // Action items You/Them attribution and deadline format) lives in that
+    // section's body, never here: a user template may contain any sections, so
+    // the shared block must not name one.
     blocks.push(format!(
-        "Rules:\n- Use the em dash character `—` (not `--`) before due dates.\n- Name people only in the Summary and Decisions sections, and only when the transcript clearly attributes the work or decision to them. In Action items, the only allowed attribution is the `**You:**` / `**Them:**` assignee prefix — never a personal name.\n- Skip filler, chit-chat, repeated points, and pleasantries.\n- No editorializing, no summarizing importance, no meta-commentary.\n- Do not invent labels beyond the {count} section headings.\n- Do not give the output a title — the title is generated separately."
+        "Rules:\n- Only name a person when the transcript clearly attributes the work, decision, or statement to them — never guess at attribution.\n- Skip filler, chit-chat, repeated points, and pleasantries.\n- No editorializing, no summarizing importance, no meta-commentary.\n- Do not invent labels beyond the {count} section headings.\n- Do not give the output a title — the title is generated separately."
     ));
 
     // (F) Examples. Each section's optional example is rendered under a
@@ -433,9 +436,10 @@ Examples (illustrative only):
 mod tests {
     use super::*;
 
-    /// The exact system prompt as it existed before templates were introduced.
+    /// The expected assembled system prompt for the built-in Recap template — a
+    /// golden snapshot guarding the built-in prompt against accidental drift.
     /// `build_system_prompt(&DEFAULT_TEMPLATE)` must reproduce this verbatim.
-    const LEGACY_SYSTEM_PROMPT: &str = "\
+    const DEFAULT_SYSTEM_PROMPT: &str = "\
 You are a professional, detail-oriented Meeting Analyst AI designed to review meeting transcripts \
 and provide concise, actionable minutes for busy professionals.\n\
 You will be given a full transcript of a meeting, which may include a mix of speakers, topics, and \
@@ -457,8 +461,7 @@ Section bodies:\n\
 - ## Open questions — bullet list (`- `) of unresolved items, each phrased as a question ending with `?`. If you have any open question to list, you MUST emit the `## Open questions` heading line directly above the bullets.\n\
 \n\
 Rules:\n\
-- Use the em dash character `—` (not `--`) before due dates.\n\
-- Name people only in the Summary and Decisions sections, and only when the transcript clearly attributes the work or decision to them. In Action items, the only allowed attribution is the `**You:**` / `**Them:**` assignee prefix — never a personal name.\n\
+- Only name a person when the transcript clearly attributes the work, decision, or statement to them — never guess at attribution.\n\
 - Skip filler, chit-chat, repeated points, and pleasantries.\n\
 - No editorializing, no summarizing importance, no meta-commentary.\n\
 - Do not invent labels beyond the four section headings.\n\
@@ -481,11 +484,45 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
 - Announce in-app, or just over email?";
 
     #[test]
-    fn default_template_is_byte_identical_to_legacy() {
+    fn default_template_prompt_snapshot() {
         assert_eq!(
             build_system_prompt(&builtin_as_owned(&DEFAULT_TEMPLATE)),
-            LEGACY_SYSTEM_PROMPT
+            DEFAULT_SYSTEM_PROMPT
         );
+    }
+
+    #[test]
+    fn custom_template_rules_block_is_section_agnostic() {
+        // A user template that doesn't use the built-in Action items section must
+        // not inherit its rules: the shared Rules block names no section, so the
+        // model is never told to attribute owners the template didn't ask for.
+        // Mirrors the real "Action Items" custom template (id `quick_summary`).
+        let t = OwnedTemplate {
+            id: "quick_summary".to_string(),
+            name: "Action Items".to_string(),
+            description: String::new(),
+            sections: vec![OwnedSection {
+                id: "new-2".to_string(),
+                heading: "Action Items".to_string(),
+                description:
+                    "GitHub-flavored task list of outstanding work. Every line is exactly `- [ ] action.`"
+                        .to_string(),
+                example: None,
+            }],
+            builtin: false,
+        };
+        let prompt = build_system_prompt(&t);
+        assert!(!prompt.contains("**You:**"), "leaked You/Them attribution");
+        assert!(!prompt.contains("**Them:**"), "leaked You/Them attribution");
+        assert!(!prompt.contains("never a personal name"), "leaked an Action items rule");
+        assert!(
+            !prompt.contains("Name people only in the Summary and Decisions"),
+            "named sections the template does not contain"
+        );
+        assert!(prompt.contains("Skip filler, chit-chat"), "lost the universal rules");
+
+        // Built-ins without an Action items section likewise carry no You/Them rule.
+        assert!(!build_system_prompt(&builtin_as_owned(&STANDUP_TEMPLATE)).contains("**You:**"));
     }
 
     #[test]
