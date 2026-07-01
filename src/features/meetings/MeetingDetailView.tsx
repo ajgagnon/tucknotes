@@ -32,7 +32,7 @@ import {
 } from "./types";
 import { useMeetingSummarization } from "./useMeetingSummarization";
 import { useLiveMinutes } from "./useLiveMinutes";
-import { ThinkingBlock } from "./ThinkingBlock";
+import { SectionStream } from "./SectionStream";
 import { LiveTranscript } from "./LiveTranscript";
 import { PersistedTranscript } from "./PersistedTranscript";
 import { TranscriptFab } from "./TranscriptFab";
@@ -165,8 +165,7 @@ export function MeetingDetailView({
 
   const {
     summarizing,
-    streamedSummary,
-    thinkingText,
+    sections,
     llmModelReady,
     currentSummary,
     handleSummarize,
@@ -391,7 +390,7 @@ export function MeetingDetailView({
   }, [handleFooterPrimaryAction]);
 
   const showSummarySkeleton =
-    transcriptFinalizing || (summarizing && !streamedSummary && !thinkingText);
+    transcriptFinalizing || (summarizing && sections.length === 0);
 
   const summaryPanel = showSummarySkeleton ? (
     <div className="space-y-4 p-5" aria-busy="true" aria-live="polite">
@@ -411,22 +410,7 @@ export function MeetingDetailView({
     <div className="simple-editor-wrapper meeting-summary-prose">
       <StreamingSummaryToolbarPlaceholder />
       <div className="simple-editor-content">
-        <div
-          className="tiptap ProseMirror simple-editor"
-          style={{ whiteSpace: "normal" }}
-        >
-          {thinkingText && !streamedSummary && (
-            <ThinkingBlock text={thinkingText} />
-          )}
-          {streamedSummary && (
-            <>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {streamedSummary}
-              </ReactMarkdown>
-              <span className="inline-block w-1.5 h-4 bg-primary animate-pulse ml-0.5 align-text-bottom rounded-sm" />
-            </>
-          )}
-        </div>
+        <SectionStream sections={sections} />
       </div>
     </div>
   ) : currentSummary ? (

@@ -11,7 +11,7 @@ use crate::models::template::OwnedTemplate;
 use crate::models::{Model, ModelInfo};
 use crate::services::database::{self, DatabaseState};
 use crate::services::model_manager;
-use crate::services::summarization::SummarizationState;
+use crate::services::summarization::{SummarizationState, SummaryEvent};
 use crate::services::templates::TemplateInfo;
 use crate::services::template_store;
 
@@ -20,15 +20,47 @@ use crate::services::template_store;
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Serialize)]
-struct TokenPayload<'a> {
-    meeting_id: &'a str,
-    token: &'a str,
-}
-
-#[derive(Clone, Serialize)]
 struct TitlePayload<'a> {
     meeting_id: &'a str,
     title: &'a str,
+}
+
+/// One entry in the `summary:plan` event — a section the upcoming run will write,
+/// in document order. Lets the UI render every heading + skeleton up front.
+#[derive(Clone, Serialize)]
+struct PlanSection<'a> {
+    index: usize,
+    heading: &'a str,
+}
+
+/// Emitted once before the passes begin: the ordered list of sections.
+#[derive(Clone, Serialize)]
+struct SummaryPlanPayload<'a> {
+    meeting_id: &'a str,
+    sections: Vec<PlanSection<'a>>,
+}
+
+/// A section's pass has begun (no body tokens yet → the UI shows it "thinking").
+#[derive(Clone, Serialize)]
+struct SectionStartPayload<'a> {
+    meeting_id: &'a str,
+    index: usize,
+}
+
+/// A body token for section `index` (the heading is rendered by the UI).
+#[derive(Clone, Serialize)]
+struct SectionTokenPayload<'a> {
+    meeting_id: &'a str,
+    index: usize,
+    token: &'a str,
+}
+
+/// A section's pass finished; `empty` sections are collapsed by the UI.
+#[derive(Clone, Serialize)]
+struct SectionDonePayload<'a> {
+    meeting_id: &'a str,
+    index: usize,
+    empty: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -387,6 +419,26 @@ async fn do_summarize(
     // 3. Run summarization with streaming (events scoped to meeting_id).
     // The interrupt flag is shared with the chatbot; if chat sets it, we exit
     // early with AppError::Interrupted and the caller re-queues this meeting.
+
+    // Announce the section plan up front so the UI can render every section's
+    // heading + skeleton before the first pass starts. Built here, before
+    // `template` is moved into the blocking task.
+    let _ = app.emit(
+        "summary:plan",
+        SummaryPlanPayload {
+            meeting_id,
+            sections: template
+                .sections
+                .iter()
+                .enumerate()
+                .map(|(index, s)| PlanSection {
+                    index,
+                    heading: s.heading.as_str(),
+                })
+                .collect(),
+        },
+    );
+
     let service = Arc::clone(&summ_state.service);
     let interrupt = Arc::clone(&summ_state.llm_interrupt);
     let app_clone = app.clone();
@@ -394,19 +446,25 @@ async fn do_summarize(
     let mid_owned = meeting_id.to_owned();
 
     let summary = tokio::task::spawn_blocking(move || {
-        service.summarize(&model_path, &transcript, &template, &interrupt, |token, is_thinking| {
-            let event_name = if is_thinking {
-                "summary:thinking"
-            } else {
-                "summary:token"
-            };
-            let _ = app_clone.emit(
-                event_name,
-                TokenPayload {
-                    meeting_id: &mid_owned,
-                    token,
-                },
-            );
+        service.summarize(&model_path, &transcript, &template, &interrupt, |event| match *event {
+            SummaryEvent::SectionStart { index, .. } => {
+                let _ = app_clone.emit(
+                    "summary:section_start",
+                    SectionStartPayload { meeting_id: &mid_owned, index },
+                );
+            }
+            SummaryEvent::Token { index, text } => {
+                let _ = app_clone.emit(
+                    "summary:token",
+                    SectionTokenPayload { meeting_id: &mid_owned, index, token: text },
+                );
+            }
+            SummaryEvent::SectionDone { index, empty } => {
+                let _ = app_clone.emit(
+                    "summary:section_done",
+                    SectionDonePayload { meeting_id: &mid_owned, index, empty },
+                );
+            }
         })
     })
     .await

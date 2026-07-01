@@ -60,6 +60,23 @@ pub enum InferenceEvent<'a> {
     ToolCallEnd { id: &'a str },
 }
 
+/// Per-section progress events from [`SummarizationService::summarize`], reported
+/// one section at a time. Borrowed strings (the heading and each body token) so
+/// the command layer can forward them to Tauri without forcing allocation.
+#[derive(Debug)]
+pub enum SummaryEvent<'a> {
+    /// A section's pass is starting; no body tokens have landed yet. The gap
+    /// before its first `Token` is that section's transcript prefill — the UI
+    /// shows the section "thinking" during it.
+    SectionStart { index: usize, heading: &'a str },
+    /// A piece of the section's body (Markdown). The heading is not streamed —
+    /// the UI renders it from the section plan.
+    Token { index: usize, text: &'a str },
+    /// The section's pass finished. `empty` is true when it produced no content
+    /// (and was therefore omitted from the persisted document).
+    SectionDone { index: usize, empty: bool },
+}
+
 /// One tool call extracted from a completed inference turn. Arguments are kept
 /// as a raw JSON string (per OpenAI conventions); callers parse to dispatch.
 #[derive(Debug, Clone)]
@@ -319,22 +336,23 @@ impl SummarizationService {
     /// is held once across all passes (chat still preempts mid-pass via the
     /// `interrupt` flag checked inside `run_inference`).
     ///
-    /// The app injects each `## {heading}` itself: the per-section prompt asks for
-    /// the body only, and the heading is streamed lazily on a section's first real
-    /// content token, so a section that produces nothing is omitted entirely.
-    /// Passes run in document order, so `on_token` reads as one growing document.
-    /// Returns the assembled markdown (empty sections omitted). See `run_inference`
-    /// for streaming and cancellation semantics. **Blocking**.
+    /// Progress is reported through `on_event` as [`SummaryEvent`]s: `SectionStart`
+    /// before each pass (the "thinking" window while the transcript prefills),
+    /// `Token` per body token (the body only — the heading is not streamed), and
+    /// `SectionDone` carrying whether the section came back empty. Passes run in
+    /// document order. The returned, persisted value is the assembled markdown —
+    /// `## {heading}` injected here, empty sections omitted. See `run_inference`
+    /// for cancellation semantics. **Blocking**.
     pub fn summarize<F>(
         &self,
         model_path: &Path,
         transcript: &str,
         template: &OwnedTemplate,
         interrupt: &AtomicBool,
-        mut on_token: F,
+        mut on_event: F,
     ) -> Result<String, AppError>
     where
-        F: FnMut(&str, bool),
+        F: FnMut(&SummaryEvent<'_>),
     {
         self.ensure_loaded(model_path)?;
 
@@ -344,14 +362,8 @@ impl SummarizationService {
             .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
 
         let mut sections_out: Vec<String> = Vec::with_capacity(template.sections.len());
-        // Whether a prior section has already emitted content. Drives the blank
-        // line between sections in BOTH the live stream (the injected heading is
-        // prefixed with "\n\n") and the persisted assembly (`join("\n\n")`), so
-        // the two stay byte-identical — the frontend reloads the persisted body
-        // on completion.
-        let mut any_emitted = false;
 
-        for section in &template.sections {
+        for (index, section) in template.sections.iter().enumerate() {
             let system_prompt = templates::build_section_system_prompt(section);
             let messages_json = serde_json::json!([
                 {"role": "system", "content": system_prompt},
@@ -361,11 +373,10 @@ impl SummarizationService {
             let prompt = Self::apply_template(model, &messages_json, false)?;
 
             let heading = section.heading.as_str();
-            let prefix_needed = any_emitted;
-            // Flips once this section streams its first non-whitespace content, at
-            // which point the injected `## {heading}` is emitted. A section that
-            // streams only whitespace never shows a heading.
-            let mut header_emitted = false;
+
+            // Entering the pass: the UI shows this section "thinking" until its
+            // first token lands (that gap is this section's transcript prefill).
+            on_event(&SummaryEvent::SectionStart { index, heading });
 
             // `?` propagates AppError::Interrupted (chat preempted) out of the
             // loop; the command layer re-queues and restarts the whole meeting.
@@ -375,36 +386,25 @@ impl SummarizationService {
                 MAX_SECTION_TOKENS,
                 interrupt,
                 |text, is_thinking| {
-                    if is_thinking {
-                        on_token(text, true);
-                        return;
+                    // Thinking is disabled for summarization and `run_inference`
+                    // already drops `<think>` content, so this is body text only.
+                    // The heading is rendered by the UI, so we stream the body alone.
+                    if !is_thinking {
+                        on_event(&SummaryEvent::Token { index, text });
                     }
-                    if header_emitted {
-                        on_token(text, false);
-                        return;
-                    }
-                    // No heading yet: hold until the first non-whitespace content,
-                    // dropping leading whitespace so the heading sits flush.
-                    let trimmed = text.trim_start();
-                    if trimmed.is_empty() {
-                        return;
-                    }
-                    let sep = if prefix_needed { "\n\n" } else { "" };
-                    on_token(&format!("{sep}## {heading}\n\n"), false);
-                    on_token(trimmed, false);
-                    header_emitted = true;
                 },
             )?;
 
-            // Persist from the cleaned output (not the streamed text): strip the
-            // `<think>` block and any `## {heading}` the model emitted despite the
-            // body-only instruction (which we inject ourselves), and trim.
+            // Persist from the cleaned output: strip the `<think>` block and any
+            // `## {heading}` the model emitted despite the body-only instruction
+            // (we inject the heading ourselves), then trim.
             let cleaned = strip_think_tags(raw.trim());
             let cleaned = strip_leading_heading(cleaned.trim(), heading);
-            if !cleaned.is_empty() {
+            let empty = cleaned.is_empty();
+            if !empty {
                 sections_out.push(format!("## {heading}\n\n{cleaned}"));
-                any_emitted = true;
             }
+            on_event(&SummaryEvent::SectionDone { index, empty });
         }
 
         Ok(sections_out.join("\n\n"))
