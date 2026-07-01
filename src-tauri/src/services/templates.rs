@@ -410,7 +410,7 @@ pub fn build_section_system_prompt(section: &OwnedSection) -> String {
 
     // (A) Preamble — same role framing as the full prompt, narrowed to one section.
     blocks.push(format!(
-        "You are a professional, detail-oriented Meeting Analyst AI designed to review meeting transcripts and provide concise, actionable minutes for busy professionals.\nYou will be given a full transcript of a meeting, which may include a mix of speakers, topics, and discussion threads. Participants may use informal language, go off-topic, or interleave multiple subjects. Your job is to write a single section of the minutes — the `## {heading}` section — described below."
+        "You are a professional, detail-oriented Meeting Analyst AI designed to review meeting transcripts and provide concise, specific, actionable minutes for busy professionals.\nYou will be given a full transcript of a meeting, which may include a mix of speakers, topics, and discussion threads. Participants may use informal language, go off-topic, or interleave multiple subjects. Your job is to write a single section of the minutes — the `## {heading}` section — described below."
     ));
 
     // (B) Body-only contract. The heading is added by the app, so the model must
@@ -425,13 +425,14 @@ pub fn build_section_system_prompt(section: &OwnedSection) -> String {
 
     // (D) Emit rule — the single-section variant of the full prompt's EMIT_RULE.
     blocks.push(
-        "If the transcript contains nothing for this section, output nothing at all — no heading, no body, and no placeholder such as \"None\" or \"N/A\". Only write content that is genuinely supported by the transcript.".to_string(),
+        "If the transcript contains nothing for this section, output nothing at all — no heading, no body, and no placeholder such as \"None\" or \"N/A\". Only write content that is genuinely supported by the transcript. A vague topic-label with no substance does not count as content — omit it rather than pad the section.".to_string(),
     );
 
     // (E) Universal rules — section-agnostic, mirroring the full prompt's Rules
-    // block (minus its multi-section "do not invent labels" line).
+    // block (minus its multi-section "do not invent labels" line), plus the
+    // specificity rules that keep every line concrete rather than abstract.
     blocks.push(
-        "Rules:\n- Only name a person when the transcript clearly attributes the work, decision, or statement to them — never guess at attribution.\n- Skip filler, chit-chat, repeated points, and pleasantries.\n- No editorializing, no summarizing importance, no meta-commentary.\n- Do not give the output a title — the title is generated separately.".to_string(),
+        "Rules:\n- Be concrete and self-contained. Every sentence or bullet must state the specific substance — the actual change, decision, number, name, file, or result — so a reader who was not in the meeting understands it without the transcript. Naming the activity is not enough.\n- Never write a meta-label that only names a topic with no content — no lines like <topic> discussed, <topic> covered, or <topic> reviewed. BAD: \"Potential implementation discussed\" (which implementation? proposing what?), \"Refactoring completed and tested\" (refactored what?). GOOD: \"Proposed caching search results in Redis to cut p95 latency\", \"Refactored the billing retry path; unit tests added and passing.\"\n- If the transcript does not give the specifics, include the concrete detail it does give, or omit the point — never pad with an abstraction.\n- Only name a person when the transcript clearly attributes the work, decision, or statement to them — never guess at attribution.\n- Skip filler, chit-chat, repeated points, and pleasantries.\n- No editorializing, no summarizing importance, no meta-commentary.\n- Do not give the output a title — the title is generated separately.".to_string(),
     );
 
     // (F) Optional example — the body only (no `## {heading}` line, since the
@@ -747,5 +748,20 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
         let prompt = build_section_system_prompt(&progress_with_ex);
         assert!(prompt.contains("Example shape (illustrative only, do not copy the content):"));
         assert!(prompt.contains("- Shipped the login flow."));
+    }
+
+    #[test]
+    fn section_prompt_demands_concrete_specifics() {
+        // The universal Rules block must push the model toward concrete, self-
+        // contained lines (with the abstract-line example) — for any section.
+        let recap = builtin_as_owned(&DEFAULT_TEMPLATE);
+        let summary = recap
+            .sections
+            .iter()
+            .find(|s| s.heading == "Summary")
+            .expect("Recap has a Summary section");
+        let prompt = build_section_system_prompt(summary);
+        assert!(prompt.contains("Be concrete and self-contained"));
+        assert!(prompt.contains("Refactoring completed and tested"));
     }
 }
