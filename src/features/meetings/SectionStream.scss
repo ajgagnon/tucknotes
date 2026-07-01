@@ -1,8 +1,8 @@
-/* Progressive per-section summary streaming (see SectionStream.tsx).
-   Rendered inside `.simple-editor-wrapper.meeting-summary-prose`, so each section
-   BODY reuses the persisted summary's prose styling; the gutter / heading /
-   skeleton chrome is styled here. All colours come from theme tokens, so dark
-   mode works automatically. Animations are gated behind prefers-reduced-motion. */
+/* Progressive per-section summary streaming (see SectionStream.tsx). Rendered
+   inside `.simple-editor-wrapper.meeting-summary-prose`, so each section BODY
+   reuses the persisted summary's prose styling; the heading / skeleton / active
+   highlight are styled here. Colours come from theme tokens (dark mode is
+   automatic); the pulse is gated behind prefers-reduced-motion. */
 
 .secstream {
   padding: 0.25rem 0 2.5rem;
@@ -13,59 +13,36 @@
 .secstream-row {
   position: relative;
   /* Text column aligned with the persisted summary's inset (the editor pads
-     1.4rem); the write-head is hung in this left margin, on the document border. */
-  padding: 0.4rem 0 0.4rem 1.4rem;
-  transition: opacity 0.3s ease;
+     1.4rem) so the streamed text and the final document line up; the active
+     highlight lives in this left margin. */
+  padding: 0.5rem 0.75rem 0.5rem 1.4rem;
+  // border-radius: 0.375rem;
+  transition:
+    background-color 0.25s ease,
+    opacity 0.3s ease;
 }
 .secstream-row[data-state="pending"] {
   opacity: 0.55;
 }
 
-/* Gutter — the write-head hangs in the row's left padding, flush to the
-   document's left border. Height = the heading's first line, so the dot centres
-   vertically on the heading. */
-.secstream-gutter {
-  position: absolute;
-  left: 8px;
-  top: 0.4rem;
-  width: 1.4rem;
-  height: 1.47rem;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
+/* Active section (thinking / writing): a faint tint plus a sage bar in the left
+   margin. A box-level "active item" highlight — nothing floats, nothing clips. */
+.secstream-row[data-state="thinking"],
+.secstream-row[data-state="writing"] {
+  background: color-mix(in srgb, var(--secstream-accent) 6%, transparent);
 }
-.secstream-head {
-  position: relative;
-  width: 0.4rem;
-  height: 0.4rem;
-  border-radius: 50%;
-  background: var(--secstream-accent);
-}
-.secstream-ripple {
-  position: absolute;
-  inset: -3px;
-  border-radius: 50%;
-  border: 1px solid var(--secstream-accent);
-  opacity: 0;
-}
-/* Thread: drops from the write-head toward the body it's about to draft */
-.secstream-row[data-state="thinking"] .secstream-gutter::after {
+.secstream-row[data-state="thinking"]::before,
+.secstream-row[data-state="writing"]::before {
   content: "";
   position: absolute;
-  top: 1.1rem;
-  left: 0.2rem;
-  width: 1px;
-  height: 1.1rem;
-  transform: translateX(-50%);
-  background: linear-gradient(var(--secstream-accent), transparent);
-  opacity: 0.5;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--secstream-accent);
 }
 
-/* Content */
-.secstream-content {
-  flex: 1;
-  min-width: 0;
-}
 .secstream-heading {
   margin: 0 0 0.4rem;
   font-family: var(--font-serif);
@@ -89,8 +66,6 @@
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.82rem;
-  font-style: italic;
   color: var(--muted-foreground);
 }
 .secstream-dots {
@@ -125,11 +100,8 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .secstream-head {
-    animation: secstream-breathe 1.6s ease-in-out infinite;
-  }
-  .secstream-ripple {
-    animation: secstream-ripple 1.9s ease-out infinite;
+  .secstream-row[data-state="thinking"]::before {
+    animation: secstream-pulse 1.4s ease-in-out infinite;
   }
   .secstream-dots i {
     animation: secstream-wave 1.2s ease-in-out infinite;
@@ -143,30 +115,15 @@
   .secstream-caret {
     animation: secstream-blink 0.9s steps(1) infinite;
   }
-  .secstream-row[data-state="thinking"] .secstream-gutter::after {
-    animation: secstream-thread 0.7s ease forwards;
-  }
 }
 
-@keyframes secstream-breathe {
+@keyframes secstream-pulse {
   0%,
   100% {
-    transform: scale(1);
-    opacity: 0.85;
+    opacity: 0.4;
   }
   50% {
-    transform: scale(1.3);
     opacity: 1;
-  }
-}
-@keyframes secstream-ripple {
-  0% {
-    transform: scale(0.7);
-    opacity: 0.6;
-  }
-  100% {
-    transform: scale(2.4);
-    opacity: 0;
   }
 }
 @keyframes secstream-wave {
@@ -187,13 +144,5 @@
   }
   50% {
     opacity: 0.2;
-  }
-}
-@keyframes secstream-thread {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 0.5;
   }
 }

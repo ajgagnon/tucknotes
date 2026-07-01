@@ -6,21 +6,24 @@ import type { SummarySection } from "./types";
 import "./SectionStream.scss";
 
 /**
- * Progressive per-section summary view. The summary is generated one section at
- * a time (one focused LLM pass each), so each section advances through visibly
+ * Progressive per-section summary view. The summary is generated one section at a
+ * time (one focused LLM pass each), so each section advances through visibly
  * distinct states — a pause between sections then reads as anticipation, not a
  * freeze:
  *
- *   pending  → skeleton lines (not reached yet)
- *   thinking → a breathing write-head (with ripple) in the gutter + a quiet
- *              status line, while that section's transcript prefills (no tokens yet)
- *   writing  → steady write-head + a caret, body streaming in as live Markdown
- *   done     → a tick in the gutter
+ *   pending  → dimmed skeleton lines (not reached yet)
+ *   thinking → a sage accent bar (pulsing) + animated dots, while that section's
+ *              transcript prefills (no tokens yet)
+ *   writing  → steady accent bar + a caret, body streaming in as live Markdown
+ *   done     → plain content
  *
- * Empty sections (`skipped`) collapse out. Section bodies render inside the same
- * `.tiptap.ProseMirror` prose classes the persisted summary uses, so task-list
- * checkboxes, **You/Them**, em-dash bullets, and inline code render correctly
- * even mid-stream. Mount inside `.simple-editor-wrapper.meeting-summary-prose`.
+ * The active section is marked by a left accent bar + faint tint (styled in the
+ * SCSS via `data-state`) — a box-level highlight, so nothing floats or clips
+ * against the scrolling panel's edge. Empty sections (`skipped`) collapse out.
+ * Bodies render inside the same `.tiptap.ProseMirror` prose classes the persisted
+ * summary uses, so task-list checkboxes, **You/Them**, em-dash bullets, and inline
+ * code render correctly even mid-stream. Mount inside
+ * `.simple-editor-wrapper.meeting-summary-prose`.
  */
 export function SectionStream({ sections }: { sections: SummarySection[] }) {
   return (
@@ -29,57 +32,44 @@ export function SectionStream({ sections }: { sections: SummarySection[] }) {
         if (section.state === "skipped") return null;
 
         const { heading, body, state } = section;
-        const active = state === "thinking" || state === "writing";
         const started = state === "writing" || state === "done";
 
         return (
           <section key={index} className="secstream-row" data-state={state}>
-            <div className="secstream-gutter" aria-hidden>
-              {active && (
-                <span className="secstream-head">
-                  {state === "thinking" && (
-                    <span className="secstream-ripple" />
-                  )}
+            <h2 className="secstream-heading">{heading}</h2>
+
+            {state === "pending" && (
+              <div className="secstream-skeleton" aria-hidden>
+                <Skeleton className="h-3.5 w-[92%]" />
+                <Skeleton className="h-3.5 w-[64%]" />
+              </div>
+            )}
+
+            {state === "thinking" && (
+              <p className="secstream-thinking" aria-hidden>
+                <span className="secstream-dots">
+                  <i />
+                  <i />
+                  <i />
                 </span>
-              )}
-            </div>
+              </p>
+            )}
 
-            <div className="secstream-content">
-              <h2 className="secstream-heading">{heading}</h2>
-
-              {state === "pending" && (
-                <div className="secstream-skeleton" aria-hidden>
-                  <Skeleton className="h-3.5 w-[92%]" />
-                  <Skeleton className="h-3.5 w-[64%]" />
+            {started && (
+              <div className="secstream-body">
+                <div
+                  className="tiptap ProseMirror simple-editor secstream-md"
+                  style={{ padding: 0, whiteSpace: "normal" }}
+                >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {body}
+                  </ReactMarkdown>
                 </div>
-              )}
-
-              {state === "thinking" && (
-                <p className="secstream-thinking">
-                  <span className="secstream-dots">
-                    <i />
-                    <i />
-                    <i />
-                  </span>
-                </p>
-              )}
-
-              {started && (
-                <div className="secstream-body">
-                  <div
-                    className="tiptap ProseMirror simple-editor secstream-md"
-                    style={{ padding: 0, whiteSpace: "normal" }}
-                  >
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {body}
-                    </ReactMarkdown>
-                  </div>
-                  {state === "writing" && (
-                    <span className="secstream-caret" aria-hidden />
-                  )}
-                </div>
-              )}
-            </div>
+                {state === "writing" && (
+                  <span className="secstream-caret" aria-hidden />
+                )}
+              </div>
+            )}
           </section>
         );
       })}
