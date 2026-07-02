@@ -10,7 +10,10 @@ import {
   findPreservedStampFromInvertedMapping,
   MEETING_NOTE_ELAPSED_ATTR,
 } from "./meeting-note-elapsed-logic";
-import { MeetingNoteHeading, MeetingNoteParagraph } from "./meeting-note-elapsed";
+import {
+  MeetingNoteHeading,
+  MeetingNoteParagraph,
+} from "./meeting-note-elapsed";
 
 function makeSchema() {
   return getSchema([Document, Text, MeetingNoteParagraph, MeetingNoteHeading]);
@@ -32,11 +35,9 @@ describe("findPreservedStampFromInvertedMapping", () => {
   it("returns stamp from mapped old paragraph when attrs were stripped", () => {
     const schema = makeSchema();
     const oldDoc = schema.node("doc", null, [
-      schema.node(
-        "paragraph",
-        { [MEETING_NOTE_ELAPSED_ATTR]: 99 },
-        [schema.text("hi")],
-      ),
+      schema.node("paragraph", { [MEETING_NOTE_ELAPSED_ATTR]: 99 }, [
+        schema.text("hi"),
+      ]),
     ]);
     const p0 = paragraphPos(oldDoc);
     const t = new Transform(oldDoc);
@@ -55,11 +56,9 @@ describe("appendMeetingNoteElapsedTransaction", () => {
   it("restores meetingElapsedSecs when a command dropped it (not recording)", () => {
     const schema = makeSchema();
     const doc = schema.node("doc", null, [
-      schema.node(
-        "paragraph",
-        { [MEETING_NOTE_ELAPSED_ATTR]: 42 },
-        [schema.text("hi")],
-      ),
+      schema.node("paragraph", { [MEETING_NOTE_ELAPSED_ATTR]: 42 }, [
+        schema.text("hi"),
+      ]),
     ]);
     const oldState = EditorState.create({ doc, schema });
     const p0 = paragraphPos(doc);
@@ -86,11 +85,9 @@ describe("appendMeetingNoteElapsedTransaction", () => {
   it("clears stamp on empty paragraph after text is deleted", () => {
     const schema = makeSchema();
     const doc = schema.node("doc", null, [
-      schema.node(
-        "paragraph",
-        { [MEETING_NOTE_ELAPSED_ATTR]: 7 },
-        [schema.text("x")],
-      ),
+      schema.node("paragraph", { [MEETING_NOTE_ELAPSED_ATTR]: 7 }, [
+        schema.text("x"),
+      ]),
     ]);
     const oldState = EditorState.create({ doc, schema });
     const p0 = paragraphPos(doc);
@@ -131,9 +128,7 @@ describe("appendMeetingNoteElapsedTransaction", () => {
 
   it("stamps after inserting text into unstamped paragraph while recording", () => {
     const schema = makeSchema();
-    const doc = schema.node("doc", null, [
-      schema.node("paragraph", {}, []),
-    ]);
+    const doc = schema.node("doc", null, [schema.node("paragraph", {}, [])]);
     const oldState = EditorState.create({ doc, schema });
     const p0 = paragraphPos(doc);
     const trUser = oldState.tr.insertText("hi", p0 + 1);
@@ -160,9 +155,7 @@ describe("appendMeetingNoteElapsedTransaction", () => {
 
   it("does not stamp when not recording and paragraph was never stamped", () => {
     const schema = makeSchema();
-    const doc = schema.node("doc", null, [
-      schema.node("paragraph", {}, []),
-    ]);
+    const doc = schema.node("doc", null, [schema.node("paragraph", {}, [])]);
     const oldState = EditorState.create({ doc, schema });
     const p0 = paragraphPos(doc);
     const trUser = oldState.tr.insertText("hi", p0 + 1);

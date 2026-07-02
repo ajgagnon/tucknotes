@@ -1,5 +1,8 @@
 import { formatTranscriptTimestamp } from "@/lib/format-time";
-import { formatClockTime, formatWeekdayMonthDayOrdinal } from "@/lib/format-date";
+import {
+  formatClockTime,
+  formatWeekdayMonthDayOrdinal,
+} from "@/lib/format-date";
 import type { MeetingRow } from "./types";
 
 /** Minimal shape shared by persisted (`SegmentRow`) and live (`TranscriptSegment`) segments. */
@@ -55,6 +58,7 @@ export function exportFilenameBase(meeting: MeetingRow): string {
   const title = meeting.title?.trim() || "transcript";
   const date = new Date(meeting.created_at);
   const stamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  const safeTitle = title.replace(/[^\p{L}\p{N} _-]/gu, "").trim() || "transcript";
+  const safeTitle =
+    title.replace(/[^\p{L}\p{N} _-]/gu, "").trim() || "transcript";
   return `${safeTitle} ${stamp}`;
 }

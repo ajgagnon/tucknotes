@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriEvent } from "@/hooks/use-tauri-event";
 import { useRecording } from "@/features/recording";
 import { type MeetingDetail, type MeetingTitleInfo } from "./types";
 import { MeetingDetailView } from "./MeetingDetailView";
@@ -81,20 +81,10 @@ export default function MeetingsView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLiveRecording]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const unlisten = listen<{ meeting_id: string }>(
-      "recording-finalized",
-      (event) => {
-        if (cancelled || event.payload.meeting_id !== meetingId) return;
-        openMeeting(meetingId);
-      },
-    );
-    return () => {
-      cancelled = true;
-      unlisten.then((fn) => fn());
-    };
-  }, [meetingId, openMeeting]);
+  useTauriEvent<{ meeting_id: string }>("recording-finalized", (payload) => {
+    if (payload.meeting_id !== meetingId) return;
+    openMeeting(meetingId);
+  });
 
   if (loading || !detail) {
     return (

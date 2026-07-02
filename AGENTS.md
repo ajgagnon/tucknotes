@@ -51,14 +51,14 @@ On the frontend, catch blocks receive `{ kind: string; message?: string }`:
 
 ```typescript
 try {
-    await invoke("start_recording");
+  await invoke("start_recording");
 } catch (error) {
-    const err = error as { kind: string; message?: string };
-    switch (err.kind) {
-        case "CaptureFailed": // err.message has details
-        case "LockPoisoned":  // internal state error
-        case "NotSupported":  // non-macOS platform
-    }
+  const err = error as { kind: string; message?: string };
+  switch (err.kind) {
+    case "CaptureFailed": // err.message has details
+    case "LockPoisoned": // internal state error
+    case "NotSupported": // non-macOS platform
+  }
 }
 ```
 
@@ -82,9 +82,15 @@ All macOS-specific code (ScreenCaptureKit, CoreGraphics FFI, AVFoundation FFI) m
 
 - React + TypeScript + Vite
 - Tauri commands are called via `invoke()` from `@tauri-apps/api/core`
-- Backend-to-frontend events use `listen()` from `@tauri-apps/api/event`
-- **Tailwind CSS v4** for all styling — no custom CSS files per component
+- Backend-to-frontend events: use the `useTauriEvent` hook (`src/hooks/use-tauri-event.ts`) for component-lifetime subscriptions — it handles async registration, StrictMode double-mount, and cleanup, and its handler is a fresh closure each render (no `useCallback` needed). For imperative per-request listener groups (e.g. a chat send), combine `listen()` registrations with `listenBatch` (`src/lib/tauri-events.ts`). Do not hand-roll `listen()` + mounted-flag effects.
+- **Tailwind CSS v4** for all app UI styling — no custom CSS files per component. Exception: the vendored `src/editor/` subtree keeps its own SCSS (`primitives/`, `nodes/`, etc.); don't add new SCSS outside it.
 - Audio level meters use dB-scale conversion with peak-hold smoothing
+
+### Linting & formatting
+
+- ESLint (flat config, `eslint.config.js`): typescript-eslint recommended + `react-hooks/rules-of-hooks` (error) / `react-hooks/exhaustive-deps` (warn). The react-hooks v7 compiler rules are deliberately not enabled — the codebase uses render-time latest-ref patterns.
+- Prettier with default options (`.prettierrc`).
+- `npm run lint`, `npm run lint:fix`, `npm run format`, `npm run typecheck`. CI (`.github/workflows/ci.yml`) runs lint, frontend tests, and the build on every PR.
 
 ### Styling with Tailwind CSS v4
 

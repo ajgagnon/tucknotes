@@ -1,9 +1,9 @@
-"use client"
+"use client";
 
-import * as React from "react"
-import { Command as CommandPrimitive } from "cmdk"
+import * as React from "react";
+import { Command as CommandPrimitive } from "cmdk";
 
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/utils";
 
 function CommandDialog({
   children,
@@ -11,8 +11,8 @@ function CommandDialog({
   overlayClassName,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.Dialog> & {
-  contentClassName?: string
-  overlayClassName?: string
+  contentClassName?: string;
+  overlayClassName?: string;
 }) {
   return (
     <CommandPrimitive.Dialog
@@ -28,7 +28,7 @@ function CommandDialog({
     >
       {children}
     </CommandPrimitive.Dialog>
-  )
+  );
 }
 
 const CommandInput = React.forwardRef<
@@ -43,8 +43,8 @@ const CommandInput = React.forwardRef<
     )}
     {...props}
   />
-))
-CommandInput.displayName = "CommandInput"
+));
+CommandInput.displayName = "CommandInput";
 
 function CommandList({
   className,
@@ -58,7 +58,7 @@ function CommandList({
       )}
       {...props}
     />
-  )
+  );
 }
 
 function CommandEmpty({
@@ -67,10 +67,13 @@ function CommandEmpty({
 }: React.ComponentProps<typeof CommandPrimitive.Empty>) {
   return (
     <CommandPrimitive.Empty
-      className={cn("py-6 text-center text-sm text-muted-foreground", className)}
+      className={cn(
+        "py-6 text-center text-sm text-muted-foreground",
+        className,
+      )}
       {...props}
     />
-  )
+  );
 }
 
 function CommandGroup({
@@ -85,7 +88,7 @@ function CommandGroup({
       )}
       {...props}
     />
-  )
+  );
 }
 
 function CommandSeparator({
@@ -97,7 +100,7 @@ function CommandSeparator({
       className={cn("-mx-1 my-1 h-px bg-border", className)}
       {...props}
     />
-  )
+  );
 }
 
 const CommandItem = React.forwardRef<
@@ -112,8 +115,8 @@ const CommandItem = React.forwardRef<
     )}
     {...props}
   />
-))
-CommandItem.displayName = "CommandItem"
+));
+CommandItem.displayName = "CommandItem";
 
 function CommandShortcut({
   className,
@@ -127,10 +130,10 @@ function CommandShortcut({
       )}
       {...props}
     />
-  )
+  );
 }
 
-const Command = CommandPrimitive
+const Command = CommandPrimitive;
 
 export {
   Command,
@@ -142,4 +145,4 @@ export {
   CommandItem,
   CommandShortcut,
   CommandSeparator,
-}
+};

@@ -8,7 +8,10 @@ import { describe, it, expect } from "vitest";
 import { Markdown, MarkdownManager } from "@tiptap/markdown";
 import { StarterKit } from "@tiptap/starter-kit";
 import { TaskItem, TaskList } from "@tiptap/extension-list";
-import { MeetingNoteHeading, MeetingNoteParagraph } from "./meeting-note-elapsed";
+import {
+  MeetingNoteHeading,
+  MeetingNoteParagraph,
+} from "./meeting-note-elapsed";
 
 function makeManager() {
   const starter = StarterKit.configure({
@@ -32,9 +35,10 @@ function headingTexts(doc: unknown): string[] {
   const out: string[] = [];
   function walk(n: { type?: string; content?: unknown[] }) {
     if (n.type === "heading") {
-      const t = (n.content as Array<{ text?: string }> | undefined)
-        ?.map((c) => c.text ?? "")
-        .join("") ?? "";
+      const t =
+        (n.content as Array<{ text?: string }> | undefined)
+          ?.map((c) => c.text ?? "")
+          .join("") ?? "";
       out.push(t);
     }
     if (Array.isArray(n.content)) n.content.forEach((c) => walk(c as never));

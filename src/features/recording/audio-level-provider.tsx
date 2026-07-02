@@ -2,11 +2,10 @@ import {
   useContext,
   useState,
   useEffect,
-  useRef,
   useMemo,
   type ReactNode,
 } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { useTauriEvent } from "@/hooks/use-tauri-event";
 import { rmsToLevel, smoothLevel } from "@/lib/audio-level";
 import { RecordingContext, AudioLevelContext } from "./recording-context";
 
@@ -26,7 +25,6 @@ export function AudioLevelProvider({ children }: { children: ReactNode }) {
   const levelsActive = recording && !paused;
   const [systemLevel, setSystemLevel] = useState(0);
   const [micLevel, setMicLevel] = useState(0);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
 
   useEffect(() => {
     if (!levelsActive) {
@@ -44,27 +42,14 @@ export function AudioLevelProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(decay);
   }, [levelsActive]);
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const unlisten = await listen<AudioChunkEvent>("audio-chunk", (event) => {
-        if (!mounted) return;
-        const { source, rms } = event.payload;
-        const level = rmsToLevel(rms);
-        if (source === "system") {
-          setSystemLevel((prev) => smoothLevel(prev, level));
-        } else {
-          setMicLevel((prev) => smoothLevel(prev, level));
-        }
-      });
-      if (mounted) unlistenRef.current = unlisten;
-      else unlisten();
-    })();
-    return () => {
-      mounted = false;
-      unlistenRef.current?.();
-    };
-  }, []);
+  useTauriEvent<AudioChunkEvent>("audio-chunk", ({ source, rms }) => {
+    const level = rmsToLevel(rms);
+    if (source === "system") {
+      setSystemLevel((prev) => smoothLevel(prev, level));
+    } else {
+      setMicLevel((prev) => smoothLevel(prev, level));
+    }
+  });
 
   const value = useMemo(
     () => ({ systemLevel, micLevel }),

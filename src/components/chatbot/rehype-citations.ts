@@ -56,11 +56,7 @@ export const rehypeCitations: Plugin<[], Root> = () => {
       }
 
       // Splice into parent.
-      (parent.children as ElementContent[]).splice(
-        index,
-        1,
-        ...replacement,
-      );
+      (parent.children as ElementContent[]).splice(index, 1, ...replacement);
       // Skip the replaced subtree — visiting newly-inserted nodes would re-
       // process them, and we know they don't contain further `[N]` patterns.
       return [SKIP, index + replacement.length];

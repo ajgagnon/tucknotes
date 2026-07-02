@@ -1,31 +1,33 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriEvent } from "@/hooks/use-tauri-event";
 import type { SummarizationQueue } from "@/features/meetings/types";
 
 export function useSummarizationActive(): boolean {
   const [active, setActive] = useState(false);
+  const mountedRef = useRef(true);
+
+  const refresh = useCallback(async () => {
+    try {
+      const q = await invoke<SummarizationQueue>("get_summarization_queue");
+      if (mountedRef.current) {
+        setActive(q.active != null || q.pending.length > 0);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    async function refresh() {
-      try {
-        const q = await invoke<SummarizationQueue>("get_summarization_queue");
-        if (!cancelled) setActive(q.active != null || q.pending.length > 0);
-      } catch {
-        /* ignore */
-      }
-    }
-    refresh();
-
-    const unStart = listen<string>("summary:started", () => refresh());
-    const unDone = listen<string>("summary:complete", () => refresh());
+    mountedRef.current = true;
+    void refresh();
     return () => {
-      cancelled = true;
-      unStart.then((fn) => fn());
-      unDone.then((fn) => fn());
+      mountedRef.current = false;
     };
-  }, []);
+  }, [refresh]);
+
+  useTauriEvent("summary:started", () => void refresh());
+  useTauriEvent("summary:complete", () => void refresh());
 
   return active;
 }

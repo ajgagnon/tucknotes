@@ -10,4 +10,5 @@ export {
   useLlmDownloadProgress,
   type LlmDownloadStatus,
 } from "./use-llm-download-progress";
+export { useLlmModelReady } from "./use-llm-model-ready";
 export { LlmDownloadIndicator } from "./LlmDownloadIndicator";

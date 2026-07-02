@@ -14,9 +14,9 @@ const lines: TranscriptLine[] = [
 
 describe("formatTranscript", () => {
   it("plain text: no timestamps, no speakers", () => {
-    expect(formatTranscript(lines, { timestamps: false, speakers: false })).toBe(
-      "Hello there\nHi, good to meet you",
-    );
+    expect(
+      formatTranscript(lines, { timestamps: false, speakers: false }),
+    ).toBe("Hello there\nHi, good to meet you");
   });
 
   it("with speakers only (You/Them)", () => {

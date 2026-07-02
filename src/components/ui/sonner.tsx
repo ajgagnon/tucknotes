@@ -7,12 +7,7 @@ function Toaster(props: ToasterProps) {
     : "light";
 
   return (
-    <Sonner
-      theme={theme}
-      position="bottom-center"
-      richColors
-      {...props}
-    />
+    <Sonner theme={theme} position="bottom-center" richColors {...props} />
   );
 }
 

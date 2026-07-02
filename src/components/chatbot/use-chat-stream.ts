@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import type { DownloadProgress } from "@/features/models";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listenBatch } from "@/lib/tauri-events";
+import { useLlmModelReady } from "@/features/models";
 
 export type ChatRole = "user" | "assistant";
 
@@ -56,128 +57,61 @@ const newId = () =>
     : Math.random().toString(36).slice(2);
 
 export function useChatStream() {
-  const [modelReady, setModelReady] = useState<boolean | null>(null);
+  const { ready: modelReady } = useLlmModelReady();
   const inflightChatId = useRef<string | null>(null);
-  const inflightCleanup = useRef<(() => void) | null>(null);
-
-  const checkLlmModel = useCallback(async () => {
-    try {
-      const selected = await invoke<string | null>("get_selected_llm_model");
-      if (!selected) {
-        setModelReady(false);
-        return;
-      }
-      const ready = await invoke<boolean>("get_llm_model_status", {
-        modelId: selected,
-      });
-      setModelReady(ready);
-    } catch {
-      setModelReady(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void checkLlmModel();
-  }, [checkLlmModel]);
-
-  // Re-check when a model finishes downloading (mirrors useMeetingSummarization).
-  useEffect(() => {
-    const unlisten = listen<DownloadProgress>(
-      "llm-model:download-progress",
-      (event) => {
-        const { downloaded_bytes, total_bytes } = event.payload;
-        if (total_bytes <= 0 || downloaded_bytes < total_bytes) return;
-        void checkLlmModel();
-        setTimeout(() => void checkLlmModel(), 250);
-      },
-    );
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [checkLlmModel]);
 
   const send = useCallback(async (opts: SendOpts) => {
     const chatId = newId();
     inflightChatId.current = chatId;
 
-    const unlistenToken = await listen<ChatTokenPayload>(
-      "chat:token",
-      (event) => {
+    let unlisten: UnlistenFn = () => {};
+    const cleanup = () => {
+      if (inflightChatId.current === chatId) {
+        inflightChatId.current = null;
+      }
+      unlisten();
+    };
+
+    unlisten = await listenBatch([
+      listen<ChatTokenPayload>("chat:token", (event) => {
         if (event.payload.chat_id !== chatId) return;
         opts.onToken(event.payload.token);
-      },
-    );
-    const unlistenComplete = await listen<ChatCompletePayload>(
-      "chat:complete",
-      (event) => {
+      }),
+      listen<ChatCompletePayload>("chat:complete", (event) => {
         if (event.payload.chat_id !== chatId) return;
         cleanup();
         opts.onComplete();
-      },
-    );
-    const unlistenError = await listen<ChatErrorPayload>(
-      "chat:error",
-      (event) => {
+      }),
+      listen<ChatErrorPayload>("chat:error", (event) => {
         if (event.payload.chat_id !== chatId) return;
         cleanup();
         opts.onError(event.payload.error);
-      },
-    );
-    const unlistenToolStart = await listen<ToolCallStartPayload>(
-      "chat:tool_call_start",
-      (event) => {
+      }),
+      listen<ToolCallStartPayload>("chat:tool_call_start", (event) => {
         if (event.payload.chat_id !== chatId) return;
         opts.onToolCallStart?.(event.payload.call_id, event.payload.name);
-      },
-    );
-    const unlistenToolArgs = await listen<ToolCallArgsDeltaPayload>(
-      "chat:tool_call_args_delta",
-      (event) => {
+      }),
+      listen<ToolCallArgsDeltaPayload>("chat:tool_call_args_delta", (event) => {
         if (event.payload.chat_id !== chatId) return;
         opts.onToolCallArgsDelta?.(event.payload.call_id, event.payload.delta);
-      },
-    );
-    const unlistenToolEnd = await listen<ToolCallEndPayload>(
-      "chat:tool_call_end",
-      (event) => {
+      }),
+      listen<ToolCallEndPayload>("chat:tool_call_end", (event) => {
         if (event.payload.chat_id !== chatId) return;
         opts.onToolCallEnd?.(event.payload.call_id);
-      },
-    );
-    const unlistenToolResult = await listen<ToolResultPayload>(
-      "chat:tool_result",
-      (event) => {
+      }),
+      listen<ToolResultPayload>("chat:tool_result", (event) => {
         if (event.payload.chat_id !== chatId) return;
         opts.onToolResult?.(
           event.payload.call_id,
           event.payload.name,
           event.payload.hits,
         );
-      },
-    );
-    const unlistenUsage = await listen<ChatUsagePayload>(
-      "chat:usage",
-      (event) => {
+      }),
+      listen<ChatUsagePayload>("chat:usage", (event) => {
         if (event.payload.chat_id !== chatId) return;
         opts.onUsage?.(event.payload);
-      },
-    );
-
-    const cleanup = () => {
-      if (inflightChatId.current === chatId) {
-        inflightChatId.current = null;
-        inflightCleanup.current = null;
-      }
-      unlistenToken();
-      unlistenComplete();
-      unlistenError();
-      unlistenToolStart();
-      unlistenToolArgs();
-      unlistenToolEnd();
-      unlistenToolResult();
-      unlistenUsage();
-    };
-    inflightCleanup.current = cleanup;
+      }),
+    ]);
 
     try {
       await invoke("chat_send_message", {
@@ -205,5 +139,5 @@ export function useChatStream() {
     });
   }, []);
 
-  return { send, stop, modelReady, recheckModel: checkLlmModel };
+  return { send, stop, modelReady };
 }

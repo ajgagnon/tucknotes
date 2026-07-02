@@ -44,7 +44,10 @@
 .meeting-summary-prose .tiptap.ProseMirror > h3,
 .meeting-summary-prose .tiptap.ProseMirror > h4,
 .meeting-summary-prose .tiptap.ProseMirror li,
-.meeting-summary-prose .tiptap.ProseMirror ul[data-type=taskList] li:not(:has(> p:first-child)) {
+.meeting-summary-prose
+  .tiptap.ProseMirror
+  ul[data-type="taskList"]
+  li:not(:has(> p:first-child)) {
   padding-right: 3.75rem;
 }
 

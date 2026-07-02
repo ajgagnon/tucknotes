@@ -77,7 +77,10 @@ function SidebarProvider({
   const [width, _setWidth] = React.useState<string>(SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = React.useState(false);
   const setWidth = React.useCallback((px: number) => {
-    const clamped = Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, px));
+    const clamped = Math.min(
+      SIDEBAR_WIDTH_MAX,
+      Math.max(SIDEBAR_WIDTH_MIN, px),
+    );
     _setWidth(`${clamped}px`);
   }, []);
 
@@ -308,7 +311,11 @@ function SidebarTrigger({
 
 function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
   const { toggleSidebar, state, setWidth, setIsResizing } = useSidebar();
-  const dragRef = React.useRef<{ startX: number; startWidth: number; moved: boolean } | null>(null);
+  const dragRef = React.useRef<{
+    startX: number;
+    startWidth: number;
+    moved: boolean;
+  } | null>(null);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
     const container = event.currentTarget

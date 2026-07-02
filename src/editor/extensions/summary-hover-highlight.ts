@@ -29,8 +29,7 @@ export const SummaryHoverHighlight = Extension.create({
           init: () => DecorationSet.empty,
           apply(tr, set) {
             const meta = tr.getMeta(summaryHoverKey) as
-              | SummaryHoverMeta
-              | undefined;
+              SummaryHoverMeta | undefined;
             if (meta !== undefined) {
               if (meta === null) return DecorationSet.empty;
               return DecorationSet.create(tr.doc, [
@@ -63,7 +62,9 @@ export function setSummaryHover(editor: Editor, el: HTMLElement | null): void {
   const { view } = editor;
   if (!el) {
     view.dispatch(
-      view.state.tr.setMeta(summaryHoverKey, null).setMeta("addToHistory", false),
+      view.state.tr
+        .setMeta(summaryHoverKey, null)
+        .setMeta("addToHistory", false),
     );
     return;
   }

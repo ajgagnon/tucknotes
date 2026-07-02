@@ -22,7 +22,7 @@ export function useAutoUpdateCheck({ enabled }: { enabled: boolean }) {
     async function runAvailableFlow(version: string) {
       if (cancelled || isDialogOpen()) return;
       setDialogOpen(true);
-      let install = false;
+      let install: boolean;
       try {
         install = await ask(
           `A new version (v${version}) is available. Install now?`,
@@ -48,7 +48,7 @@ export function useAutoUpdateCheck({ enabled }: { enabled: boolean }) {
     async function runReadyFlow() {
       if (cancelled || isDialogOpen()) return;
       setDialogOpen(true);
-      let restart = false;
+      let restart: boolean;
       try {
         restart = await ask("The update is ready. Restart TuckNotes now?", {
           title: "Restart to apply update",
@@ -87,10 +87,7 @@ export function useAutoUpdateCheck({ enabled }: { enabled: boolean }) {
       () => fire("startup"),
       STARTUP_DELAY_MS,
     );
-    const intervalId = window.setInterval(
-      () => fire("interval"),
-      INTERVAL_MS,
-    );
+    const intervalId = window.setInterval(() => fire("interval"), INTERVAL_MS);
     const onFocus = () => fire("focus");
     window.addEventListener("focus", onFocus);
 

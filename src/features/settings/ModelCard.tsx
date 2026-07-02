@@ -118,9 +118,7 @@ export function ModelCard({
         <FieldContent>
           <FieldTitle>
             {model.name}
-            {model.recommended && (
-              <Badge variant="outline">Recommended</Badge>
-            )}
+            {model.recommended && <Badge variant="outline">Recommended</Badge>}
           </FieldTitle>
           <FieldDescription>
             {model.description}

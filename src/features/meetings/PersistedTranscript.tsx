@@ -24,10 +24,7 @@ export const PersistedTranscript = forwardRef<
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="grid grid-cols-[auto_auto_1fr] gap-x-6"
-    >
+    <div ref={containerRef} className="grid grid-cols-[auto_auto_1fr] gap-x-6">
       {segments.map((seg) => (
         <SegmentBubble
           key={seg.id}

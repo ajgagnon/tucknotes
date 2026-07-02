@@ -2,7 +2,11 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./App.css";
-import { getStoredTheme, applyTheme, listenForSystemChanges } from "@/features/theme";
+import {
+  getStoredTheme,
+  applyTheme,
+  listenForSystemChanges,
+} from "@/features/theme";
 
 // Apply stored theme preference (light / dark / system)
 applyTheme(getStoredTheme());

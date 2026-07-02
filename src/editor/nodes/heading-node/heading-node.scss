@@ -1,5 +1,4 @@
 .tiptap.ProseMirror {
-
   h1,
   h2,
   h3,
@@ -9,14 +8,14 @@
     font-style: inherit;
   }
 
-  >h1:first-child,
-  >h2:first-child,
-  >h3:first-child,
-  >h4:first-child,
-  >.ProseMirror-widget+h1,
-  >.ProseMirror-widget+h2,
-  >.ProseMirror-widget+h3,
-  >.ProseMirror-widget+h4 {
+  > h1:first-child,
+  > h2:first-child,
+  > h3:first-child,
+  > h4:first-child,
+  > .ProseMirror-widget + h1,
+  > .ProseMirror-widget + h2,
+  > .ProseMirror-widget + h3,
+  > .ProseMirror-widget + h4 {
     margin-top: 0;
   }
 
