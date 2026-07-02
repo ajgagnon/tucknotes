@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriEvent } from "@/hooks/use-tauri-event";
 import { Mic } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,18 +27,11 @@ function ModelSetup({ onComplete }: ModelSetupProps) {
     });
   }, []);
 
-  useEffect(() => {
-    if (!downloading) return;
-    const unlisten = listen<DownloadProgress>(
-      "model:download-progress",
-      (event) => {
-        setProgress(event.payload);
-      },
-    );
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [downloading]);
+  useTauriEvent<DownloadProgress>(
+    "model:download-progress",
+    (progress) => setProgress(progress),
+    { enabled: downloading },
+  );
 
   async function handleDownload() {
     if (!selectedId) return;

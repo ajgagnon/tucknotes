@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriEvent } from "@/hooks/use-tauri-event";
 import type { DownloadProgress, ModelInfo } from "./types";
 
 export interface LlmDownloadStatus {
@@ -36,42 +36,36 @@ export function useLlmDownloadProgress(): LlmDownloadStatus | null {
     };
   }, []);
 
+  useTauriEvent<DownloadProgress>("llm-model:download-progress", (p) => {
+    const total = p.total_bytes;
+    const downloaded = p.downloaded_bytes;
+    const percent = total > 0 ? Math.min((downloaded / total) * 100, 100) : 0;
+    const done = total > 0 && downloaded >= total;
+
+    if (lingerTimerRef.current) {
+      clearTimeout(lingerTimerRef.current);
+      lingerTimerRef.current = null;
+    }
+
+    setStatus({
+      modelId: p.model_id,
+      name: namesRef.current.get(p.model_id) ?? "Summarization model",
+      downloadedBytes: downloaded,
+      totalBytes: total,
+      percent,
+      done,
+    });
+
+    if (done) {
+      lingerTimerRef.current = setTimeout(() => {
+        setStatus(null);
+        lingerTimerRef.current = null;
+      }, COMPLETION_LINGER_MS);
+    }
+  });
+
   useEffect(() => {
-    const unlisten = listen<DownloadProgress>(
-      "llm-model:download-progress",
-      (event) => {
-        const p = event.payload;
-        const total = p.total_bytes;
-        const downloaded = p.downloaded_bytes;
-        const percent =
-          total > 0 ? Math.min((downloaded / total) * 100, 100) : 0;
-        const done = total > 0 && downloaded >= total;
-
-        if (lingerTimerRef.current) {
-          clearTimeout(lingerTimerRef.current);
-          lingerTimerRef.current = null;
-        }
-
-        setStatus({
-          modelId: p.model_id,
-          name: namesRef.current.get(p.model_id) ?? "Summarization model",
-          downloadedBytes: downloaded,
-          totalBytes: total,
-          percent,
-          done,
-        });
-
-        if (done) {
-          lingerTimerRef.current = setTimeout(() => {
-            setStatus(null);
-            lingerTimerRef.current = null;
-          }, COMPLETION_LINGER_MS);
-        }
-      },
-    );
-
     return () => {
-      unlisten.then((fn) => fn());
       if (lingerTimerRef.current) {
         clearTimeout(lingerTimerRef.current);
         lingerTimerRef.current = null;

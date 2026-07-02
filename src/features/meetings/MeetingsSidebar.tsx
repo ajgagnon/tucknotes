@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriEvent } from "@/hooks/use-tauri-event";
 import { Clock } from "lucide-react";
 import {
   SidebarContent,
@@ -61,28 +61,27 @@ export default function MeetingsSidebar({
     pending: [],
   });
 
-  useEffect(() => {
-    let cancelled = false;
-    async function check() {
-      try {
-        const queue = await invoke<SummarizationQueue>(
-          "get_summarization_queue",
-        );
-        if (!cancelled) setSummaryQueue(queue);
-      } catch {
-        /* ignore */
-      }
+  const queueMountedRef = useRef(true);
+  const checkSummaryQueue = useCallback(async () => {
+    try {
+      const queue = await invoke<SummarizationQueue>(
+        "get_summarization_queue",
+      );
+      if (queueMountedRef.current) setSummaryQueue(queue);
+    } catch {
+      /* ignore */
     }
-    check();
-
-    const unlisten = listen<string>("summary:complete", () => {
-      if (!cancelled) check();
-    });
-    return () => {
-      cancelled = true;
-      unlisten.then((fn) => fn());
-    };
   }, []);
+
+  useEffect(() => {
+    queueMountedRef.current = true;
+    void checkSummaryQueue();
+    return () => {
+      queueMountedRef.current = false;
+    };
+  }, [checkSummaryQueue]);
+
+  useTauriEvent("summary:complete", () => void checkSummaryQueue());
 
   const grouped = useMemo(() => groupMeetings(meetings), [meetings]);
 

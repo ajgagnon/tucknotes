@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriEvent } from "@/hooks/use-tauri-event";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { ModelInfo, DownloadProgress } from "./types";
@@ -85,15 +85,11 @@ export function useModelManager(config: ModelManagerConfig) {
     void load();
   }, [config]);
 
-  useEffect(() => {
-    if (!downloading) return;
-    const unlisten = listen<DownloadProgress>(config.progressEvent, (event) =>
-      setProgress(event.payload),
-    );
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [downloading, config.progressEvent]);
+  useTauriEvent<DownloadProgress>(
+    config.progressEvent,
+    (progress) => setProgress(progress),
+    { enabled: Boolean(downloading) },
+  );
 
   const selectModel = useCallback(
     async (modelId: string) => {

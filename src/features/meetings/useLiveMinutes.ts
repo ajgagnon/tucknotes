@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriEvent } from "@/hooks/use-tauri-event";
 
 interface MinutesUpdatedPayload {
   meeting_id: string;
@@ -49,22 +49,15 @@ export function useLiveMinutes(
     }
   }, [isLiveRecording]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const unlisten = listen<MinutesUpdatedPayload>("minutes:updated", (event) => {
-      if (cancelled || event.payload.meeting_id !== meetingId) return;
-      setLiveMinutesBody(event.payload.body);
-      onMinutesBodyRef.current?.(event.payload.body);
-      if (!hasMinutesDocRef.current && !refreshedRef.current) {
-        refreshedRef.current = true;
-        void onRefreshMeetingRef.current?.();
-      }
-    });
-    return () => {
-      cancelled = true;
-      unlisten.then((fn) => fn());
-    };
-  }, [meetingId]);
+  useTauriEvent<MinutesUpdatedPayload>("minutes:updated", (payload) => {
+    if (payload.meeting_id !== meetingId) return;
+    setLiveMinutesBody(payload.body);
+    onMinutesBodyRef.current?.(payload.body);
+    if (!hasMinutesDocRef.current && !refreshedRef.current) {
+      refreshedRef.current = true;
+      void onRefreshMeetingRef.current?.();
+    }
+  });
 
   return { liveMinutesBody };
 }
