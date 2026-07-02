@@ -205,7 +205,6 @@ export function MeetingDocumentEditor({
         key={documentId}
         initialMarkdown={initialBody}
         onMarkdownChange={onMarkdownChange}
-        hideThemeToggle
         meetingNote={meetingNote}
         summaryHover={summaryActions}
         onEditorReady={(ed) => {

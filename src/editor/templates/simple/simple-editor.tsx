@@ -73,24 +73,17 @@ import { useIsBreakpoint } from "@/hooks/use-is-breakpoint"
 import { useWindowSize } from "@/hooks/use-window-size"
 import { useCursorVisibility } from "@/editor/use-cursor-visibility"
 
-// --- Components ---
-import { ThemeToggle } from "@/editor/templates/simple/theme-toggle"
-
 // --- Styles ---
 import "@/editor/templates/simple/simple-editor.scss"
-
-import content from "@/editor/templates/simple/data/content.json"
 
 const MainToolbarContent = ({
   onHighlighterClick,
   onLinkClick,
   isMobile,
-  hideThemeToggle,
 }: {
   onHighlighterClick: () => void
   onLinkClick: () => void
   isMobile: boolean
-  hideThemeToggle?: boolean
 }) => {
   return (
     <>
@@ -143,13 +136,6 @@ const MainToolbarContent = ({
         <TextAlignButton align="justify" />
       </ToolbarGroup>
 
-      {isMobile && <ToolbarSeparator />}
-
-      {!hideThemeToggle && (
-        <ToolbarGroup>
-          <ThemeToggle />
-        </ToolbarGroup>
-      )}
     </>
   )
 }
@@ -189,14 +175,10 @@ export type MeetingNoteEditorConfig = {
 }
 
 export type SimpleEditorProps = {
-  /**
-   * When set (including `null`), initial content is markdown. When omitted, uses the template demo JSON.
-   */
-  initialMarkdown?: string | null
+  /** Initial content as markdown (`null` for an empty document). */
+  initialMarkdown: string | null
   /** Fired with the full document as markdown after edits (serialized on a short debounce; parent may debounce persistence further). */
   onMarkdownChange?: (markdown: string) => void
-  /** Hide the in-editor light/dark toggle (e.g. when embedded in the app shell). */
-  hideThemeToggle?: boolean
   /** Meeting notes: elapsed stamping + timestamp UI (only used from `MeetingNotesEditor`). */
   meetingNote?: MeetingNoteEditorConfig | null
   /** Load the per-block hover-highlight plugin (AI summary only). */
@@ -208,19 +190,16 @@ export type SimpleEditorProps = {
 export function SimpleEditor({
   initialMarkdown,
   onMarkdownChange,
-  hideThemeToggle = false,
   meetingNote = null,
   summaryHover = false,
   onEditorReady,
-}: SimpleEditorProps = {}) {
+}: SimpleEditorProps) {
   const isMobile = useIsBreakpoint()
   const { height } = useWindowSize()
   const [mobileView, setMobileView] = useState<"main" | "highlighter" | "link">(
     "main"
   )
   const toolbarRef = useRef<HTMLDivElement>(null)
-
-  const markdownMode = initialMarkdown !== undefined
 
   const meetingNoteRef = useRef(meetingNote)
   meetingNoteRef.current = meetingNote
@@ -278,7 +257,7 @@ export function SimpleEditor({
   const editor = useEditor(
     {
       immediatelyRender: false,
-      autofocus: markdownMode ? "end" : false,
+      autofocus: "end",
       editorProps: {
         attributes: {
           autocomplete: "off",
@@ -289,8 +268,8 @@ export function SimpleEditor({
         },
       },
       extensions,
-      content: markdownMode ? (initialMarkdown ?? "") : content,
-      contentType: markdownMode ? "markdown" : "json",
+      content: initialMarkdown ?? "",
+      contentType: "markdown",
       onUpdate: ({ editor: ed }) => {
         const emit = onMarkdownChangeRef.current
         if (!emit) return
@@ -303,7 +282,7 @@ export function SimpleEditor({
         }, 300)
       },
     },
-    [markdownMode, extensions],
+    [extensions],
   )
 
   useEffect(() => {
@@ -355,7 +334,6 @@ export function SimpleEditor({
               onHighlighterClick={() => setMobileView("highlighter")}
               onLinkClick={() => setMobileView("link")}
               isMobile={isMobile}
-              hideThemeToggle={hideThemeToggle}
             />
           ) : (
             <MobileToolbarContent
