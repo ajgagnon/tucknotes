@@ -21,7 +21,7 @@
 
 /* Ensure each top-level node has relative positioning 
    so absolutely positioned placeholders work correctly */
-.tiptap.ProseMirror>* {
+.tiptap.ProseMirror > * {
   position: relative;
 }
 
@@ -70,7 +70,6 @@
      TEXT DECORATION
      ===================== */
 .tiptap.ProseMirror {
-
   // Text decoration inheritance for spans
   a span {
     text-decoration: underline;
@@ -155,7 +154,6 @@
      THREADS
      ===================== */
 .tiptap.ProseMirror {
-
   // Base styles for inline threads
   .tiptap-thread.tiptap-thread--unresolved.tiptap-thread--inline {
     transition:
@@ -223,16 +221,22 @@
 /* =====================
      PLACEHOLDER
      ===================== */
-.is-empty:not(.with-slash)[data-placeholder]:has(> .ProseMirror-trailingBreak:only-child)::before {
+.is-empty:not(.with-slash)[data-placeholder]:has(
+    > .ProseMirror-trailingBreak:only-child
+  )::before {
   content: attr(data-placeholder);
 }
 
-.is-empty.with-slash[data-placeholder]:has(> .ProseMirror-trailingBreak:only-child)::before {
+.is-empty.with-slash[data-placeholder]:has(
+    > .ProseMirror-trailingBreak:only-child
+  )::before {
   content: "Write, type '/' for commands…";
   font-style: italic;
 }
 
-.is-empty[data-placeholder]:has(> .ProseMirror-trailingBreak:only-child):before {
+.is-empty[data-placeholder]:has(
+    > .ProseMirror-trailingBreak:only-child
+  ):before {
   pointer-events: none;
   height: 0;
   position: absolute;

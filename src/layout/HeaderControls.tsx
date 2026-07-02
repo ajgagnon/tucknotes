@@ -6,10 +6,7 @@ import {
   AudioVisualizer,
 } from "@/features/recording";
 import { type MeetingRow } from "@/features/meetings";
-import {
-  useLicenseStatus,
-  allowsPaidFeatures,
-} from "@/features/licensing";
+import { useLicenseStatus, allowsPaidFeatures } from "@/features/licensing";
 
 /** Global start / navigate-to-active-recording button in the sidebar header. */
 export function HeaderControls({

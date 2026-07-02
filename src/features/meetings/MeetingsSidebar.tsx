@@ -64,9 +64,7 @@ export default function MeetingsSidebar({
   const queueMountedRef = useRef(true);
   const checkSummaryQueue = useCallback(async () => {
     try {
-      const queue = await invoke<SummarizationQueue>(
-        "get_summarization_queue",
-      );
+      const queue = await invoke<SummarizationQueue>("get_summarization_queue");
       if (queueMountedRef.current) setSummaryQueue(queue);
     } catch {
       /* ignore */

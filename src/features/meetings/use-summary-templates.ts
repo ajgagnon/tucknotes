@@ -55,7 +55,6 @@ export function useSummaryTemplates(
     return () => {
       cancelled = true;
     };
-     
   }, [meeting.id, meeting.template]);
 
   return { templates, selectedTemplate, setSelectedTemplate };

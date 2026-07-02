@@ -100,11 +100,7 @@ export interface SectionDonePayload {
 }
 
 export type SummarySectionState =
-  | "pending"
-  | "thinking"
-  | "writing"
-  | "done"
-  | "skipped";
+  "pending" | "thinking" | "writing" | "done" | "skipped";
 
 /** View-model for one streaming summary section, derived from the events. */
 export interface SummarySection {

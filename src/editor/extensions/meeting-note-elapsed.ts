@@ -136,11 +136,7 @@ export const MeetingNoteHeading = Heading.extend({
     if (inline.length === 0 && token.text) {
       inline = [{ type: "text", text: token.text }];
     }
-    return helpers.createNode(
-      "heading",
-      { level: token.depth || 1 },
-      inline,
-    );
+    return helpers.createNode("heading", { level: token.depth || 1 }, inline);
   },
 });
 

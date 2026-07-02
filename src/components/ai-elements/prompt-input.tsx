@@ -71,7 +71,11 @@ export const PromptInput = ({
   );
 
   return (
-    <form className={cn("w-full", className)} onSubmit={handleSubmit} {...props}>
+    <form
+      className={cn("w-full", className)}
+      onSubmit={handleSubmit}
+      {...props}
+    >
       <InputGroup className="overflow-hidden">{children}</InputGroup>
     </form>
   );
@@ -274,7 +278,9 @@ export const PromptInputSubmit = ({
     icon = <XIcon className="size-4" />;
   }
 
-  const handleClick = useCallback<NonNullable<PromptInputSubmitProps["onClick"]>>(
+  const handleClick = useCallback<
+    NonNullable<PromptInputSubmitProps["onClick"]>
+  >(
     (e) => {
       if (isGenerating && onStop) {
         e.preventDefault();

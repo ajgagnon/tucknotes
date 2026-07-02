@@ -115,18 +115,14 @@ function ModelSetup({ onComplete }: ModelSetupProps) {
             >
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-[0.95rem] font-semibold">
-                    {model.name}
-                  </h3>
+                  <h3 className="text-[0.95rem] font-semibold">{model.name}</h3>
                   {model.recommended && (
                     <Badge variant="outline">Recommended</Badge>
                   )}
                 </div>
                 <div
                   className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
-                    isSelected
-                      ? "border-primary bg-primary"
-                      : "border-border"
+                    isSelected ? "border-primary bg-primary" : "border-border"
                   }`}
                 >
                   {isSelected && (

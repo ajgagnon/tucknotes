@@ -102,12 +102,7 @@ export function useModelManager(config: ModelManagerConfig) {
         toastError(errorMessage(err, "Failed to switch model."));
       }
     },
-    [
-      selectedId,
-      downloading,
-      downloadStatus,
-      config.setSelectedCommand,
-    ],
+    [selectedId, downloading, downloadStatus, config.setSelectedCommand],
   );
 
   const downloadModel = useCallback(

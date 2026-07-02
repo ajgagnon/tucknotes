@@ -305,7 +305,11 @@ export function TemplateEditorView({
             </Card>
           ))}
 
-          <Button variant="outline" onClick={addSection} className="justify-self-start">
+          <Button
+            variant="outline"
+            onClick={addSection}
+            className="justify-self-start"
+          >
             <Plus className="size-4" />
             Add section
           </Button>

@@ -39,7 +39,10 @@ export function useMeetingTabs({
   // default while recording) backs off until the next recording session.
   const userPickedTabRef = useRef(false);
   const wasLiveRecordingRef = useRef(false);
-  const docIds = useMemo(() => documents.map((d) => d.id).join(","), [documents]);
+  const docIds = useMemo(
+    () => documents.map((d) => d.id).join(","),
+    [documents],
+  );
   const [selectedDocId, setSelectedDocId] = useState("");
 
   const summaryHidden = isLiveRecording;
@@ -143,7 +146,6 @@ export function useMeetingTabs({
         ""
       );
     });
-     
   }, [
     meetingId,
     docIds,
@@ -173,7 +175,6 @@ export function useMeetingTabs({
       }
     }
     wasLiveRecordingRef.current = isLiveRecording;
-     
   }, [isLiveRecording, docIds, documents, minutesExpected, minutesDocId]);
 
   const selectedDoc =

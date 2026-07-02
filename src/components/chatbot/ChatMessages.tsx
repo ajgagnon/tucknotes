@@ -33,7 +33,9 @@ export function ChatMessages({
           <>
             <ConversationEmptyState
               icon={<MessageCircle className="size-8" />}
-              title={modelReady === false ? "Model required" : "Ask me anything"}
+              title={
+                modelReady === false ? "Model required" : "Ask me anything"
+              }
               description={
                 modelReady === false
                   ? "Download a model in Settings to use Tuck."

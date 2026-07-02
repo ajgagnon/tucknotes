@@ -190,94 +190,94 @@ function AppLayout() {
     <div className="bg-background/50">
       <Toaster />
       <TooltipProvider>
-       <AskTuckProvider>
-        <RecordingProvider>
-          <SidebarProvider className="max-h-svh overflow-hidden">
-            <Sidebar variant="inset">
-              <SidebarRail />
-              <SidebarTrigger className="fixed left-[95px] top-[18px] text-muted-foreground/60 hover:text-muted-foreground" />
-              <SidebarHeader
-                className="flex flex-col gap-2 px-3 pb-3 pt-[55px]"
-                onMouseDown={onDrag}
-              >
-                <div className="flex flex-col gap-2">
-                  <div onMouseDown={(e) => e.stopPropagation()}>
-                    <HeaderControls
+        <AskTuckProvider>
+          <RecordingProvider>
+            <SidebarProvider className="max-h-svh overflow-hidden">
+              <Sidebar variant="inset">
+                <SidebarRail />
+                <SidebarTrigger className="fixed left-[95px] top-[18px] text-muted-foreground/60 hover:text-muted-foreground" />
+                <SidebarHeader
+                  className="flex flex-col gap-2 px-3 pb-3 pt-[55px]"
+                  onMouseDown={onDrag}
+                >
+                  <div className="flex flex-col gap-2">
+                    <div onMouseDown={(e) => e.stopPropagation()}>
+                      <HeaderControls
+                        meetings={meetings}
+                        onStartRecording={handleStartRecording}
+                        onNavigateToActiveRecording={
+                          handleNavigateToActiveRecording
+                        }
+                        onOpenSettings={() =>
+                          void navigateTo({ type: "settings" })
+                        }
+                      />
+                    </div>
+                    <MeetingSearch
                       meetings={meetings}
-                      onStartRecording={handleStartRecording}
-                      onNavigateToActiveRecording={
-                        handleNavigateToActiveRecording
-                      }
-                      onOpenSettings={() =>
-                        void navigateTo({ type: "settings" })
+                      onSelectMeeting={(id) =>
+                        void navigateTo({ type: "meeting", id })
                       }
                     />
                   </div>
-                  <MeetingSearch
-                    meetings={meetings}
-                    onSelectMeeting={(id) =>
-                      void navigateTo({ type: "meeting", id })
-                    }
-                  />
-                </div>
-              </SidebarHeader>
-              <MeetingsSidebar
-                meetings={meetings}
-                activeMeetingId={
-                  activeView?.type === "meeting" ? activeView.id : null
-                }
-                onSelectMeeting={(id) =>
-                  void navigateTo({ type: "meeting", id })
-                }
-              />
-
-              <SidebarFooter className="px-3 pb-3">
-                <LlmDownloadIndicator />
-                <TrialBanner
-                  onOpenSettings={() => void navigateTo({ type: "settings" })}
+                </SidebarHeader>
+                <MeetingsSidebar
+                  meetings={meetings}
+                  activeMeetingId={
+                    activeView?.type === "meeting" ? activeView.id : null
+                  }
+                  onSelectMeeting={(id) =>
+                    void navigateTo({ type: "meeting", id })
+                  }
                 />
-                <SidebarMenu>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      isActive={activeView?.type === "settings"}
-                      onClick={() => void navigateTo({ type: "settings" })}
-                      tooltip="Settings"
-                    >
-                      <Settings className="text-muted-foreground" />
-                      <span>Settings</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </SidebarMenu>
-              </SidebarFooter>
-            </Sidebar>
-            <LayoutContent
-              activeView={activeView}
-              onDrag={onDrag}
-              onStartRecording={handleStartRecording}
-              onDeleteMeeting={handleDeleteMeeting}
-              onTitleChange={handleTitleChange}
-              meetingInfo={meetingInfo}
-              onSaveTitle={handleSaveTitle}
-              onOpenSettings={(section) =>
-                void navigateTo({ type: "settings", section })
-              }
-              onEditTemplate={(id) =>
-                void navigateTo({ type: "template-editor", id })
-              }
-              onDirtyChange={(d) => (unsavedRef.current = d)}
-            />
-          </SidebarProvider>
-        </RecordingProvider>
-        <Chatbot
-          activeMeeting={
-            activeView?.type === "meeting"
-              ? meetings.find((m) => m.id === activeView.id) ?? null
-              : null
-          }
-          onOpenSettings={() => void navigateTo({ type: "settings" })}
-          onOpenMeeting={(id) => void navigateTo({ type: "meeting", id })}
-        />
-       </AskTuckProvider>
+
+                <SidebarFooter className="px-3 pb-3">
+                  <LlmDownloadIndicator />
+                  <TrialBanner
+                    onOpenSettings={() => void navigateTo({ type: "settings" })}
+                  />
+                  <SidebarMenu>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        isActive={activeView?.type === "settings"}
+                        onClick={() => void navigateTo({ type: "settings" })}
+                        tooltip="Settings"
+                      >
+                        <Settings className="text-muted-foreground" />
+                        <span>Settings</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  </SidebarMenu>
+                </SidebarFooter>
+              </Sidebar>
+              <LayoutContent
+                activeView={activeView}
+                onDrag={onDrag}
+                onStartRecording={handleStartRecording}
+                onDeleteMeeting={handleDeleteMeeting}
+                onTitleChange={handleTitleChange}
+                meetingInfo={meetingInfo}
+                onSaveTitle={handleSaveTitle}
+                onOpenSettings={(section) =>
+                  void navigateTo({ type: "settings", section })
+                }
+                onEditTemplate={(id) =>
+                  void navigateTo({ type: "template-editor", id })
+                }
+                onDirtyChange={(d) => (unsavedRef.current = d)}
+              />
+            </SidebarProvider>
+          </RecordingProvider>
+          <Chatbot
+            activeMeeting={
+              activeView?.type === "meeting"
+                ? (meetings.find((m) => m.id === activeView.id) ?? null)
+                : null
+            }
+            onOpenSettings={() => void navigateTo({ type: "settings" })}
+            onOpenMeeting={(id) => void navigateTo({ type: "meeting", id })}
+          />
+        </AskTuckProvider>
       </TooltipProvider>
     </div>
   );

@@ -12,11 +12,7 @@ import {
 } from "./types";
 import { useMeetingSummarization } from "./useMeetingSummarization";
 import { useLiveMinutes } from "./useLiveMinutes";
-import {
-  useMeetingTabs,
-  TRANSCRIPT_TAB,
-  MINUTES_TAB,
-} from "./useMeetingTabs";
+import { useMeetingTabs, TRANSCRIPT_TAB, MINUTES_TAB } from "./useMeetingTabs";
 import { SummaryPanel } from "./SummaryPanel";
 import { SummarizeFooter } from "./SummarizeFooter";
 import { TranscriptPanel } from "./TranscriptPanel";
@@ -240,19 +236,16 @@ export function MeetingDetailView({
   // the whole body), so it renders read-only; editable once recording ends.
   const isLiveMinutesTab = selectedDoc?.kind === "minutes" && isLiveRecording;
   const panelMode:
-    | "streaming"
-    | "placeholder"
-    | "editor"
-    | "live-minutes"
-    | null = !selectedDoc
-    ? null
-    : isLiveMinutesTab
-      ? "live-minutes"
-      : isSummaryTab && summarizing
-        ? "streaming"
-        : isSummaryTab && !currentSummary
-          ? "placeholder"
-          : "editor";
+    "streaming" | "placeholder" | "editor" | "live-minutes" | null =
+    !selectedDoc
+      ? null
+      : isLiveMinutesTab
+        ? "live-minutes"
+        : isSummaryTab && summarizing
+          ? "streaming"
+          : isSummaryTab && !currentSummary
+            ? "placeholder"
+            : "editor";
   const editorInitialBody = isSummaryTab
     ? currentSummary
     : (selectedDoc?.body ?? null);

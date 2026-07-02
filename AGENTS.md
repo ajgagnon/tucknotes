@@ -51,14 +51,14 @@ On the frontend, catch blocks receive `{ kind: string; message?: string }`:
 
 ```typescript
 try {
-    await invoke("start_recording");
+  await invoke("start_recording");
 } catch (error) {
-    const err = error as { kind: string; message?: string };
-    switch (err.kind) {
-        case "CaptureFailed": // err.message has details
-        case "LockPoisoned":  // internal state error
-        case "NotSupported":  // non-macOS platform
-    }
+  const err = error as { kind: string; message?: string };
+  switch (err.kind) {
+    case "CaptureFailed": // err.message has details
+    case "LockPoisoned": // internal state error
+    case "NotSupported": // non-macOS platform
+  }
 }
 ```
 

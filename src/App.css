@@ -1,5 +1,5 @@
-@import './styles/_variables.scss';
-@import './styles/_keyframe-animations.scss';
+@import "./styles/_variables.scss";
+@import "./styles/_keyframe-animations.scss";
 
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
@@ -10,7 +10,6 @@
 @import "@fontsource-variable/source-serif-4";
 
 @custom-variant dark (&:is(.dark *));
-
 
 @keyframes pulse-ring {
   0% {
@@ -41,7 +40,7 @@
   --ink-2: #6b6453;
   --ink-3: #948a72;
   /* Sage — brand primary, 500 is the signature */
-  --sage-50:  #eef0e7;
+  --sage-50: #eef0e7;
   --sage-100: #d8ddc7;
   --sage-200: #b9c39d;
   --sage-300: #94a373;
@@ -52,10 +51,10 @@
   --sage-800: #26321a;
   --sage-900: #1a2412;
   /* Accents — used sparingly. 500 on light surfaces, 200 on dark. */
-  --ochre-200:  #f1d99c;
-  --ochre-500:  #c8923a;
-  --rust-200:   #efc6b3;
-  --rust-500:   #b35a3a;
+  --ochre-200: #f1d99c;
+  --ochre-500: #c8923a;
+  --rust-200: #efc6b3;
+  --rust-500: #b35a3a;
   --indigo-200: #c8d2e8;
   --indigo-500: #3e4f7a;
 }
@@ -158,9 +157,9 @@
 
 @theme inline {
   --breakpoint-md: 600px;
-  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
-  --font-serif: 'Source Serif 4 Variable', ui-serif, Georgia, serif;
-  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Source Serif 4 Variable", ui-serif, Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --color-success: var(--primary);
   --color-ochre-200: var(--ochre-200);
   --color-ochre-500: var(--ochre-500);
@@ -215,11 +214,14 @@
   --radius-4xl: calc(var(--radius) + 16px);
   --animate-shiny-text: shiny-text 8s infinite;
   @keyframes shiny-text {
-  0%, 90%, 100% {
-    background-position: calc(-100% - var(--shiny-width)) 0;
+    0%,
+    90%,
+    100% {
+      background-position: calc(-100% - var(--shiny-width)) 0;
     }
-  30%, 60% {
-    background-position: calc(100% + var(--shiny-width)) 0;
+    30%,
+    60% {
+      background-position: calc(100% + var(--shiny-width)) 0;
     }
   }
 }
@@ -234,7 +236,12 @@
   html {
     @apply font-sans bg-canvas;
   }
-  h1, h2, h3, h4, h5, h6 {
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
     @apply font-serif;
   }
 }
@@ -300,8 +307,14 @@
   list-style: none;
 }
 
-.meeting-summary-prose .tiptap.ProseMirror ul:not([data-type="taskList"]) > li::before,
-.meeting-summary-prose .tiptap.ProseMirror ul:not(.contains-task-list) > li::before {
+.meeting-summary-prose
+  .tiptap.ProseMirror
+  ul:not([data-type="taskList"])
+  > li::before,
+.meeting-summary-prose
+  .tiptap.ProseMirror
+  ul:not(.contains-task-list)
+  > li::before {
   content: "—";
   position: absolute;
   left: 0;
@@ -320,7 +333,10 @@
   content: none;
 }
 
-.meeting-summary-prose .tiptap.ProseMirror ul.contains-task-list input[type="checkbox"] {
+.meeting-summary-prose
+  .tiptap.ProseMirror
+  ul.contains-task-list
+  input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
   width: 0.95em;
@@ -335,12 +351,18 @@
   cursor: default;
 }
 
-.meeting-summary-prose .tiptap.ProseMirror ul.contains-task-list input[type="checkbox"]:checked {
+.meeting-summary-prose
+  .tiptap.ProseMirror
+  ul.contains-task-list
+  input[type="checkbox"]:checked {
   background-color: var(--sage-500);
   border-color: var(--sage-500);
 }
 
-.meeting-summary-prose .tiptap.ProseMirror ul.contains-task-list input[type="checkbox"]:checked::after {
+.meeting-summary-prose
+  .tiptap.ProseMirror
+  ul.contains-task-list
+  input[type="checkbox"]:checked::after {
   content: "";
   position: absolute;
   left: 0.22em;
@@ -364,11 +386,18 @@
   margin: 0.35rem 0;
 }
 
-.meeting-summary-prose .tiptap.ProseMirror ul[data-type="taskList"] > li::before {
+.meeting-summary-prose
+  .tiptap.ProseMirror
+  ul[data-type="taskList"]
+  > li::before {
   content: none;
 }
 
-.meeting-summary-prose .tiptap.ProseMirror ul[data-type="taskList"] > li > label {
+.meeting-summary-prose
+  .tiptap.ProseMirror
+  ul[data-type="taskList"]
+  > li
+  > label {
   padding-top: 0;
   padding-right: 0.5rem;
   padding-bottom: 0;
@@ -381,7 +410,12 @@
   padding: 0;
 }
 
-.meeting-summary-prose .tiptap.ProseMirror ul[data-type="taskList"] > li > label > span {
+.meeting-summary-prose
+  .tiptap.ProseMirror
+  ul[data-type="taskList"]
+  > li
+  > label
+  > span {
   width: 0.95em;
   height: 0.95em;
   border: 1.25px solid var(--ink-2);
@@ -389,12 +423,23 @@
   background-color: transparent;
 }
 
-.meeting-summary-prose .tiptap.ProseMirror ul[data-type="taskList"] > li > label > input[type="checkbox"]:checked + span {
+.meeting-summary-prose
+  .tiptap.ProseMirror
+  ul[data-type="taskList"]
+  > li
+  > label
+  > input[type="checkbox"]:checked
+  + span {
   background-color: var(--sage-500);
   border-color: var(--sage-500);
 }
 
-.meeting-summary-prose .tiptap.ProseMirror ul[data-type="taskList"] > li[data-checked="true"] > div > p {
+.meeting-summary-prose
+  .tiptap.ProseMirror
+  ul[data-type="taskList"]
+  > li[data-checked="true"]
+  > div
+  > p {
   opacity: 0.55;
 }
 

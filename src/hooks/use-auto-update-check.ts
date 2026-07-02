@@ -87,10 +87,7 @@ export function useAutoUpdateCheck({ enabled }: { enabled: boolean }) {
       () => fire("startup"),
       STARTUP_DELAY_MS,
     );
-    const intervalId = window.setInterval(
-      () => fire("interval"),
-      INTERVAL_MS,
-    );
+    const intervalId = window.setInterval(() => fire("interval"), INTERVAL_MS);
     const onFocus = () => fire("focus");
     window.addEventListener("focus", onFocus);
 

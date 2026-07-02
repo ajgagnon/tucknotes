@@ -39,6 +39,7 @@ You'll be prompted for a password. Save it in a password manager.
 The command prints a public key — copy that into `src-tauri/tauri.conf.json` at `plugins.updater.pubkey`, replacing `REPLACE_WITH_TAURI_UPDATER_PUBKEY`.
 
 The private key file (`~/.tauri/tucknotes-updater.key`) and its password go into GitHub Actions secrets:
+
 - **`TAURI_SIGNING_PRIVATE_KEY`** — contents of the `.key` file
 - **`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`** — the password you chose
 
@@ -67,11 +68,12 @@ which both resolve through `…/releases/latest/download/…` — never point at
 assetless release while a build is in progress or has failed.
 
 1. Create the release as a **pre-release** (this also creates the `vX.Y.Z` git tag;
-   a *draft* would not, and would break the bump step). Either:
+   a _draft_ would not, and would break the bump step). Either:
    - Web UI → Draft a new release → tag `vX.Y.Z` → **check "Set as a pre-release"** → Publish; or
    - `gh release create vX.Y.Z --prerelease --title "vX.Y.Z" --notes "…"`
 
    You do **not** need to bump version files by hand — `bump.yml` does that.
+
 2. `bump.yml` fires on `release: published`. It demotes the release to a
    pre-release (a no-op given step 1, but a safety net), bumps `version` in
    `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and

@@ -15,11 +15,7 @@ interface PermissionSetupProps {
 }
 
 type MicStatus =
-  | "not_determined"
-  | "authorized"
-  | "denied"
-  | "restricted"
-  | "unknown";
+  "not_determined" | "authorized" | "denied" | "restricted" | "unknown";
 
 type PermissionKey = "screen" | "mic" | "accessibility";
 const ORDER: PermissionKey[] = ["screen", "mic", "accessibility"];
@@ -90,7 +86,9 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
           accessibility,
         };
         const firstUngrantedIdx = ORDER.findIndex((key) => !grants[key]);
-        setStepIndex(firstUngrantedIdx === -1 ? ORDER.length : firstUngrantedIdx);
+        setStepIndex(
+          firstUngrantedIdx === -1 ? ORDER.length : firstUngrantedIdx,
+        );
       }
     } catch {
       setLoading(false);
@@ -105,7 +103,9 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
 
   const handleScreenEnable = async () => {
     if (!screenRequested) {
-      const result = await invoke<boolean>("request_screen_recording_permission");
+      const result = await invoke<boolean>(
+        "request_screen_recording_permission",
+      );
       setScreenRequested(true);
       if (result) setScreenGranted(true);
     } else {
@@ -126,9 +126,7 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
 
   const handleAccessibilityEnable = async () => {
     if (!accessibilityRequested) {
-      const result = await invoke<boolean>(
-        "request_accessibility_permission",
-      );
+      const result = await invoke<boolean>("request_accessibility_permission");
       setAccessibilityRequested(true);
       if (result) setAccessibilityGranted(true);
     } else {
@@ -205,11 +203,7 @@ function PermissionSetup({ onComplete }: PermissionSetupProps) {
               granted ? "bg-primary" : "bg-muted-foreground/40"
             }`}
           />
-          <span
-            className={
-              granted ? "text-primary" : "text-muted-foreground"
-            }
-          >
+          <span className={granted ? "text-primary" : "text-muted-foreground"}>
             {granted ? "Granted" : "Not granted yet"}
           </span>
         </div>

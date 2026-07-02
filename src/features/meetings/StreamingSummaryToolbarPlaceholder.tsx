@@ -19,18 +19,18 @@ import {
   SuperscriptIcon,
   UnderlineIcon,
   Undo2Icon,
-} from "lucide-react"
+} from "lucide-react";
 
-type IconComp = React.FC<React.SVGProps<SVGSVGElement>>
+type IconComp = React.FC<React.SVGProps<SVGSVGElement>>;
 
 function PlaceholderButton({
   Icon,
   withChevron,
   label,
 }: {
-  Icon: IconComp
-  withChevron?: boolean
-  label: string
+  Icon: IconComp;
+  withChevron?: boolean;
+  label: string;
 }) {
   return (
     <button
@@ -47,7 +47,7 @@ function PlaceholderButton({
         <ChevronDownIcon className="tiptap-button-dropdown-small" />
       )}
     </button>
-  )
+  );
 }
 
 function Group({ children }: { children: React.ReactNode }) {
@@ -55,17 +55,13 @@ function Group({ children }: { children: React.ReactNode }) {
     <div role="group" className="tiptap-toolbar-group">
       {children}
     </div>
-  )
+  );
 }
 
 function Sep() {
   return (
-    <div
-      role="none"
-      className="tiptap-separator"
-      data-orientation="vertical"
-    />
-  )
+    <div role="none" className="tiptap-separator" data-orientation="vertical" />
+  );
 }
 
 export function StreamingSummaryToolbarPlaceholder() {
@@ -111,5 +107,5 @@ export function StreamingSummaryToolbarPlaceholder() {
         <PlaceholderButton Icon={AlignJustifyIcon} label="Align justify" />
       </Group>
     </div>
-  )
+  );
 }

@@ -1,9 +1,6 @@
 import { RadioGroup } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  useModelManager,
-  type ModelManagerConfig,
-} from "@/features/models";
+import { useModelManager, type ModelManagerConfig } from "@/features/models";
 import { cn } from "@/lib/utils";
 import type { DownloadProgress } from "@/features/models";
 import { ModelCard } from "./ModelCard";
@@ -46,7 +43,6 @@ export function ModelSection({
       <h2 className="text-sm font-medium text-muted-foreground mb-4">
         {title}
       </h2>
-
 
       {loading ? (
         <div className="flex flex-col gap-3">

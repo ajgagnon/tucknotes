@@ -28,8 +28,12 @@ export function TranscriptPanel({
   scrollHandleRef: RefObject<TranscriptScrollHandle | null>;
   endRef: RefObject<HTMLDivElement | null>;
 }) {
-  const { recording, paused, segments: liveSegments, provisional } =
-    useRecording();
+  const {
+    recording,
+    paused,
+    segments: liveSegments,
+    provisional,
+  } = useRecording();
 
   // Segments backing the transcript copy/export actions. During a live
   // recording the committed live segments are authoritative; otherwise the

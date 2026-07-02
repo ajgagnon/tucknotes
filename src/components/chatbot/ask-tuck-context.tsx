@@ -31,7 +31,10 @@ export function AskTuckProvider({ children }: PropsWithChildren) {
     setRequest((prev) => ({ text, nonce: (prev?.nonce ?? 0) + 1 }));
   }, []);
 
-  const value = useMemo(() => ({ openAskTuck, request }), [openAskTuck, request]);
+  const value = useMemo(
+    () => ({ openAskTuck, request }),
+    [openAskTuck, request],
+  );
 
   return (
     <AskTuckContext.Provider value={value}>{children}</AskTuckContext.Provider>

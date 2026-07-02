@@ -1,4 +1,10 @@
-import { useContext, useState, useEffect, useMemo, type ReactNode } from "react";
+import {
+  useContext,
+  useState,
+  useEffect,
+  useMemo,
+  type ReactNode,
+} from "react";
 import { useTauriEvent } from "@/hooks/use-tauri-event";
 import { rmsToLevel, smoothLevel } from "@/lib/audio-level";
 import { RecordingContext, AudioLevelContext } from "./recording-context";

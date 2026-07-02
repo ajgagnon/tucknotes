@@ -63,13 +63,11 @@ export function useMeetingSummarization(
           (a, b) => a.index - b.index,
         );
         setSections(
-          ordered.map(
-            (s): SummarySection => ({
-              heading: s.heading,
-              body: "",
-              state: "pending",
-            }),
-          ),
+          ordered.map((s): SummarySection => ({
+            heading: s.heading,
+            body: "",
+            state: "pending",
+          })),
         );
       }),
       listen<SectionStartPayload>("summary:section_start", (event) => {
@@ -77,7 +75,9 @@ export function useMeetingSummarization(
         const { index } = event.payload;
         setSections((prev) =>
           prev.map((s, i): SummarySection =>
-            i === index && s.state === "pending" ? { ...s, state: "thinking" } : s,
+            i === index && s.state === "pending"
+              ? { ...s, state: "thinking" }
+              : s,
           ),
         );
       }),
@@ -130,7 +130,9 @@ export function useMeetingSummarization(
     let cancelled = false;
     async function checkActive() {
       try {
-        const queue = await invoke<SummarizationQueue>("get_summarization_queue");
+        const queue = await invoke<SummarizationQueue>(
+          "get_summarization_queue",
+        );
         if (cancelled) return;
 
         const isActive = queue.active === meeting.id;
@@ -145,10 +147,7 @@ export function useMeetingSummarization(
             });
             if (cancelled) return;
             const freshSummary = summaryBodyFromDocuments(fresh.documents);
-            if (
-              freshSummary &&
-              freshSummary !== summaryBodyRef.current
-            ) {
+            if (freshSummary && freshSummary !== summaryBodyRef.current) {
               setCurrentSummary(freshSummary);
               setGeneratingTitle(true);
               return;

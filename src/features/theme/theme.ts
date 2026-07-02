@@ -17,8 +17,7 @@ export function setStoredTheme(theme: Theme) {
 }
 
 export function applyTheme(theme: Theme) {
-  const isDark =
-    theme === "dark" || (theme === "system" && mq.matches);
+  const isDark = theme === "dark" || (theme === "system" && mq.matches);
   document.documentElement.classList.toggle("dark", isDark);
   syncNativeTheme(theme);
 }

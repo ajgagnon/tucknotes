@@ -53,7 +53,10 @@ function SettingsView({
           disabled={summarizing}
         />
         <RecordingSection disabled={recording || paused} />
-        <TemplateSection disabled={summarizing} onEditTemplate={onEditTemplate} />
+        <TemplateSection
+          disabled={summarizing}
+          onEditTemplate={onEditTemplate}
+        />
         <UpdateSection />
       </div>
     </div>

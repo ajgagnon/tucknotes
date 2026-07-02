@@ -32,9 +32,9 @@ export function RecordingSection({ disabled }: { disabled?: boolean }) {
         <div className="grid gap-1">
           <Label htmlFor="live-minutes-switch">Live minutes</Label>
           <p className="text-xs text-muted-foreground">
-            Keep a running bullet-point summary while you record, updated as
-            the transcript comes in. Requires a downloaded summarization
-            model. Applies from the next recording.
+            Keep a running bullet-point summary while you record, updated as the
+            transcript comes in. Requires a downloaded summarization model.
+            Applies from the next recording.
           </p>
         </div>
         <Switch
