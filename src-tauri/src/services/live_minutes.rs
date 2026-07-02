@@ -238,7 +238,7 @@ fn maybe_spawn_pass(app: &tauri::AppHandle, force: bool) {
             .app_data_dir()
             .ok()
             .and_then(|dir| model_manager::resolve_llm_path(&dir).ok().flatten());
-        let (result, gist_result) = match model_path {
+        let (result, gist_outcome) = match model_path {
             Some(path) => {
                 let chunk_in = chunk.clone();
                 let gist_in = gist.clone();
@@ -422,6 +422,9 @@ fn apply_gist_result(
             cap_keep_tail(&mut session.gist_pending, GIST_PENDING_MAX_CHARS);
         }
         Err(e) => {
+            // Unlike the interrupt path, the backlog chunk is dropped, not
+            // requeued: a chunk the model chokes on would otherwise poison
+            // every following refresh until the failure cap disables gists.
             session.gist_failures += 1;
             eprintln!(
                 "[live-minutes] gist update failed ({}/{GIST_MAX_FAILURES}): {e}",
