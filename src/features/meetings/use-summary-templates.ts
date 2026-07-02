@@ -55,7 +55,7 @@ export function useSummaryTemplates(
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [meeting.id, meeting.template]);
 
   return { templates, selectedTemplate, setSelectedTemplate };

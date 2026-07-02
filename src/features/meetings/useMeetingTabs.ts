@@ -143,7 +143,7 @@ export function useMeetingTabs({
         ""
       );
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [
     meetingId,
     docIds,
@@ -173,7 +173,7 @@ export function useMeetingTabs({
       }
     }
     wasLiveRecordingRef.current = isLiveRecording;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [isLiveRecording, docIds, documents, minutesExpected, minutesDocId]);
 
   const selectedDoc =
