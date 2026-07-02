@@ -19,7 +19,13 @@ use crate::services::templates;
 const THINK_OPEN: &str = "<think>";
 const THINK_CLOSE: &str = "</think>";
 
-const MAX_SUMMARIZATION_TOKENS: i32 = 4096;
+/// Per-section generation budget for multi-pass summarization. Each section is
+/// produced by its own focused pass that emits a single section's body (a few
+/// sentences or a short bullet list), so this per-section ceiling matches the
+/// ~1k tokens the old single-pass run effectively allowed each of four sections.
+/// Thinking is disabled for summarization, so the budget needn't cover a
+/// reasoning preamble. Raise it if a bullet-heavy section ever truncates.
+const MAX_SECTION_TOKENS: i32 = 1024;
 const MAX_CHAT_TOKENS: i32 = 1024;
 /// Per-pass generation budget for live minutes. One pass emits only a few new
 /// bullets (often none), so this is generous headroom; the per-pass bullet count
@@ -52,6 +58,23 @@ pub enum InferenceEvent<'a> {
     /// All tool calls collected by this turn have completed streaming.
     /// Fires once at the end of the turn for every tool call in `TurnOutcome`.
     ToolCallEnd { id: &'a str },
+}
+
+/// Per-section progress events from [`SummarizationService::summarize`], reported
+/// one section at a time. Borrowed strings (the heading and each body token) so
+/// the command layer can forward them to Tauri without forcing allocation.
+#[derive(Debug)]
+pub enum SummaryEvent<'a> {
+    /// A section's pass is starting; no body tokens have landed yet. The gap
+    /// before its first `Token` is that section's transcript prefill — the UI
+    /// shows the section "thinking" during it.
+    SectionStart { index: usize, heading: &'a str },
+    /// A piece of the section's body (Markdown). The heading is not streamed —
+    /// the UI renders it from the section plan.
+    Token { index: usize, text: &'a str },
+    /// The section's pass finished. `empty` is true when it produced no content
+    /// (and was therefore omitted from the persisted document).
+    SectionDone { index: usize, empty: bool },
 }
 
 /// One tool call extracted from a completed inference turn. Arguments are kept
@@ -307,18 +330,29 @@ impl SummarizationService {
         Ok(output)
     }
 
-    /// Run summarization on the given transcript text. See `run_inference`
-    /// for streaming and cancellation semantics. **Blocking**.
+    /// Run summarization on the given transcript text. Each template section is
+    /// produced by its own focused LLM pass — one `run_inference` per section —
+    /// so a small model can give each section its full attention. The model lock
+    /// is held once across all passes (chat still preempts mid-pass via the
+    /// `interrupt` flag checked inside `run_inference`).
+    ///
+    /// Progress is reported through `on_event` as [`SummaryEvent`]s: `SectionStart`
+    /// before each pass (the "thinking" window while the transcript prefills),
+    /// `Token` per body token (the body only — the heading is not streamed), and
+    /// `SectionDone` carrying whether the section came back empty. Passes run in
+    /// document order. The returned, persisted value is the assembled markdown —
+    /// `## {heading}` injected here, empty sections omitted. See `run_inference`
+    /// for cancellation semantics. **Blocking**.
     pub fn summarize<F>(
         &self,
         model_path: &Path,
         transcript: &str,
         template: &OwnedTemplate,
         interrupt: &AtomicBool,
-        on_token: F,
+        mut on_event: F,
     ) -> Result<String, AppError>
     where
-        F: FnMut(&str, bool),
+        F: FnMut(&SummaryEvent<'_>),
     {
         self.ensure_loaded(model_path)?;
 
@@ -327,23 +361,53 @@ impl SummarizationService {
             .as_ref()
             .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
 
-        let system_prompt = templates::build_system_prompt(template);
-        let messages_json = serde_json::json!([
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": transcript}
-        ])
-        .to_string();
-        let prompt = Self::apply_template(model, &messages_json, false)?;
+        let mut sections_out: Vec<String> = Vec::with_capacity(template.sections.len());
 
-        let raw = self.run_inference(
-            model,
-            &prompt,
-            MAX_SUMMARIZATION_TOKENS,
-            interrupt,
-            on_token,
-        )?;
-        let cleaned = strip_think_tags(raw.trim());
-        Ok(cleaned.trim().to_string())
+        for (index, section) in template.sections.iter().enumerate() {
+            let system_prompt = templates::build_section_system_prompt(section);
+            let messages_json = serde_json::json!([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": transcript}
+            ])
+            .to_string();
+            let prompt = Self::apply_template(model, &messages_json, false)?;
+
+            let heading = section.heading.as_str();
+
+            // Entering the pass: the UI shows this section "thinking" until its
+            // first token lands (that gap is this section's transcript prefill).
+            on_event(&SummaryEvent::SectionStart { index, heading });
+
+            // `?` propagates AppError::Interrupted (chat preempted) out of the
+            // loop; the command layer re-queues and restarts the whole meeting.
+            let raw = self.run_inference(
+                model,
+                &prompt,
+                MAX_SECTION_TOKENS,
+                interrupt,
+                |text, is_thinking| {
+                    // Thinking is disabled for summarization and `run_inference`
+                    // already drops `<think>` content, so this is body text only.
+                    // The heading is rendered by the UI, so we stream the body alone.
+                    if !is_thinking {
+                        on_event(&SummaryEvent::Token { index, text });
+                    }
+                },
+            )?;
+
+            // Persist from the cleaned output: strip the `<think>` block and any
+            // `## {heading}` the model emitted despite the body-only instruction
+            // (we inject the heading ourselves), then trim.
+            let cleaned = strip_think_tags(raw.trim());
+            let cleaned = strip_leading_heading(cleaned.trim(), heading);
+            let empty = cleaned.is_empty();
+            if !empty {
+                sections_out.push(format!("## {heading}\n\n{cleaned}"));
+            }
+            on_event(&SummaryEvent::SectionDone { index, empty });
+        }
+
+        Ok(sections_out.join("\n\n"))
     }
 
     /// `true` while another inference holds the model. Used by the live-minutes
@@ -1437,6 +1501,23 @@ fn strip_think_tags(s: &str) -> String {
     result
 }
 
+/// Drop a leading `## {heading}` line if a section pass emitted its own heading
+/// despite being told to write the body only. Multi-pass summarization injects
+/// the heading itself, so a model-emitted one would duplicate it. Only a
+/// standalone heading line is stripped (the heading text must be followed by a
+/// newline or end-of-string), so body text that merely starts with the heading
+/// word is left untouched.
+fn strip_leading_heading(body: &str, heading: &str) -> String {
+    let expected = format!("## {heading}");
+    let trimmed = body.trim_start();
+    if let Some(rest) = trimmed.strip_prefix(&expected) {
+        if rest.is_empty() || rest.starts_with('\n') {
+            return rest.trim_start_matches('\n').to_string();
+        }
+    }
+    body.to_string()
+}
+
 /// Keep only markdown bullet lines from live-minutes output, capped at
 /// [`MAX_MINUTES_LINES`] top-level bullets. Drops any preamble, headings, or
 /// commentary the model emitted despite the prompt. One level of nesting is
@@ -1496,9 +1577,37 @@ pub struct SummarizationState {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_bullet_lines, extract_tool_calls, strip_think_tags, InferenceEvent, StreamFilter,
-        MAX_MINUTES_LINES,
+        extract_bullet_lines, extract_tool_calls, strip_leading_heading, strip_think_tags,
+        InferenceEvent, StreamFilter, MAX_MINUTES_LINES,
     };
+
+    #[test]
+    fn strip_leading_heading_removes_only_standalone_heading() {
+        // A model-emitted heading line is dropped (the app injects the heading).
+        assert_eq!(
+            strip_leading_heading("## Summary\n\nThe team shipped v2.", "Summary"),
+            "The team shipped v2."
+        );
+        assert_eq!(
+            strip_leading_heading("## Summary\nThe team shipped v2.", "Summary"),
+            "The team shipped v2."
+        );
+        // No heading → body returned unchanged.
+        assert_eq!(
+            strip_leading_heading("The team shipped v2.", "Summary"),
+            "The team shipped v2."
+        );
+        // A body that merely starts with the heading word is left intact.
+        assert_eq!(
+            strip_leading_heading("## Summary extra words", "Summary"),
+            "## Summary extra words"
+        );
+        // A different heading is not stripped.
+        assert_eq!(
+            strip_leading_heading("## Decisions\n- Ship Friday.", "Summary"),
+            "## Decisions\n- Ship Friday."
+        );
+    }
 
     #[test]
     fn extract_bullet_lines_keeps_only_bullets() {

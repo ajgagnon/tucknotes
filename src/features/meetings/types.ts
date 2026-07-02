@@ -62,14 +62,55 @@ export interface MeetingTitleInfo {
 }
 
 /** Event payload types matching the Rust structs */
-export interface TokenPayload {
-  meeting_id: string;
-  token: string;
-}
-
 export interface TitlePayload {
   meeting_id: string;
   title: string;
+}
+
+/** One section in the `summary:plan` event, in document order. */
+export interface PlanSection {
+  index: number;
+  heading: string;
+}
+
+/** `summary:plan` — the ordered sections the run will write, emitted up front. */
+export interface SummaryPlanPayload {
+  meeting_id: string;
+  sections: PlanSection[];
+}
+
+/** `summary:section_start` — a section's pass has begun (UI shows "thinking"). */
+export interface SectionStartPayload {
+  meeting_id: string;
+  index: number;
+}
+
+/** `summary:token` — a body token for section `index` (heading rendered by UI). */
+export interface SectionTokenPayload {
+  meeting_id: string;
+  index: number;
+  token: string;
+}
+
+/** `summary:section_done` — a section's pass finished; `empty` sections collapse. */
+export interface SectionDonePayload {
+  meeting_id: string;
+  index: number;
+  empty: boolean;
+}
+
+export type SummarySectionState =
+  | "pending"
+  | "thinking"
+  | "writing"
+  | "done"
+  | "skipped";
+
+/** View-model for one streaming summary section, derived from the events. */
+export interface SummarySection {
+  heading: string;
+  body: string;
+  state: SummarySectionState;
 }
 
 export interface SummarizationQueue {

@@ -392,6 +392,60 @@ pub fn build_system_prompt(template: &OwnedTemplate) -> String {
     blocks.join("\n\n")
 }
 
+/// Assemble the system prompt for a SINGLE section's pass. Multi-pass
+/// summarization runs one focused inference per section (see
+/// [`crate::services::summarization::SummarizationService::summarize`]), so the
+/// model sees only this section's spec and can give it its full attention.
+///
+/// The shared blocks stay section-agnostic — the only section-specific text is
+/// this section's own `heading`, `description`, and `example`, so no other
+/// section's rules can leak in (each pass sees just one section).
+///
+/// The app injects the `## {heading}` line itself, so the model is told to write
+/// the body ONLY. This guarantees the exact heading and makes "omit an empty
+/// section" trivial: no body → no heading.
+pub fn build_section_system_prompt(section: &OwnedSection) -> String {
+    let heading = &section.heading;
+    let mut blocks: Vec<String> = Vec::with_capacity(6);
+
+    // (A) Preamble — same role framing as the full prompt, narrowed to one section.
+    blocks.push(format!(
+        "You are a professional, detail-oriented Meeting Analyst AI designed to review meeting transcripts and provide concise, specific, actionable minutes for busy professionals.\nYou will be given a full transcript of a meeting, which may include a mix of speakers, topics, and discussion threads. Participants may use informal language, go off-topic, or interleave multiple subjects. Your job is to write a single section of the minutes — the `## {heading}` section — described below."
+    ));
+
+    // (B) Body-only contract. The heading is added by the app, so the model must
+    // not emit it — even if the section spec below happens to mention the heading.
+    blocks.push(format!(
+        "Write ONLY the body of the `## {heading}` section — the content that belongs beneath that heading. Do NOT output the `## {heading}` line itself, any other `##` heading, or a title; the heading is added for you. Output the body and nothing else."
+    ));
+
+    // (C) The section's own tuned spec (e.g. the Action items You/Them and
+    // deadline rules live here, and only reach the Action items pass).
+    blocks.push(format!("Section spec:\n- ## {heading} — {}", section.description));
+
+    // (D) Emit rule — the single-section variant of the full prompt's EMIT_RULE.
+    blocks.push(
+        "If the transcript contains nothing for this section, output nothing at all — no heading, no body, and no placeholder such as \"None\" or \"N/A\". Only write content that is genuinely supported by the transcript. A vague topic-label with no substance does not count as content — omit it rather than pad the section.".to_string(),
+    );
+
+    // (E) Universal rules — section-agnostic, mirroring the full prompt's Rules
+    // block (minus its multi-section "do not invent labels" line), plus the
+    // specificity rules that keep every line concrete rather than abstract.
+    blocks.push(
+        "Rules:\n- Be concrete and self-contained. Every sentence or bullet must state the specific substance — the actual change, decision, number, name, file, or result — so a reader who was not in the meeting understands it without the transcript. Naming the activity is not enough.\n- Never write a meta-label that only names a topic with no content — no lines like <topic> discussed, <topic> covered, or <topic> reviewed. BAD: \"Potential implementation discussed\" (which implementation? proposing what?), \"Refactoring completed and tested\" (refactored what?). GOOD: \"Proposed caching search results in Redis to cut p95 latency\", \"Refactored the billing retry path; unit tests added and passing.\"\n- If the transcript does not give the specifics, include the concrete detail it does give, or omit the point — never pad with an abstraction.\n- Only name a person when the transcript clearly attributes the work, decision, or statement to them — never guess at attribution.\n- Skip filler, chit-chat, repeated points, and pleasantries.\n- No editorializing, no summarizing importance, no meta-commentary.\n- Do not give the output a title — the title is generated separately.".to_string(),
+    );
+
+    // (F) Optional example — the body only (no `## {heading}` line, since the
+    // model writes the body only).
+    if let Some(example) = &section.example {
+        blocks.push(format!(
+            "Example shape (illustrative only, do not copy the content):\n{example}"
+        ));
+    }
+
+    blocks.join("\n\n")
+}
+
 /// System prompt for the live-minutes pass that runs while a meeting is still
 /// being recorded. The document is an append-only log of short bullets: the
 /// model is shown the bullets ALREADY RECORDED (context only — never changed)
@@ -641,5 +695,73 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
         assert_eq!(count_word(3), "three");
         assert_eq!(count_word(4), "four");
         assert_eq!(count_word(10), "10");
+    }
+
+    #[test]
+    fn section_prompt_writes_body_only_and_keeps_section_rules() {
+        let recap = builtin_as_owned(&DEFAULT_TEMPLATE);
+        let action_items = recap
+            .sections
+            .iter()
+            .find(|s| s.heading == "Action items")
+            .expect("Recap has an Action items section");
+        let prompt = build_section_system_prompt(action_items);
+
+        // The body-only contract is present (the app injects the heading).
+        assert!(prompt.contains("Write ONLY the body"));
+        assert!(prompt.contains("Do NOT output the `## Action items` line"));
+        // The section's own tuned rules carry through.
+        assert!(prompt.contains("**You:**"));
+        assert!(prompt.contains("**Them:**"));
+        // Its example is shown, but WITHOUT a `## Action items` heading above it.
+        assert!(prompt.contains("Example shape (illustrative only, do not copy the content):"));
+        assert!(!prompt.contains("## Action items\n- [ ] **You:**"));
+        // Universal rules are present.
+        assert!(prompt.contains("Skip filler, chit-chat"));
+    }
+
+    #[test]
+    fn section_prompt_does_not_leak_other_sections_rules() {
+        // A pass for a non-Action-items section must not carry You/Them attribution.
+        let recap = builtin_as_owned(&DEFAULT_TEMPLATE);
+        let summary = recap
+            .sections
+            .iter()
+            .find(|s| s.heading == "Summary")
+            .expect("Recap has a Summary section");
+        let prompt = build_section_system_prompt(summary);
+        assert!(!prompt.contains("**You:**"), "leaked Action items attribution");
+        assert!(!prompt.contains("**Them:**"), "leaked Action items attribution");
+    }
+
+    #[test]
+    fn section_prompt_example_only_when_present() {
+        // Standup sections carry no example, so no example block appears.
+        let standup = builtin_as_owned(&STANDUP_TEMPLATE);
+        let progress = &standup.sections[0];
+        assert!(progress.example.is_none());
+        assert!(!build_section_system_prompt(progress).contains("Example shape"));
+
+        // With an example set, the example block appears verbatim.
+        let mut progress_with_ex = progress.clone();
+        progress_with_ex.example = Some("- Shipped the login flow.".to_string());
+        let prompt = build_section_system_prompt(&progress_with_ex);
+        assert!(prompt.contains("Example shape (illustrative only, do not copy the content):"));
+        assert!(prompt.contains("- Shipped the login flow."));
+    }
+
+    #[test]
+    fn section_prompt_demands_concrete_specifics() {
+        // The universal Rules block must push the model toward concrete, self-
+        // contained lines (with the abstract-line example) — for any section.
+        let recap = builtin_as_owned(&DEFAULT_TEMPLATE);
+        let summary = recap
+            .sections
+            .iter()
+            .find(|s| s.heading == "Summary")
+            .expect("Recap has a Summary section");
+        let prompt = build_section_system_prompt(summary);
+        assert!(prompt.contains("Be concrete and self-contained"));
+        assert!(prompt.contains("Refactoring completed and tested"));
     }
 }

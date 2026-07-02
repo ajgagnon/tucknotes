@@ -8,8 +8,12 @@ import {
   type MeetingTitleInfo,
   type SummarizationQueue,
   type TemplateInfo,
-  type TokenPayload,
   type TitlePayload,
+  type SummaryPlanPayload,
+  type SectionStartPayload,
+  type SectionTokenPayload,
+  type SectionDonePayload,
+  type SummarySection,
   summaryBodyFromDocuments,
 } from "./types";
 import type { DownloadProgress } from "@/features/models";
@@ -24,8 +28,7 @@ export function useMeetingSummarization(
   const [generatingTitle, setGeneratingTitle] = useState(false);
 
   const [summarizing, setSummarizing] = useState(false);
-  const [streamedSummary, setStreamedSummary] = useState("");
-  const [thinkingText, setThinkingText] = useState("");
+  const [sections, setSections] = useState<SummarySection[]>([]);
   const [llmModelReady, setLlmModelReady] = useState<boolean | null>(null);
   const [currentSummary, setCurrentSummary] = useState<string | null>(
     summaryBody,
@@ -36,32 +39,66 @@ export function useMeetingSummarization(
     meeting.template ?? "default",
   );
 
-  const unlistenTokenRef = useRef<(() => void) | null>(null);
-  const unlistenThinkingRef = useRef<(() => void) | null>(null);
+  const unlistenStreamRef = useRef<Array<() => void>>([]);
   const summaryBodyRef = useRef(summaryBody);
   summaryBodyRef.current = summaryBody;
 
   const cleanupStreamListeners = useCallback(() => {
-    unlistenTokenRef.current?.();
-    unlistenThinkingRef.current?.();
-    unlistenTokenRef.current = null;
-    unlistenThinkingRef.current = null;
+    for (const unlisten of unlistenStreamRef.current) unlisten();
+    unlistenStreamRef.current = [];
   }, []);
 
+  // Per-section streaming: the run announces its sections up front (`summary:plan`),
+  // then each section streams its body. `summary:section_start` flips a section to
+  // "thinking" (its transcript prefill), `summary:token` appends body + flips to
+  // "writing", and `summary:section_done` marks it "done" (or "skipped" if empty).
   const registerStreamListeners = useCallback(async () => {
-    if (unlistenTokenRef.current || unlistenThinkingRef.current) {
+    if (unlistenStreamRef.current.length) {
       return cleanupStreamListeners;
     }
-    const tokenUn = await listen<TokenPayload>("summary:token", (event) => {
+    const planUn = await listen<SummaryPlanPayload>("summary:plan", (event) => {
       if (event.payload.meeting_id !== meeting.id) return;
-      setStreamedSummary((prev) => prev + event.payload.token);
+      const ordered = [...event.payload.sections].sort((a, b) => a.index - b.index);
+      setSections(
+        ordered.map(
+          (s): SummarySection => ({ heading: s.heading, body: "", state: "pending" }),
+        ),
+      );
     });
-    const thinkUn = await listen<TokenPayload>("summary:thinking", (event) => {
+    const startUn = await listen<SectionStartPayload>(
+      "summary:section_start",
+      (event) => {
+        if (event.payload.meeting_id !== meeting.id) return;
+        const { index } = event.payload;
+        setSections((prev) =>
+          prev.map((s, i): SummarySection =>
+            i === index && s.state === "pending" ? { ...s, state: "thinking" } : s,
+          ),
+        );
+      },
+    );
+    const tokenUn = await listen<SectionTokenPayload>("summary:token", (event) => {
       if (event.payload.meeting_id !== meeting.id) return;
-      setThinkingText((prev) => prev + event.payload.token);
+      const { index, token } = event.payload;
+      setSections((prev) =>
+        prev.map((s, i): SummarySection =>
+          i === index ? { ...s, body: s.body + token, state: "writing" } : s,
+        ),
+      );
     });
-    unlistenTokenRef.current = tokenUn;
-    unlistenThinkingRef.current = thinkUn;
+    const doneUn = await listen<SectionDonePayload>(
+      "summary:section_done",
+      (event) => {
+        if (event.payload.meeting_id !== meeting.id) return;
+        const { index, empty } = event.payload;
+        setSections((prev) =>
+          prev.map((s, i): SummarySection =>
+            i === index ? { ...s, state: empty ? "skipped" : "done" } : s,
+          ),
+        );
+      },
+    );
+    unlistenStreamRef.current = [planUn, startUn, tokenUn, doneUn];
     return cleanupStreamListeners;
   }, [meeting.id, cleanupStreamListeners]);
 
@@ -230,8 +267,7 @@ export function useMeetingSummarization(
       }
       cleanupStreamListeners();
       setSummarizing(false);
-      setStreamedSummary("");
-      setThinkingText("");
+      setSections([]);
     });
     return () => {
       unlisten.then((fn) => fn());
@@ -260,11 +296,10 @@ export function useMeetingSummarization(
     const unlisten = listen<string>("summary:started", async (event) => {
       if (event.payload !== meeting.id) return;
       if (cancelled) return;
-      if (unlistenTokenRef.current) return;
+      if (unlistenStreamRef.current.length) return;
       setSummarizing(true);
       setGeneratingTitle(true);
-      setStreamedSummary("");
-      setThinkingText("");
+      setSections([]);
       await registerStreamListeners();
     });
     return () => {
@@ -278,8 +313,7 @@ export function useMeetingSummarization(
   async function runSummarize(templateId: string) {
     setSummarizing(true);
     setGeneratingTitle(true);
-    setStreamedSummary("");
-    setThinkingText("");
+    setSections([]);
 
     await registerStreamListeners();
 
@@ -330,8 +364,7 @@ export function useMeetingSummarization(
 
   return {
     summarizing,
-    streamedSummary,
-    thinkingText,
+    sections,
     llmModelReady,
     currentSummary,
     handleSummarize,
