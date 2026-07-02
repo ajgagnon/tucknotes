@@ -12,8 +12,8 @@
 //! are simply "a template with a user-chosen ordered list of sections".
 //!
 //! INVARIANT: `build_system_prompt(&builtin_as_owned(&DEFAULT_TEMPLATE))` must
-//! reproduce the original hardcoded system prompt byte-for-byte. This is locked
-//! down by `default_template_is_byte_identical_to_legacy` below.
+//! match the golden snapshot in `default_template_prompt_snapshot` below
+//! byte-for-byte, so the shipped Recap prompt can never drift accidentally.
 
 use crate::models::template::{OwnedSection, OwnedTemplate};
 
@@ -78,24 +78,74 @@ pub struct TemplateInfo {
 
 const EMIT_RULE: &str = "Rule for emitting a section: if and only if the section has content, emit its `##` heading on its own line, then a blank line, then the body. If a section has no content, omit both the heading and the body entirely. Never emit a heading with no body beneath it. Never emit body content without its heading directly above it.";
 
-// The Recap template's illustrative examples, one per section. Assembled into a
-// single "Example shape" block by `build_system_prompt`; kept verbatim so the
-// assembled Recap prompt matches the original byte-for-byte. These seed the
+// Per-template illustrative examples, one per section. Each template's examples
+// are assembled into a single "Example shape" block by `build_system_prompt`
+// (and shown per pass by `build_section_system_prompt`). These seed the
 // editable per-section example fields in the Template Editor.
 const EXAMPLE_SUMMARY: &str = "The team agreed to ship v2 onboarding on Friday. QA gets the full week for regression. Dev cuts the release branch tonight; Priya drafts the launch email by Wednesday.";
 
-const EXAMPLE_ACTION_ITEMS: &str = "- [ ] **You:** Cut the release branch tonight.
-- [ ] **Them:** Draft the launch email. `— Wed`
+const EXAMPLE_ACTION_ITEMS: &str = "- [ ] Cut the release branch tonight.
+- [ ] Draft the launch email. `— Wed`
 - [ ] Publish the updated dark-mode docs.";
 
-const EXAMPLE_DECISIONS: &str = "- Ship v2 onboarding on Friday.
-- Hold the redesigned empty state for v2.1 — not a launch blocker.";
+const EXAMPLE_DECISIONS: &str = "- Version 2 onboarding
+  - Will ship on Friday
+- Country restrictions
+  - Will not restrict any countries for the first iteration of the feature.";
 
-const EXAMPLE_OPEN_QUESTIONS: &str = "- Announce in-app, or just over email?";
+const EXAMPLE_OPEN_QUESTIONS: &str = "- Announce the launch in-app, or just over email?
+  - Marketing prefers email-only; an in-app banner needs design time.
+- Which regions are in scope for the beta?
+  - Legal review of the EU requirements is still pending.";
+
+const EXAMPLE_AGENDA: &str = "- Shipping launch readiness
+  - Release branch timing and the QA regression window.
+- Open security ticket
+  - Proposed response to the customer and who sends it.";
+
+const EXAMPLE_DISCUSSION_ONE_ON_ONE: &str = "- Self Evaluation
+  - Overall feels they are doing well.
+  - Wants to work more on soft skills (communication, presentation)
+- Review of Last Quarter’s Accomplishments
+  - Headed up the eCommerce optimization project.
+    - Released 2 weeks ahead of schedule.
+    - Could improve on QA testing instead of early releasing.";
+
+const EXAMPLE_ACTION_ITEMS_ONE_ON_ONE: &str = "- [ ] Enroll in the presentation-skills course. `— Fri`
+- [ ] Draft goals for next quarter before the next 1:1.
+- [ ] Share the QA checklist from the eCommerce launch.";
+
+const EXAMPLE_FOLLOW_UPS: &str = "- Soft-skills development
+  - Check in on presentation practice after the next team demo.
+- QA process
+  - Revisit early-release issues once the next release ships.";
+
+const EXAMPLE_PROGRESS: &str = "- A decision was made on shipping
+  - Decided to revert a commit because of a reversal of the decision to restrict countries.
+  - It’s ready for review.
+- A security ticket was addressed
+  - The issue allowed anyone to edit a checkout.
+  - It’s a non-issue because they need a UUID stored in their browser.
+  - Raj will respond today.";
+
+const EXAMPLE_BLOCKERS: &str = "- Shipping countries
+  - A decision is needed on whether to restrict them to the 7 supported by shippo.
+- Security Ticket
+  - Feedback on response to customer needed.";
 
 // ---------------------------------------------------------------------------
 // Built-in sections (defined once, referenced by multiple templates)
 // ---------------------------------------------------------------------------
+
+/// The recurring instruction block shared by the bullet-list sections: forces
+/// specific, context-rich bullets with explanatory sub-bullets instead of
+/// vague one-liners. A macro (not a `const`) so it can be `concat!`-ed into
+/// each section's `&'static` `body_spec`.
+macro_rules! detail_spec {
+    () => {
+        "Be VERY specific. Always make sure to provide the full context and details for each bullet. If there is much context, add sub-bullets for each point (`  - `). Each noun in the bullet points needs sub-bullets to explain the context and details. Top level bullet items should generally be chronological by topic discussed. Top level bullets should be highly specific and not general."
+    };
+}
 
 pub static SECTION_SUMMARY: Section = Section {
     id: "summary",
@@ -107,74 +157,84 @@ pub static SECTION_SUMMARY: Section = Section {
 pub static SECTION_DECISIONS: Section = Section {
     id: "decisions",
     heading: "Decisions",
-    body_spec: "- ## Decisions — bullet list (`- `) of choices the group made. Fragments, not full sentences. No \"Decision:\" prefix.",
+    body_spec: concat!(
+        "- ## Decisions — A bullet list (`- `) of choices the group made. ",
+        detail_spec!()
+    ),
     always_present: false,
 };
 
 pub static SECTION_ACTION_ITEMS: Section = Section {
     id: "action_items",
     heading: "Action items",
-    body_spec: "- ## Action items — GitHub-flavored task list of work that is still outstanding. Every line is exactly `- [ ] action.` (unchecked square brackets, never `- [x]`). Only list tasks that still need to be done — exclude anything the transcript indicates is already finished or completed. When you are at least 95% confident who owns a task, prefix the action with a bold assignee: `**You:**` if the meeting recorder (the \"You\" speaker) owns it, or `**Them:**` if another participant owns it. When ownership is unclear or you are less than 95% confident, omit the prefix entirely — never guess. Do not use any other attribution (no personal names, `Owner:`, `Speaker:`, `Team:`, or roles). When the transcript explicitly mentions a concrete deadline (a date, weekday, or relative day like \"tomorrow\"), append a space then an inline-code span containing an em dash and the date, like `` `— Wed` ``, at the end of the line. NEVER invent or guess deadlines, and NEVER emit `` `— TBD` ``, `` `— soon` ``, or similar placeholders — if there's no real deadline, just omit the suffix.",
+    body_spec: "- ## Action items — GitHub-flavored task list of work that is still outstanding. Only major items. Every line is exactly `- [ ] action.` (unchecked square brackets, never `- [x]`). Only list tasks that still need to be done — exclude anything the transcript indicates is already finished or completed. Do not use any attribution (no personal names, `Owner:`, `Speaker:`, `Team:`, or roles). When the transcript explicitly mentions a concrete deadline (a date, weekday, or relative day like \"tomorrow\"), append a space then an inline-code span containing an em dash and the date, like `` `— Wed` ``, at the end of the line. NEVER invent or guess deadlines, and NEVER emit `` `— TBD` ``, `` `— soon` ``, or similar placeholders — if there's no real deadline, just omit the suffix.",
     always_present: false,
 };
 
 pub static SECTION_OPEN_QUESTIONS: Section = Section {
     id: "open_questions",
     heading: "Open questions",
-    body_spec: "- ## Open questions — bullet list (`- `) of unresolved items, each phrased as a question ending with `?`. If you have any open question to list, you MUST emit the `## Open questions` heading line directly above the bullets.",
+    body_spec: concat!(
+        "- ## Open questions — A bullet list (`- `) of unresolved items, each phrased as a question ending with `?`. ",
+        detail_spec!(),
+        " Skip any topics that do not have currently open questions that were not resolved on the call."
+    ),
     always_present: false,
 };
 
 pub static SECTION_AGENDA: Section = Section {
     id: "agenda",
     heading: "Agenda",
-    body_spec: "- ## Agenda — bullet list (`- `) of the topics the meeting set out to cover, in the order they were raised. Fragments, not full sentences. Omit this section if no agenda or clear topic list is evident.",
+    body_spec: concat!(
+        "- ## Agenda — A bullet list (`- `) of the topics the meeting set out to cover, in the order they were raised. ",
+        detail_spec!()
+    ),
     always_present: false,
 };
 
 pub static SECTION_DISCUSSION: Section = Section {
     id: "discussion",
     heading: "Discussion",
-    body_spec: "- ## Discussion — bullet list (`- `) of the substantive points raised and the reasoning behind them, grouped loosely by topic. Fragments, not full sentences. Exclude decisions and action items — those belong in their own sections.",
+    body_spec: concat!(
+        "- ## Discussion — A bullet list (`- `) of the substantive points raised and the reasoning behind them, grouped loosely by topic. ",
+        detail_spec!()
+    ),
     always_present: false,
 };
 
 pub static SECTION_FOLLOW_UPS: Section = Section {
     id: "follow_ups",
     heading: "Follow-ups",
-    body_spec: "- ## Follow-ups — bullet list (`- `) of items to revisit next time: carried-over topics, things explicitly deferred, or check-ins promised. Fragments, not full sentences. Omit this section if there are none.",
+    body_spec: concat!(
+        "- ## Follow-ups — A bullet list (`- `) of items to revisit next time: carried-over topics, things explicitly deferred, or check-ins promised. Please disregard and skip anything that was fully resolved on the call. ",
+        detail_spec!()
+    ),
     always_present: false,
 };
 
 pub static SECTION_PROGRESS: Section = Section {
     id: "progress",
     heading: "Progress",
-    body_spec: "- ## Progress — bullet list (`- `) of what was completed or moved forward since the last update. Fragments, not full sentences. Omit this section if none is stated.",
-    always_present: false,
-};
-
-pub static SECTION_PLANS: Section = Section {
-    id: "plans",
-    heading: "Plans",
-    body_spec: "- ## Plans — bullet list (`- `) of what is planned next or currently being worked on. Fragments, not full sentences. Omit this section if none is stated.",
+    body_spec: concat!(
+        "- ## Progress — A bullet list (`- `) of what was completed or moved forward since the last update. ",
+        detail_spec!()
+    ),
     always_present: false,
 };
 
 pub static SECTION_BLOCKERS: Section = Section {
     id: "blockers",
     heading: "Blockers",
-    body_spec: "- ## Blockers — bullet list (`- `) of impediments, dependencies, or anything needing help. Fragments, not full sentences. Omit this section if there are no blockers.",
+    body_spec: concat!(
+        "- ## Blockers — A bullet list (`- `) of current impediments, dependencies, or anything needing help. Please disregard and skip all items that are not currently a blocker. ",
+        detail_spec!()
+    ),
     always_present: false,
 };
 
 // ---------------------------------------------------------------------------
 // Built-in templates
 // ---------------------------------------------------------------------------
-
-/// A template section with no illustrative example.
-const fn plain(section: &'static Section) -> TemplateSection {
-    TemplateSection { section, example: None }
-}
 
 pub static DEFAULT_TEMPLATE: SummaryTemplate = SummaryTemplate {
     id: "default",
@@ -191,12 +251,10 @@ pub static DEFAULT_TEMPLATE: SummaryTemplate = SummaryTemplate {
 pub static MINUTES_TEMPLATE: SummaryTemplate = SummaryTemplate {
     id: "minutes",
     name: "Meeting minutes",
-    description: "Formal minutes: agenda, discussion, decisions, and action items.",
+    description: "Formal minutes: agenda and action items.",
     sections: &[
-        plain(&SECTION_AGENDA),
-        plain(&SECTION_DISCUSSION),
-        plain(&SECTION_DECISIONS),
-        plain(&SECTION_ACTION_ITEMS),
+        TemplateSection { section: &SECTION_AGENDA, example: Some(EXAMPLE_AGENDA) },
+        TemplateSection { section: &SECTION_ACTION_ITEMS, example: Some(EXAMPLE_ACTION_ITEMS) },
     ],
 };
 
@@ -205,20 +263,25 @@ pub static ONE_ON_ONE_TEMPLATE: SummaryTemplate = SummaryTemplate {
     name: "1:1",
     description: "One-on-one notes: discussion, action items, and follow-ups.",
     sections: &[
-        plain(&SECTION_DISCUSSION),
-        plain(&SECTION_ACTION_ITEMS),
-        plain(&SECTION_FOLLOW_UPS),
+        TemplateSection {
+            section: &SECTION_DISCUSSION,
+            example: Some(EXAMPLE_DISCUSSION_ONE_ON_ONE),
+        },
+        TemplateSection {
+            section: &SECTION_ACTION_ITEMS,
+            example: Some(EXAMPLE_ACTION_ITEMS_ONE_ON_ONE),
+        },
+        TemplateSection { section: &SECTION_FOLLOW_UPS, example: Some(EXAMPLE_FOLLOW_UPS) },
     ],
 };
 
 pub static STANDUP_TEMPLATE: SummaryTemplate = SummaryTemplate {
     id: "standup",
     name: "Standup",
-    description: "Daily standup: progress, plans, and blockers.",
+    description: "Daily standup: progress and blockers.",
     sections: &[
-        plain(&SECTION_PROGRESS),
-        plain(&SECTION_PLANS),
-        plain(&SECTION_BLOCKERS),
+        TemplateSection { section: &SECTION_PROGRESS, example: Some(EXAMPLE_PROGRESS) },
+        TemplateSection { section: &SECTION_BLOCKERS, example: Some(EXAMPLE_BLOCKERS) },
     ],
 };
 
@@ -367,9 +430,9 @@ pub fn build_system_prompt(template: &OwnedTemplate) -> String {
     blocks.push(format!("Section bodies:\n{bodies}"));
 
     // (E) Rules — universal only. Anything specific to a section (e.g. the
-    // Action items You/Them attribution and deadline format) lives in that
-    // section's body, never here: a user template may contain any sections, so
-    // the shared block must not name one.
+    // Action items checkbox and deadline format) lives in that section's
+    // body, never here: a user template may contain any sections, so the
+    // shared block must not name one.
     blocks.push(format!(
         "Rules:\n- Only name a person when the transcript clearly attributes the work, decision, or statement to them — never guess at attribution.\n- Skip filler, chit-chat, repeated points, and pleasantries.\n- No editorializing, no summarizing importance, no meta-commentary.\n- Do not invent labels beyond the {count} section headings.\n- Do not give the output a title — the title is generated separately."
     ));
@@ -419,7 +482,7 @@ pub fn build_section_system_prompt(section: &OwnedSection) -> String {
         "Write ONLY the body of the `## {heading}` section — the content that belongs beneath that heading. Do NOT output the `## {heading}` line itself, any other `##` heading, or a title; the heading is added for you. Output the body and nothing else."
     ));
 
-    // (C) The section's own tuned spec (e.g. the Action items You/Them and
+    // (C) The section's own tuned spec (e.g. the Action items checkbox and
     // deadline rules live here, and only reach the Action items pass).
     blocks.push(format!("Section spec:\n- ## {heading} — {}", section.description));
 
@@ -544,9 +607,9 @@ Never emit a heading with no body beneath it. Never emit body content without it
 \n\
 Section bodies:\n\
 - ## Summary — 2 to 4 sentences of prose (no bullets, no bold). Factual, terse, scannable. What happened, what was decided, and the immediate next steps in plain language. The Summary section is always present.\n\
-- ## Action items — GitHub-flavored task list of work that is still outstanding. Every line is exactly `- [ ] action.` (unchecked square brackets, never `- [x]`). Only list tasks that still need to be done — exclude anything the transcript indicates is already finished or completed. When you are at least 95% confident who owns a task, prefix the action with a bold assignee: `**You:**` if the meeting recorder (the \"You\" speaker) owns it, or `**Them:**` if another participant owns it. When ownership is unclear or you are less than 95% confident, omit the prefix entirely — never guess. Do not use any other attribution (no personal names, `Owner:`, `Speaker:`, `Team:`, or roles). When the transcript explicitly mentions a concrete deadline (a date, weekday, or relative day like \"tomorrow\"), append a space then an inline-code span containing an em dash and the date, like `` `— Wed` ``, at the end of the line. NEVER invent or guess deadlines, and NEVER emit `` `— TBD` ``, `` `— soon` ``, or similar placeholders — if there's no real deadline, just omit the suffix.\n\
-- ## Decisions — bullet list (`- `) of choices the group made. Fragments, not full sentences. No \"Decision:\" prefix.\n\
-- ## Open questions — bullet list (`- `) of unresolved items, each phrased as a question ending with `?`. If you have any open question to list, you MUST emit the `## Open questions` heading line directly above the bullets.\n\
+- ## Action items — GitHub-flavored task list of work that is still outstanding. Only major items. Every line is exactly `- [ ] action.` (unchecked square brackets, never `- [x]`). Only list tasks that still need to be done — exclude anything the transcript indicates is already finished or completed. Do not use any attribution (no personal names, `Owner:`, `Speaker:`, `Team:`, or roles). When the transcript explicitly mentions a concrete deadline (a date, weekday, or relative day like \"tomorrow\"), append a space then an inline-code span containing an em dash and the date, like `` `— Wed` ``, at the end of the line. NEVER invent or guess deadlines, and NEVER emit `` `— TBD` ``, `` `— soon` ``, or similar placeholders — if there's no real deadline, just omit the suffix.\n\
+- ## Decisions — A bullet list (`- `) of choices the group made. Be VERY specific. Always make sure to provide the full context and details for each bullet. If there is much context, add sub-bullets for each point (`  - `). Each noun in the bullet points needs sub-bullets to explain the context and details. Top level bullet items should generally be chronological by topic discussed. Top level bullets should be highly specific and not general.\n\
+- ## Open questions — A bullet list (`- `) of unresolved items, each phrased as a question ending with `?`. Be VERY specific. Always make sure to provide the full context and details for each bullet. If there is much context, add sub-bullets for each point (`  - `). Each noun in the bullet points needs sub-bullets to explain the context and details. Top level bullet items should generally be chronological by topic discussed. Top level bullets should be highly specific and not general. Skip any topics that do not have currently open questions that were not resolved on the call.\n\
 \n\
 Rules:\n\
 - Only name a person when the transcript clearly attributes the work, decision, or statement to them — never guess at attribution.\n\
@@ -560,16 +623,21 @@ Example shape (illustrative only, do not copy the content):\n\
 The team agreed to ship v2 onboarding on Friday. QA gets the full week for regression. Dev cuts the release branch tonight; Priya drafts the launch email by Wednesday.\n\
 \n\
 ## Action items\n\
-- [ ] **You:** Cut the release branch tonight.\n\
-- [ ] **Them:** Draft the launch email. `— Wed`\n\
+- [ ] Cut the release branch tonight.\n\
+- [ ] Draft the launch email. `— Wed`\n\
 - [ ] Publish the updated dark-mode docs.\n\
 \n\
 ## Decisions\n\
-- Ship v2 onboarding on Friday.\n\
-- Hold the redesigned empty state for v2.1 — not a launch blocker.\n\
+- Version 2 onboarding\n\
+\x20 - Will ship on Friday\n\
+- Country restrictions\n\
+\x20 - Will not restrict any countries for the first iteration of the feature.\n\
 \n\
 ## Open questions\n\
-- Announce in-app, or just over email?";
+- Announce the launch in-app, or just over email?\n\
+\x20 - Marketing prefers email-only; an in-app banner needs design time.\n\
+- Which regions are in scope for the beta?\n\
+\x20 - Legal review of the EU requirements is still pending.";
 
     #[test]
     fn default_template_prompt_snapshot() {
@@ -600,17 +668,18 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
             builtin: false,
         };
         let prompt = build_system_prompt(&t);
-        assert!(!prompt.contains("**You:**"), "leaked You/Them attribution");
-        assert!(!prompt.contains("**Them:**"), "leaked You/Them attribution");
-        assert!(!prompt.contains("never a personal name"), "leaked an Action items rule");
+        assert!(!prompt.contains("Only major items"), "leaked the built-in Action items spec");
+        assert!(!prompt.contains("no personal names"), "leaked an Action items rule");
         assert!(
             !prompt.contains("Name people only in the Summary and Decisions"),
             "named sections the template does not contain"
         );
         assert!(prompt.contains("Skip filler, chit-chat"), "lost the universal rules");
 
-        // Built-ins without an Action items section likewise carry no You/Them rule.
-        assert!(!build_system_prompt(&builtin_as_owned(&STANDUP_TEMPLATE)).contains("**You:**"));
+        // Built-ins without an Action items section likewise carry none of its rules.
+        assert!(
+            !build_system_prompt(&builtin_as_owned(&STANDUP_TEMPLATE)).contains("Only major items")
+        );
     }
 
     #[test]
@@ -664,7 +733,10 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
 
     #[test]
     fn per_section_example_emits_example_block() {
-        let mut t = builtin_as_owned(&STANDUP_TEMPLATE); // no examples
+        let mut t = builtin_as_owned(&STANDUP_TEMPLATE);
+        for s in &mut t.sections {
+            s.example = None; // strip the shipped examples
+        }
         assert!(!build_system_prompt(&t).contains("Example shape"));
         t.sections[0].example = Some("- Shipped the login flow.".to_string());
         let prompt = build_system_prompt(&t);
@@ -675,24 +747,27 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
     #[test]
     fn minutes_template_shape() {
         let prompt = build_system_prompt(&builtin_as_owned(&MINUTES_TEMPLATE));
-        assert!(prompt.contains("up to four sections"));
-        for h in ["## Agenda", "## Discussion", "## Decisions", "## Action items"] {
+        assert!(prompt.contains("up to two sections"));
+        for h in ["## Agenda", "## Action items"] {
             assert!(prompt.contains(h), "minutes missing {h}");
         }
         // Sections from other templates must not leak in.
+        assert!(!prompt.contains("## Discussion"));
+        assert!(!prompt.contains("## Decisions"));
         assert!(!prompt.contains("## Open questions"));
         assert!(!prompt.contains("## Blockers"));
-        // No illustrative example for the new templates.
-        assert!(!prompt.contains("Example shape"));
+        // Every section ships an illustrative example.
+        assert!(prompt.contains("Example shape"));
     }
 
     #[test]
     fn standup_template_shape() {
         let prompt = build_system_prompt(&builtin_as_owned(&STANDUP_TEMPLATE));
-        assert!(prompt.contains("up to three sections"));
-        for h in ["## Progress", "## Plans", "## Blockers"] {
+        assert!(prompt.contains("up to two sections"));
+        for h in ["## Progress", "## Blockers"] {
             assert!(prompt.contains(h), "standup missing {h}");
         }
+        assert!(!prompt.contains("## Plans"));
         assert!(!prompt.contains("## Summary"));
         assert!(!prompt.contains("## Action items"));
     }
@@ -745,18 +820,18 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
         assert!(prompt.contains("Write ONLY the body"));
         assert!(prompt.contains("Do NOT output the `## Action items` line"));
         // The section's own tuned rules carry through.
-        assert!(prompt.contains("**You:**"));
-        assert!(prompt.contains("**Them:**"));
+        assert!(prompt.contains("Only major items"));
+        assert!(prompt.contains("NEVER invent or guess deadlines"));
         // Its example is shown, but WITHOUT a `## Action items` heading above it.
         assert!(prompt.contains("Example shape (illustrative only, do not copy the content):"));
-        assert!(!prompt.contains("## Action items\n- [ ] **You:**"));
+        assert!(!prompt.contains("## Action items\n- [ ]"));
         // Universal rules are present.
         assert!(prompt.contains("Skip filler, chit-chat"));
     }
 
     #[test]
     fn section_prompt_does_not_leak_other_sections_rules() {
-        // A pass for a non-Action-items section must not carry You/Them attribution.
+        // A pass for a non-Action-items section must not carry its checkbox rules.
         let recap = builtin_as_owned(&DEFAULT_TEMPLATE);
         let summary = recap
             .sections
@@ -764,22 +839,21 @@ The team agreed to ship v2 onboarding on Friday. QA gets the full week for regre
             .find(|s| s.heading == "Summary")
             .expect("Recap has a Summary section");
         let prompt = build_section_system_prompt(summary);
-        assert!(!prompt.contains("**You:**"), "leaked Action items attribution");
-        assert!(!prompt.contains("**Them:**"), "leaked Action items attribution");
+        assert!(!prompt.contains("Only major items"), "leaked the Action items spec");
+        assert!(!prompt.contains("- [ ]"), "leaked the Action items checkbox format");
     }
 
     #[test]
     fn section_prompt_example_only_when_present() {
-        // Standup sections carry no example, so no example block appears.
+        // With the example stripped, no example block appears.
         let standup = builtin_as_owned(&STANDUP_TEMPLATE);
-        let progress = &standup.sections[0];
-        assert!(progress.example.is_none());
-        assert!(!build_section_system_prompt(progress).contains("Example shape"));
+        let mut progress = standup.sections[0].clone();
+        progress.example = None;
+        assert!(!build_section_system_prompt(&progress).contains("Example shape"));
 
         // With an example set, the example block appears verbatim.
-        let mut progress_with_ex = progress.clone();
-        progress_with_ex.example = Some("- Shipped the login flow.".to_string());
-        let prompt = build_section_system_prompt(&progress_with_ex);
+        progress.example = Some("- Shipped the login flow.".to_string());
+        let prompt = build_section_system_prompt(&progress);
         assert!(prompt.contains("Example shape (illustrative only, do not copy the content):"));
         assert!(prompt.contains("- Shipped the login flow."));
     }
