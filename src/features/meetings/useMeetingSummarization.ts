@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { useTauriEvent } from "@/hooks/use-tauri-event";
+import { listenBatch } from "@/lib/tauri-events";
 import {
   type MeetingRow,
   type MeetingDetail,
@@ -39,13 +41,13 @@ export function useMeetingSummarization(
     meeting.template ?? "default",
   );
 
-  const unlistenStreamRef = useRef<Array<() => void>>([]);
+  const unlistenStreamRef = useRef<UnlistenFn | null>(null);
   const summaryBodyRef = useRef(summaryBody);
   summaryBodyRef.current = summaryBody;
 
   const cleanupStreamListeners = useCallback(() => {
-    for (const unlisten of unlistenStreamRef.current) unlisten();
-    unlistenStreamRef.current = [];
+    unlistenStreamRef.current?.();
+    unlistenStreamRef.current = null;
   }, []);
 
   // Per-section streaming: the run announces its sections up front (`summary:plan`),
@@ -53,21 +55,26 @@ export function useMeetingSummarization(
   // "thinking" (its transcript prefill), `summary:token` appends body + flips to
   // "writing", and `summary:section_done` marks it "done" (or "skipped" if empty).
   const registerStreamListeners = useCallback(async () => {
-    if (unlistenStreamRef.current.length) {
+    if (unlistenStreamRef.current) {
       return cleanupStreamListeners;
     }
-    const planUn = await listen<SummaryPlanPayload>("summary:plan", (event) => {
-      if (event.payload.meeting_id !== meeting.id) return;
-      const ordered = [...event.payload.sections].sort((a, b) => a.index - b.index);
-      setSections(
-        ordered.map(
-          (s): SummarySection => ({ heading: s.heading, body: "", state: "pending" }),
-        ),
-      );
-    });
-    const startUn = await listen<SectionStartPayload>(
-      "summary:section_start",
-      (event) => {
+    unlistenStreamRef.current = await listenBatch([
+      listen<SummaryPlanPayload>("summary:plan", (event) => {
+        if (event.payload.meeting_id !== meeting.id) return;
+        const ordered = [...event.payload.sections].sort(
+          (a, b) => a.index - b.index,
+        );
+        setSections(
+          ordered.map(
+            (s): SummarySection => ({
+              heading: s.heading,
+              body: "",
+              state: "pending",
+            }),
+          ),
+        );
+      }),
+      listen<SectionStartPayload>("summary:section_start", (event) => {
         if (event.payload.meeting_id !== meeting.id) return;
         const { index } = event.payload;
         setSections((prev) =>
@@ -75,20 +82,17 @@ export function useMeetingSummarization(
             i === index && s.state === "pending" ? { ...s, state: "thinking" } : s,
           ),
         );
-      },
-    );
-    const tokenUn = await listen<SectionTokenPayload>("summary:token", (event) => {
-      if (event.payload.meeting_id !== meeting.id) return;
-      const { index, token } = event.payload;
-      setSections((prev) =>
-        prev.map((s, i): SummarySection =>
-          i === index ? { ...s, body: s.body + token, state: "writing" } : s,
-        ),
-      );
-    });
-    const doneUn = await listen<SectionDonePayload>(
-      "summary:section_done",
-      (event) => {
+      }),
+      listen<SectionTokenPayload>("summary:token", (event) => {
+        if (event.payload.meeting_id !== meeting.id) return;
+        const { index, token } = event.payload;
+        setSections((prev) =>
+          prev.map((s, i): SummarySection =>
+            i === index ? { ...s, body: s.body + token, state: "writing" } : s,
+          ),
+        );
+      }),
+      listen<SectionDonePayload>("summary:section_done", (event) => {
         if (event.payload.meeting_id !== meeting.id) return;
         const { index, empty } = event.payload;
         setSections((prev) =>
@@ -96,9 +100,8 @@ export function useMeetingSummarization(
             i === index ? { ...s, state: empty ? "skipped" : "done" } : s,
           ),
         );
-      },
-    );
-    unlistenStreamRef.current = [planUn, startUn, tokenUn, doneUn];
+      }),
+    ]);
     return cleanupStreamListeners;
   }, [meeting.id, cleanupStreamListeners]);
 
@@ -165,20 +168,12 @@ export function useMeetingSummarization(
   // out of the "Download a summarization model in Settings…" state without a
   // remount. The progress event fires before the atomic rename completes, so
   // checkLlmModel may briefly still see false; re-poll once on a short delay.
-  useEffect(() => {
-    const unlisten = listen<DownloadProgress>(
-      "llm-model:download-progress",
-      (event) => {
-        const { downloaded_bytes, total_bytes } = event.payload;
-        if (total_bytes <= 0 || downloaded_bytes < total_bytes) return;
-        void checkLlmModel();
-        setTimeout(() => void checkLlmModel(), 250);
-      },
-    );
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [checkLlmModel]);
+  useTauriEvent<DownloadProgress>("llm-model:download-progress", (payload) => {
+    const { downloaded_bytes, total_bytes } = payload;
+    if (total_bytes <= 0 || downloaded_bytes < total_bytes) return;
+    void checkLlmModel();
+    setTimeout(() => void checkLlmModel(), 250);
+  });
 
   useEffect(() => {
     setCurrentSummary(summaryBody);
@@ -254,59 +249,41 @@ export function useMeetingSummarization(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meeting.id]);
 
-  useEffect(() => {
-    const unlisten = listen<string>("summary:complete", async (event) => {
-      if (event.payload !== meeting.id) return;
-      try {
-        const result = await invoke<MeetingDetail>("get_meeting", {
-          meetingId: meeting.id,
-        });
-        setCurrentSummary(summaryBodyFromDocuments(result.documents));
-      } catch {
-        // fall through — summary will appear on next navigation
-      }
-      cleanupStreamListeners();
-      setSummarizing(false);
-      setSections([]);
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [meeting.id, cleanupStreamListeners]);
+  useTauriEvent<string>("summary:complete", async (completedId) => {
+    if (completedId !== meeting.id) return;
+    try {
+      const result = await invoke<MeetingDetail>("get_meeting", {
+        meetingId: meeting.id,
+      });
+      setCurrentSummary(summaryBodyFromDocuments(result.documents));
+    } catch {
+      // fall through — summary will appear on next navigation
+    }
+    cleanupStreamListeners();
+    setSummarizing(false);
+    setSections([]);
+  });
 
   useEffect(() => {
     return () => cleanupStreamListeners();
   }, [cleanupStreamListeners]);
 
-  useEffect(() => {
-    const unlisten = listen<TitlePayload>("summary:title", (event) => {
-      if (event.payload.meeting_id !== meeting.id) return;
-      if (event.payload.title) {
-        setCurrentTitle(event.payload.title);
-      }
-      setGeneratingTitle(false);
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [meeting.id]);
+  useTauriEvent<TitlePayload>("summary:title", (payload) => {
+    if (payload.meeting_id !== meeting.id) return;
+    if (payload.title) {
+      setCurrentTitle(payload.title);
+    }
+    setGeneratingTitle(false);
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    const unlisten = listen<string>("summary:started", async (event) => {
-      if (event.payload !== meeting.id) return;
-      if (cancelled) return;
-      if (unlistenStreamRef.current.length) return;
-      setSummarizing(true);
-      setGeneratingTitle(true);
-      setSections([]);
-      await registerStreamListeners();
-    });
-    return () => {
-      cancelled = true;
-      unlisten.then((fn) => fn());
-    };
-  }, [meeting.id, registerStreamListeners]);
+  useTauriEvent<string>("summary:started", async (startedId) => {
+    if (startedId !== meeting.id) return;
+    if (unlistenStreamRef.current) return;
+    setSummarizing(true);
+    setGeneratingTitle(true);
+    setSections([]);
+    await registerStreamListeners();
+  });
 
   // Core (re)summarize with an explicit template id — no confirmation. Callers
   // own the confirm step so they can word it for their context.
