@@ -12,6 +12,7 @@ import { RecordingContext } from "./recording-context";
 import type { AppError, TranscriptSegment } from "./types";
 import { toAppError } from "./types";
 import { useTimer } from "./use-timer";
+import { useAutoStop } from "./use-auto-stop";
 import { toastError } from "@/lib/toast";
 
 /** Surface a recording failure as a toast, with a settings action for the
@@ -46,11 +47,6 @@ interface RecordingFinalizedEvent {
   meeting_id: string;
 }
 
-interface MeetingDetectedEvent {
-  phase: "Idle" | "Detecting" | "Active" | "Ending";
-  app_name: string | null;
-}
-
 export function RecordingProviderInner({ children }: { children: ReactNode }) {
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -64,27 +60,13 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
   >({});
 
   const sessionActiveRef = useRef(false);
-  const matchedMeetingRef = useRef(false);
-  const matchedAppNameRef = useRef<string | null>(null);
-  // Once the user clicks "Keep" on the auto-stop prompt, suppress further
-  // prompts for the rest of this recording session — don't nag on repeated
-  // false positives from the AX-based detector.
-  const autoStopDismissedRef = useRef(false);
 
   useEffect(() => {
     sessionActiveRef.current = recording || paused;
   }, [recording, paused]);
 
-  const hideAutoStopOverlay = useCallback(() => {
-    void invoke("hide_auto_stop_overlay").catch(() => {});
-  }, []);
-
-  const resetAutoStopForNewSession = useCallback(() => {
-    matchedMeetingRef.current = false;
-    matchedAppNameRef.current = null;
-    autoStopDismissedRef.current = false;
-    hideAutoStopOverlay();
-  }, [hideAutoStopOverlay]);
+  const { armForNewSession, disarm, hideOverlay } =
+    useAutoStop(sessionActiveRef);
 
   useEffect(() => {
     (async () => {
@@ -122,30 +104,19 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
       if (meeting_id != null) setMeetingId(meeting_id);
       startTimer(elapsed_secs);
       if (!wasSession) {
-        resetAutoStopForNewSession();
-        // Recover state when recording starts after a meeting was already
-        // detected — otherwise no `meeting-detected` event arrives during
-        // this session and auto-stop would never arm.
-        void invoke<string | null>("get_current_meeting_app")
-          .then((appName) => {
-            if (appName) {
-              matchedMeetingRef.current = true;
-              matchedAppNameRef.current = appName;
-            }
-          })
-          .catch(() => {});
+        armForNewSession();
         if (resetTranscript === undefined || resetTranscript === true) {
           setSegments([]);
           setProvisional({});
         }
       } else if (isPaused) {
         // Pause is an explicit "I'm not done" — dismiss any open prompt.
-        hideAutoStopOverlay();
+        hideOverlay();
       }
     } else {
       setMeetingId(null);
       clearTimer();
-      resetAutoStopForNewSession();
+      disarm();
     }
 
     sessionActiveRef.current = nowSession;
@@ -175,19 +146,6 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
     }
   });
 
-  useTauriEvent<MeetingDetectedEvent>("meeting-detected", (payload) => {
-    if (!sessionActiveRef.current) return;
-    matchedMeetingRef.current = true;
-    matchedAppNameRef.current = payload.app_name;
-    // Detector saw the call again — close any stale prompt (false positive
-    // recovered, or user rejoined).
-    hideAutoStopOverlay();
-  });
-
-  useTauriEvent("auto-stop-cancel-requested", () => {
-    autoStopDismissedRef.current = true;
-  });
-
   const startRecording = useCallback(
     async (resumeMeetingId?: string | null): Promise<string> => {
       try {
@@ -214,16 +172,6 @@ export function RecordingProviderInner({ children }: { children: ReactNode }) {
       notifyRecordingError(e);
     }
   }, []);
-
-  useTauriEvent<MeetingDetectedEvent>("meeting-ended", () => {
-    if (!sessionActiveRef.current) return;
-    if (!matchedMeetingRef.current) return;
-    if (autoStopDismissedRef.current) return;
-
-    void invoke("show_auto_stop_overlay", {
-      appName: matchedAppNameRef.current,
-    }).catch((e) => console.error("show_auto_stop_overlay:", e));
-  });
 
   const pauseRecording = useCallback(async () => {
     try {
