@@ -31,6 +31,10 @@ const MAX_MINUTES_TOKENS: i32 = 512;
 /// (sub-bullets don't count); `NEW_BULLETS_PER_PASS_MAX` in `live_minutes.rs` is
 /// the tighter, intended limit.
 const MAX_MINUTES_LINES: usize = 40;
+/// Generation budget for one gist-update pass. The prompt caps the gist at
+/// ~120 words, so 256 tokens is generous headroom; the caller also char-caps
+/// the result as a backstop.
+const MAX_GIST_TOKENS: i32 = 256;
 /// Token budget for one tool-aware chat turn. Models tend to chain-of-thought
 /// for a paragraph or two before emitting the `<tool_call>` block, then
 /// produce a final answer after the tool result comes back, so we need
@@ -71,6 +75,56 @@ pub struct TurnOutcome {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub max_tokens: u32,
+}
+
+/// Everything one live-minutes pass shows the model. All fields are context
+/// only except `new_transcript` — the sole text bullets may be recorded from.
+pub struct LiveMinutesPassInput<'a> {
+    /// Rolling model-facing meeting summary (may be empty early on).
+    pub gist: &'a str,
+    /// Trailing recorded bullets, for dedup.
+    pub recorded_tail: &'a str,
+    /// Tail of the previously processed transcript, so a thought straddling
+    /// the chunk boundary reads whole (may be empty).
+    pub carry: &'a str,
+    /// Transcript accumulated since the last pass.
+    pub new_transcript: &'a str,
+}
+
+/// What the minutes and gist prompts both show for an empty rolling gist, so
+/// the model always sees the same sentinel at the start of a meeting.
+fn gist_block(gist: &str) -> &str {
+    if gist.trim().is_empty() {
+        "(start of meeting)"
+    } else {
+        gist
+    }
+}
+
+impl LiveMinutesPassInput<'_> {
+    /// Assemble the user message. Section headers must match the ones the
+    /// system prompt describes; the PRIOR TRANSCRIPT section is omitted
+    /// entirely when there is no carry-over.
+    fn user_message(&self) -> String {
+        let gist_block = gist_block(self.gist);
+        let recorded_block = if self.recorded_tail.trim().is_empty() {
+            "(nothing recorded yet)"
+        } else {
+            self.recorded_tail
+        };
+        let mut msg = format!(
+            "MEETING CONTEXT SO FAR (background only, may be incomplete):\n{gist_block}\n\n\
+             ALREADY RECORDED (context only, do not repeat or change):\n{recorded_block}\n\n"
+        );
+        if !self.carry.trim().is_empty() {
+            msg.push_str(&format!(
+                "PRIOR TRANSCRIPT (already processed — context only, never record from it):\n{}\n\n",
+                self.carry
+            ));
+        }
+        msg.push_str(&format!("NEW TRANSCRIPT:\n{}", self.new_transcript));
+        msg
+    }
 }
 
 /// Wraps a lazily-loaded llama.cpp model and exposes blocking
@@ -352,14 +406,16 @@ impl SummarizationService {
         self.model.try_lock().is_err()
     }
 
-    /// One live-minutes pass: given a short tail of the bullets ALREADY RECORDED
-    /// (context only, so the model can avoid repeating them) and the transcript
-    /// accumulated since the last pass, return only bullets for genuinely
-    /// noteworthy NEW information — or an empty string when the chunk contains
-    /// nothing worth recording. The caller appends whatever comes back; nothing
-    /// already recorded is ever rewritten. Output is post-processed to bullet
-    /// lines only (one level of sub-bullets preserved) and capped at
-    /// [`MAX_MINUTES_LINES`] top-level bullets.
+    /// One live-minutes pass: given the rolling meeting gist (background
+    /// context), a short tail of the bullets ALREADY RECORDED (so the model can
+    /// avoid repeating them), the tail of the previously processed transcript
+    /// (so a thought straddling the chunk boundary reads whole), and the
+    /// transcript accumulated since the last pass, return only bullets for
+    /// genuinely noteworthy NEW information — or an empty string when the chunk
+    /// contains nothing worth recording. The caller appends whatever comes
+    /// back; nothing already recorded is ever rewritten. Output is
+    /// post-processed to bullet lines only (one level of sub-bullets preserved)
+    /// and capped at [`MAX_MINUTES_LINES`] top-level bullets.
     ///
     /// **Blocking** — call from `spawn_blocking`. Clears `interrupt` after
     /// taking the model lock (same hand-off convention as `generate_chat`);
@@ -367,8 +423,7 @@ impl SummarizationService {
     pub fn update_live_minutes(
         &self,
         model_path: &Path,
-        recorded_tail: &str,
-        new_transcript: &str,
+        input: &LiveMinutesPassInput<'_>,
         interrupt: &AtomicBool,
     ) -> Result<String, AppError> {
         self.ensure_loaded(model_path)?;
@@ -380,18 +435,9 @@ impl SummarizationService {
 
         interrupt.store(false, Ordering::Relaxed);
 
-        let recorded_block = if recorded_tail.trim().is_empty() {
-            "(nothing recorded yet)"
-        } else {
-            recorded_tail
-        };
-        let user_message = format!(
-            "ALREADY RECORDED (context only, do not repeat or change):\n{recorded_block}\n\n\
-             NEW TRANSCRIPT:\n{new_transcript}"
-        );
         let messages_json = serde_json::json!([
             {"role": "system", "content": templates::live_minutes_system_prompt()},
-            {"role": "user", "content": user_message}
+            {"role": "user", "content": input.user_message()}
         ])
         .to_string();
         let prompt = Self::apply_template(model, &messages_json, false)?;
@@ -399,6 +445,42 @@ impl SummarizationService {
         let raw =
             self.run_inference(model, &prompt, MAX_MINUTES_TOKENS, interrupt, |_, _| {})?;
         Ok(extract_bullet_lines(&strip_think_tags(raw.trim())))
+    }
+
+    /// One gist-update pass: fold `new_transcript` into `prev_gist` and return
+    /// the rewritten model-facing meeting context (see
+    /// [`templates::meeting_gist_system_prompt`]).
+    ///
+    /// **Blocking** — call from `spawn_blocking`. Unlike `update_live_minutes`
+    /// this does NOT clear `interrupt`: clearing is the hand-off convention for
+    /// the first lock acquisition of a pass, and the gist call runs second in
+    /// the same pass — a chat preemption signaled meanwhile must still win.
+    pub fn update_meeting_gist(
+        &self,
+        model_path: &Path,
+        prev_gist: &str,
+        new_transcript: &str,
+        interrupt: &AtomicBool,
+    ) -> Result<String, AppError> {
+        self.ensure_loaded(model_path)?;
+
+        let guard = lock_or_err(&self.model)?;
+        let (_, model) = guard
+            .as_ref()
+            .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
+
+        let gist_block = gist_block(prev_gist);
+        let user_message =
+            format!("CURRENT CONTEXT:\n{gist_block}\n\nNEW TRANSCRIPT:\n{new_transcript}");
+        let messages_json = serde_json::json!([
+            {"role": "system", "content": templates::meeting_gist_system_prompt()},
+            {"role": "user", "content": user_message}
+        ])
+        .to_string();
+        let prompt = Self::apply_template(model, &messages_json, false)?;
+
+        let raw = self.run_inference(model, &prompt, MAX_GIST_TOKENS, interrupt, |_, _| {})?;
+        Ok(strip_think_tags(raw.trim()).trim().to_string())
     }
 
     /// Run a chat completion against the supplied pre-built OpenAI-format
@@ -1496,9 +1578,43 @@ pub struct SummarizationState {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_bullet_lines, extract_tool_calls, strip_think_tags, InferenceEvent, StreamFilter,
-        MAX_MINUTES_LINES,
+        extract_bullet_lines, extract_tool_calls, strip_think_tags, InferenceEvent,
+        LiveMinutesPassInput, StreamFilter, MAX_MINUTES_LINES,
     };
+
+    #[test]
+    fn live_minutes_user_message_includes_all_sections_in_order() {
+        let input = LiveMinutesPassInput {
+            gist: "Topics: demo",
+            recorded_tail: "- Demo Friday",
+            carry: "You: as I was saying",
+            new_transcript: "You: the demo moved to Monday",
+        };
+        assert_eq!(
+            input.user_message(),
+            "MEETING CONTEXT SO FAR (background only, may be incomplete):\nTopics: demo\n\n\
+             ALREADY RECORDED (context only, do not repeat or change):\n- Demo Friday\n\n\
+             PRIOR TRANSCRIPT (already processed — context only, never record from it):\nYou: as I was saying\n\n\
+             NEW TRANSCRIPT:\nYou: the demo moved to Monday"
+        );
+    }
+
+    #[test]
+    fn live_minutes_user_message_placeholders_and_omitted_carry() {
+        // First pass of a meeting: placeholders keep the prompt well-formed
+        // and the PRIOR TRANSCRIPT section disappears entirely.
+        let input = LiveMinutesPassInput {
+            gist: "  ",
+            recorded_tail: "",
+            carry: "",
+            new_transcript: "You: hello",
+        };
+        let msg = input.user_message();
+        assert!(msg.contains("(start of meeting)"));
+        assert!(msg.contains("(nothing recorded yet)"));
+        assert!(!msg.contains("PRIOR TRANSCRIPT"));
+        assert!(msg.ends_with("NEW TRANSCRIPT:\nYou: hello"));
+    }
 
     #[test]
     fn extract_bullet_lines_keeps_only_bullets() {
