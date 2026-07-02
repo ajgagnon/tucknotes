@@ -7,8 +7,7 @@ import { useIsBreakpoint } from "@/hooks/use-is-breakpoint"
 import { useTiptapEditor } from "@/editor/use-tiptap-editor"
 
 // --- Icons ---
-import { BanIcon } from "@/editor/icons/ban-icon"
-import { HighlighterIcon } from "@/editor/icons/highlighter-icon"
+import { BanIcon, HighlighterIcon } from "lucide-react"
 
 // --- UI Primitives ---
 import type { ButtonProps } from "@/editor/primitives/button"

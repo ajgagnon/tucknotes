@@ -12,7 +12,7 @@ import { useIsBreakpoint } from "@/hooks/use-is-breakpoint"
 import { isMarkInSchema, isNodeTypeSelected } from "@/editor/tiptap-utils"
 
 // --- Icons ---
-import { HighlighterIcon } from "@/editor/icons/highlighter-icon"
+import { HighlighterIcon } from "lucide-react"
 
 export const COLOR_HIGHLIGHT_SHORTCUT_KEY = "mod+shift+h"
 export const HIGHLIGHT_COLORS = [

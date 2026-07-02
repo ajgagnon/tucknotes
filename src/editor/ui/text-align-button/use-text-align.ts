@@ -12,10 +12,12 @@ import {
 } from "@/editor/tiptap-utils"
 
 // --- Icons ---
-import { AlignCenterIcon } from "@/editor/icons/align-center-icon"
-import { AlignJustifyIcon } from "@/editor/icons/align-justify-icon"
-import { AlignLeftIcon } from "@/editor/icons/align-left-icon"
-import { AlignRightIcon } from "@/editor/icons/align-right-icon"
+import {
+  AlignCenterIcon,
+  AlignJustifyIcon,
+  AlignLeftIcon,
+  AlignRightIcon,
+} from "lucide-react"
 
 export type TextAlign = "left" | "center" | "right" | "justify"
 

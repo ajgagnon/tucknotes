@@ -8,13 +8,15 @@ import { useTiptapEditor } from "@/editor/use-tiptap-editor"
 import { isMarkInSchema, isNodeTypeSelected } from "@/editor/tiptap-utils"
 
 // --- Icons ---
-import { BoldIcon } from "@/editor/icons/bold-icon"
-import { Code2Icon } from "@/editor/icons/code2-icon"
-import { ItalicIcon } from "@/editor/icons/italic-icon"
-import { StrikeIcon } from "@/editor/icons/strike-icon"
-import { SubscriptIcon } from "@/editor/icons/subscript-icon"
-import { SuperscriptIcon } from "@/editor/icons/superscript-icon"
-import { UnderlineIcon } from "@/editor/icons/underline-icon"
+import {
+  BoldIcon,
+  CodeXmlIcon as Code2Icon,
+  ItalicIcon,
+  StrikethroughIcon as StrikeIcon,
+  SubscriptIcon,
+  SuperscriptIcon,
+  UnderlineIcon,
+} from "lucide-react"
 
 export type Mark =
   | "bold"

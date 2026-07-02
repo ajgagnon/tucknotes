@@ -18,7 +18,7 @@ import {
 } from "@/editor/tiptap-utils"
 
 // --- Icons ---
-import { CodeBlockIcon } from "@/editor/icons/code-block-icon"
+import { SquareCodeIcon as CodeBlockIcon } from "lucide-react"
 
 export const CODE_BLOCK_SHORTCUT_KEY = "mod+alt+c"
 

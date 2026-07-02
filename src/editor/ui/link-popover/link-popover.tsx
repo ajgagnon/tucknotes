@@ -8,10 +8,12 @@ import { useIsBreakpoint } from "@/hooks/use-is-breakpoint"
 import { useTiptapEditor } from "@/editor/use-tiptap-editor"
 
 // --- Icons ---
-import { CornerDownLeftIcon } from "@/editor/icons/corner-down-left-icon"
-import { ExternalLinkIcon } from "@/editor/icons/external-link-icon"
-import { LinkIcon } from "@/editor/icons/link-icon"
-import { TrashIcon } from "@/editor/icons/trash-icon"
+import {
+  CornerDownLeftIcon,
+  ExternalLinkIcon,
+  LinkIcon,
+  TrashIcon,
+} from "lucide-react"
 
 // --- Tiptap UI ---
 import type { UseLinkPopoverConfig } from "@/editor/ui/link-popover"

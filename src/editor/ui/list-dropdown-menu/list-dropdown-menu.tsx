@@ -5,7 +5,7 @@ import { type Editor } from "@tiptap/react"
 import { useTiptapEditor } from "@/editor/use-tiptap-editor"
 
 // --- Icons ---
-import { ChevronDownIcon } from "@/editor/icons/chevron-down-icon"
+import { ChevronDownIcon } from "lucide-react"
 
 // --- Tiptap UI ---
 import { ListButton, type ListType } from "@/editor/ui/list-button"

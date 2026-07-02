@@ -64,9 +64,7 @@ import { TextAlignButton } from "@/editor/ui/text-align-button"
 import { UndoRedoButton } from "@/editor/ui/undo-redo-button"
 
 // --- Icons ---
-import { ArrowLeftIcon } from "@/editor/icons/arrow-left-icon"
-import { HighlighterIcon } from "@/editor/icons/highlighter-icon"
-import { LinkIcon } from "@/editor/icons/link-icon"
+import { ArrowLeftIcon, HighlighterIcon, LinkIcon } from "lucide-react"
 
 // --- Hooks ---
 import { useIsBreakpoint } from "@/hooks/use-is-breakpoint"

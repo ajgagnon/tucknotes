@@ -8,7 +8,7 @@ import { NodeSelection, TextSelection } from "@tiptap/pm/state"
 import { useTiptapEditor } from "@/editor/use-tiptap-editor"
 
 // --- Icons ---
-import { BlockquoteIcon } from "@/editor/icons/blockquote-icon"
+import { TextQuoteIcon as BlockquoteIcon } from "lucide-react"
 
 // --- UI Utils ---
 import {

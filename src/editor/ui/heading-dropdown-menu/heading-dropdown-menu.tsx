@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useState } from "react"
 
 // --- Icons ---
-import { ChevronDownIcon } from "@/editor/icons/chevron-down-icon"
+import { ChevronDownIcon } from "lucide-react"
 
 // --- Hooks ---
 import { useTiptapEditor } from "@/editor/use-tiptap-editor"

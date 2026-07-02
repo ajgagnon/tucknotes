@@ -1,6 +1,6 @@
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 import { cn } from "@/editor/tiptap-utils"
-import { CheckIcon } from "@/editor/icons/check-icon"
+import { CheckIcon } from "lucide-react"
 
 import "@/editor/primitives/dropdown-menu/dropdown-menu.scss"
 

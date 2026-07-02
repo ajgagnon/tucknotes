@@ -7,9 +7,7 @@ import type { Editor } from "@tiptap/react"
 import { useTiptapEditor } from "@/editor/use-tiptap-editor"
 
 // --- Icons ---
-import { ListIcon } from "@/editor/icons/list-icon"
-import { ListOrderedIcon } from "@/editor/icons/list-ordered-icon"
-import { ListTodoIcon } from "@/editor/icons/list-todo-icon"
+import { ListIcon, ListOrderedIcon, ListTodoIcon } from "lucide-react"
 
 // --- Lib ---
 import { isNodeInSchema } from "@/editor/tiptap-utils"

@@ -5,7 +5,7 @@ import type { Editor } from "@tiptap/react"
 import { useTiptapEditor } from "@/editor/use-tiptap-editor"
 
 // --- Icons ---
-import { LinkIcon } from "@/editor/icons/link-icon"
+import { LinkIcon } from "lucide-react"
 
 // --- Lib ---
 import {

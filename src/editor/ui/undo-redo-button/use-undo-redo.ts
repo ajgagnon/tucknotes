@@ -8,8 +8,7 @@ import { useTiptapEditor } from "@/editor/use-tiptap-editor"
 import { isNodeTypeSelected } from "@/editor/tiptap-utils"
 
 // --- Icons ---
-import { Redo2Icon } from "@/editor/icons/redo2-icon"
-import { Undo2Icon } from "@/editor/icons/undo2-icon"
+import { Redo2Icon, Undo2Icon } from "lucide-react"
 
 export type UndoRedoAction = "undo" | "redo"
 

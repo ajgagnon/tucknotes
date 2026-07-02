@@ -18,12 +18,14 @@ import {
 } from "@/editor/tiptap-utils"
 
 // --- Icons ---
-import { HeadingOneIcon } from "@/editor/icons/heading-one-icon"
-import { HeadingTwoIcon } from "@/editor/icons/heading-two-icon"
-import { HeadingThreeIcon } from "@/editor/icons/heading-three-icon"
-import { HeadingFourIcon } from "@/editor/icons/heading-four-icon"
-import { HeadingFiveIcon } from "@/editor/icons/heading-five-icon"
-import { HeadingSixIcon } from "@/editor/icons/heading-six-icon"
+import {
+  Heading1Icon as HeadingOneIcon,
+  Heading2Icon as HeadingTwoIcon,
+  Heading3Icon as HeadingThreeIcon,
+  Heading4Icon as HeadingFourIcon,
+  Heading5Icon as HeadingFiveIcon,
+  Heading6Icon as HeadingSixIcon,
+} from "lucide-react"
 
 export type Level = 1 | 2 | 3 | 4 | 5 | 6
 
