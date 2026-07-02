@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriEvent } from "@/hooks/use-tauri-event";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   FileText,
@@ -482,51 +482,37 @@ function AppLayout() {
   }, [meetings, activeView]);
 
   // Refresh meetings list when a title is generated (so sidebar shows it)
-  useEffect(() => {
-    const unlisten = listen("summary:title", () => {
-      loadMeetings();
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [loadMeetings]);
+  useTauriEvent("summary:title", () => {
+    loadMeetings();
+  });
 
   // Keep sidebar in sync with recording start/stop (e.g. meeting-detected overlay),
   // and navigate to the recording page whenever a new recording session begins —
   // including sessions started from other windows such as the meeting-detected overlay.
   const lastRecordingMeetingIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    const unlistenStateChanged = listen<{
-      recording: boolean;
-      meeting_id: string | null;
-    }>("recording-state-changed", ({ payload: { recording, meeting_id } }) => {
-      // Load meetings list to update the sidebar.
-      loadMeetings();
+  useTauriEvent<{
+    recording: boolean;
+    meeting_id: string | null;
+  }>("recording-state-changed", ({ recording, meeting_id }) => {
+    // Load meetings list to update the sidebar.
+    loadMeetings();
 
-      // No meeting attached — clear the tracker so the next session navigates.
-      if (meeting_id == null) {
-        lastRecordingMeetingIdRef.current = null;
-        return;
-      }
-      // Only navigate to meeting if we are recording and also the meeting
-      // is different from the last one we navigated to.
-      if (!recording || meeting_id === lastRecordingMeetingIdRef.current)
-        return;
-      lastRecordingMeetingIdRef.current = meeting_id;
-      setActiveView({ type: "meeting", id: meeting_id });
-    });
-    const unlistenFinalized = listen<{ meeting_id: string }>(
-      "recording-finalized",
-      (event) => {
-        loadMeetings();
-        void autoSummarizeIfNeeded(event.payload.meeting_id);
-      },
-    );
-    return () => {
-      unlistenStateChanged.then((fn) => fn());
-      unlistenFinalized.then((fn) => fn());
-    };
-  }, [loadMeetings]);
+    // No meeting attached — clear the tracker so the next session navigates.
+    if (meeting_id == null) {
+      lastRecordingMeetingIdRef.current = null;
+      return;
+    }
+    // Only navigate to meeting if we are recording and also the meeting
+    // is different from the last one we navigated to.
+    if (!recording || meeting_id === lastRecordingMeetingIdRef.current) return;
+    lastRecordingMeetingIdRef.current = meeting_id;
+    setActiveView({ type: "meeting", id: meeting_id });
+  });
+
+  useTauriEvent<{ meeting_id: string }>("recording-finalized", (payload) => {
+    loadMeetings();
+    void autoSummarizeIfNeeded(payload.meeting_id);
+  });
 
   const handleStartRecording = useCallback(
     (meetingId: string) => {
