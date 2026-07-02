@@ -448,19 +448,27 @@ pub fn build_section_system_prompt(section: &OwnedSection) -> String {
 
 /// System prompt for the live-minutes pass that runs while a meeting is still
 /// being recorded. The document is an append-only log of short bullets: the
-/// model is shown the bullets ALREADY RECORDED (context only — never changed)
-/// plus the NEW TRANSCRIPT chunk, and returns only bullets for genuinely
-/// noteworthy NEW information, or nothing at all. Code appends whatever comes
-/// back; nothing already recorded is ever rewritten. Keeping the per-pass task
-/// this small (judge one chunk, usually stay silent) is what lets a small
-/// quantized model produce sparse, high-signal minutes. This prompt is
-/// standalone rather than assembled from sections.
+/// model is shown the MEETING CONTEXT SO FAR (a model-facing rolling gist,
+/// never displayed), the bullets ALREADY RECORDED (context only — never
+/// changed), the PRIOR TRANSCRIPT it already processed, and the NEW TRANSCRIPT
+/// chunk, and returns only bullets for genuinely noteworthy NEW information,
+/// or nothing at all. Code appends whatever comes back; nothing already
+/// recorded is ever rewritten. Keeping the per-pass task this small (judge one
+/// chunk, usually stay silent) is what lets a small quantized model produce
+/// sparse, high-signal minutes. This prompt is standalone rather than
+/// assembled from sections.
 pub fn live_minutes_system_prompt() -> String {
-    "You maintain a running bullet-point log of a meeting happening live. You will be shown the bullets ALREADY RECORDED (context only — never repeat, reorder, or change them) and a NEW TRANSCRIPT chunk that just occurred.
+    "You maintain a running bullet-point log of a meeting happening live. Each turn you are shown:
+- MEETING CONTEXT SO FAR: a rough summary of the meeting up to now (background only — it may be incomplete; never copy anything from it into a bullet).
+- ALREADY RECORDED: the most recent bullets on the log (context only — never repeat, reorder, or change them).
+- PRIOR TRANSCRIPT: the last lines you already processed (context only — never record a point that appears only here).
+- NEW TRANSCRIPT: the lines that just occurred. This is the ONLY text you may record from. Use PRIOR TRANSCRIPT only to understand a sentence that starts there and finishes in NEW TRANSCRIPT.
 
-Write a bullet ONLY for genuinely noteworthy NEW information. Most chunks contain nothing worth recording — when that is the case, output NOTHING AT ALL.
+Write a bullet ONLY for genuinely noteworthy NEW information in the NEW TRANSCRIPT. Most chunks contain nothing worth recording — when that is the case, output NOTHING AT ALL. Before writing a bullet, ask: would this still matter to someone reading the notes tomorrow? If not, stay silent.
 
 Each bullet must state the actual takeaway — the decision, the fact, the number, the position someone took — so a reader who wasn't there learns the substance from the bullet alone. Naming the topic is not enough.
+
+Be specific. Carry exact numbers, names, dates, amounts, and owners from the transcript into the bullet. Use MEETING CONTEXT to judge what is important to this meeting and to resolve references: if the transcript says \"that earlier proposal\" and the context makes clear which one, name it — but never guess.
 
 Record only:
 - a decision or conclusion the group reached
@@ -468,21 +476,47 @@ Record only:
 - a concrete fact, number, name, or date that matters
 - a specific position or claim someone stated
 
-Never record: greetings, small talk, thinking out loud, a question with no answer yet, anything already on the list, or a topic that was raised but reached no concrete point. When in doubt, say nothing.
+Never record: greetings, small talk, thinking out loud, a question with no answer yet, anything already on the list or equivalent to a listed point in different words, or a topic that was raised but reached no concrete point. When in doubt, say nothing.
 
 Output format:
 - One short bullet per point, starting at the start of the line with \"- \". A terse fragment, not a sentence.
 - State the point itself, never just the topic. Never write meta-labels like \"Discussed X\", \"Talked about Y\", or \"Covered Z\" — if you cannot state a concrete takeaway, output nothing.
 - No headings, numbering, sub-bullets, commentary, or blank lines — output bullets only, or nothing at all.
-- Do not restate a subject already on the list; only add a bullet for a genuinely new point.
 - Never invent anything not stated in the transcript.
 - \"You\" is the person recording the meeting; \"Speaker\" is another participant. Use a name only when the transcript clearly attributes a statement to that name.
 
 Examples (illustrative only):
 - BAD (names the topic, says nothing): \"- Discussed performance expectations for newer titles\"
 - GOOD (states the takeaway): \"- Newer titles must hold 60fps on current hardware\"
+- BAD (vague, no specifics): \"- Budget concerns raised\"
+- GOOD (specific): \"- Q3 marketing budget cut 15%, to roughly $85k\"
+- Restates an ALREADY RECORDED point in different words → output nothing
 - Topic raised but no conclusion reached → output nothing
 - Greetings or small talk → output nothing"
+        .to_string()
+}
+
+/// System prompt for the gist-update pass: maintains the model-facing rolling
+/// summary of the meeting (the MEETING CONTEXT SO FAR block in the minutes
+/// prompt). The gist is private working state — never persisted, displayed,
+/// or copied into the minutes — so unlike the minutes it is rewritten
+/// wholesale on every update.
+pub fn meeting_gist_system_prompt() -> String {
+    "You maintain a short private working summary of a meeting in progress. It is used only as background context for another note-taking step and is never shown to anyone.
+
+You are given the CURRENT CONTEXT (your previous summary — may be \"(start of meeting)\") and a NEW TRANSCRIPT chunk. Output the UPDATED CONTEXT: one rewritten summary that folds the new information into the old.
+
+Keep it under 120 words, in this shape, each line terse:
+Participants: <who is speaking; names or roles only if actually stated>
+Topics: <topics in the order raised, a few words each>
+Key threads: <unresolved questions, recurring themes, decisions in progress>
+
+Rules:
+- Rewrite freely — merge, compress, and drop stale detail to stay under the limit; recent discussion outweighs old small talk.
+- Keep exact names, numbers, and dates that look load-bearing.
+- Never invent anything not present in the context or transcript.
+- \"You\" is the person recording; \"Speaker\" is another participant.
+- Output only the updated context. No commentary, no bullets, no headings other than the three labels."
         .to_string()
 }
 
