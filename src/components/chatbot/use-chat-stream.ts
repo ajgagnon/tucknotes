@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { useTauriEvent } from "@/hooks/use-tauri-event";
 import { listenBatch } from "@/lib/tauri-events";
-import type { DownloadProgress } from "@/features/models";
+import { useLlmModelReady } from "@/features/models";
 
 export type ChatRole = "user" | "assistant";
 
@@ -58,36 +57,8 @@ const newId = () =>
     : Math.random().toString(36).slice(2);
 
 export function useChatStream() {
-  const [modelReady, setModelReady] = useState<boolean | null>(null);
+  const { ready: modelReady } = useLlmModelReady();
   const inflightChatId = useRef<string | null>(null);
-
-  const checkLlmModel = useCallback(async () => {
-    try {
-      const selected = await invoke<string | null>("get_selected_llm_model");
-      if (!selected) {
-        setModelReady(false);
-        return;
-      }
-      const ready = await invoke<boolean>("get_llm_model_status", {
-        modelId: selected,
-      });
-      setModelReady(ready);
-    } catch {
-      setModelReady(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void checkLlmModel();
-  }, [checkLlmModel]);
-
-  // Re-check when a model finishes downloading (mirrors useMeetingSummarization).
-  useTauriEvent<DownloadProgress>("llm-model:download-progress", (payload) => {
-    const { downloaded_bytes, total_bytes } = payload;
-    if (total_bytes <= 0 || downloaded_bytes < total_bytes) return;
-    void checkLlmModel();
-    setTimeout(() => void checkLlmModel(), 250);
-  });
 
   const send = useCallback(async (opts: SendOpts) => {
     const chatId = newId();
@@ -168,5 +139,5 @@ export function useChatStream() {
     });
   }, []);
 
-  return { send, stop, modelReady, recheckModel: checkLlmModel };
+  return { send, stop, modelReady };
 }

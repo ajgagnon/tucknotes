@@ -9,7 +9,6 @@ import {
   type MeetingDetail,
   type MeetingTitleInfo,
   type SummarizationQueue,
-  type TemplateInfo,
   type TitlePayload,
   type SummaryPlanPayload,
   type SectionStartPayload,
@@ -18,7 +17,8 @@ import {
   type SummarySection,
   summaryBodyFromDocuments,
 } from "./types";
-import type { DownloadProgress } from "@/features/models";
+import { useLlmModelReady } from "@/features/models";
+import { useSummaryTemplates } from "./use-summary-templates";
 import { toastError } from "@/lib/toast";
 
 export function useMeetingSummarization(
@@ -31,15 +31,13 @@ export function useMeetingSummarization(
 
   const [summarizing, setSummarizing] = useState(false);
   const [sections, setSections] = useState<SummarySection[]>([]);
-  const [llmModelReady, setLlmModelReady] = useState<boolean | null>(null);
+  const { ready: llmModelReady } = useLlmModelReady();
   const [currentSummary, setCurrentSummary] = useState<string | null>(
     summaryBody,
   );
 
-  const [templates, setTemplates] = useState<TemplateInfo[]>([]);
-  const [selectedTemplate, setSelectedTemplate] = useState<string>(
-    meeting.template ?? "default",
-  );
+  const { templates, selectedTemplate, setSelectedTemplate } =
+    useSummaryTemplates(meeting);
 
   const unlistenStreamRef = useRef<UnlistenFn | null>(null);
   const summaryBodyRef = useRef(summaryBody);
@@ -104,76 +102,6 @@ export function useMeetingSummarization(
     ]);
     return cleanupStreamListeners;
   }, [meeting.id, cleanupStreamListeners]);
-
-  const checkLlmModel = useCallback(async () => {
-    try {
-      const selected = await invoke<string | null>("get_selected_llm_model");
-      if (!selected) {
-        setLlmModelReady(false);
-        return;
-      }
-      const ready = await invoke<boolean>("get_llm_model_status", {
-        modelId: selected,
-      });
-      setLlmModelReady(ready);
-    } catch {
-      setLlmModelReady(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void checkLlmModel();
-  }, [checkLlmModel]);
-
-  // Load the (static) list of built-in templates once.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const list = await invoke<TemplateInfo[]>("list_summary_templates");
-        if (!cancelled) setTemplates(list);
-      } catch {
-        // Picker just renders no options; Summarize still works (→ Default).
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Resolve the picker selection whenever the meeting changes: the meeting's
-  // stored template wins, then the app-wide default, then "default". Switching
-  // the picker afterwards only mutates local state (applied on Summarize).
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      if (meeting.template) {
-        setSelectedTemplate(meeting.template);
-        return;
-      }
-      try {
-        const appDefault = await invoke<string | null>("get_default_template");
-        if (!cancelled) setSelectedTemplate(appDefault ?? "default");
-      } catch {
-        if (!cancelled) setSelectedTemplate("default");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meeting.id, meeting.template]);
-
-  // Re-check model readiness when an LLM download finishes so the UI flips
-  // out of the "Download a summarization model in Settings…" state without a
-  // remount. The progress event fires before the atomic rename completes, so
-  // checkLlmModel may briefly still see false; re-poll once on a short delay.
-  useTauriEvent<DownloadProgress>("llm-model:download-progress", (payload) => {
-    const { downloaded_bytes, total_bytes } = payload;
-    if (total_bytes <= 0 || downloaded_bytes < total_bytes) return;
-    void checkLlmModel();
-    setTimeout(() => void checkLlmModel(), 250);
-  });
 
   useEffect(() => {
     setCurrentSummary(summaryBody);
