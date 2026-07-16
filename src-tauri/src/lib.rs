@@ -14,6 +14,7 @@ use commands::chatbot::*;
 use commands::licensing::*;
 use commands::meetings::*;
 use commands::models::*;
+use commands::ollama::*;
 use commands::permissions::*;
 use commands::recording::*;
 use commands::summarization::*;
@@ -202,6 +203,10 @@ pub fn run() {
             set_selected_llm_model,
             remove_llm_model,
             get_llm_model_file_path,
+            detect_ollama,
+            list_ollama_models,
+            get_llm_engine_settings,
+            set_llm_engine_settings,
             summarize_meeting,
             get_summarization_queue,
             update_meeting_title,

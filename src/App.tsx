@@ -6,6 +6,7 @@ import ModelSetup from "@/features/onboarding/ModelSetup";
 import SummarizationSetup from "@/features/onboarding/SummarizationSetup";
 import AppLayout from "@/layout/AppLayout";
 import { useAutoUpdateCheck } from "@/hooks/use-auto-update-check";
+import type { LlmEngineSettings } from "@/features/models";
 
 type OnboardingStep =
   | "loading"
@@ -46,6 +47,8 @@ function App() {
   }
 
   async function checkSummarizationReady(): Promise<boolean> {
+    const engine = await invoke<LlmEngineSettings>("get_llm_engine_settings");
+    if (engine.provider === "ollama") return engine.ollama_model !== null;
     const selected = await invoke<string | null>("get_selected_llm_model");
     return selected !== null;
   }

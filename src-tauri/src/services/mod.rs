@@ -4,6 +4,7 @@ pub mod dedup;
 pub mod licensing;
 pub mod live_minutes;
 pub mod model_manager;
+pub mod ollama;
 pub mod summarization;
 pub mod template_store;
 pub mod templates;

@@ -9,8 +9,10 @@ pub use audio::{
     AccumulatedAudio, AudioChunkEvent, AudioSource, PcmAccumulator, RecordingFinalizedEvent,
     RecordingState, RecordingStateEvent, TranscriptEvent,
 };
-pub use llm::LlmModel;
-pub use settings::{AppSettings, DownloadProgress, ModelInfo, WhisperModel};
+pub use llm::{EngineSelection, LlmModel};
+pub use settings::{
+    AppSettings, DownloadProgress, LlmProvider, ModelInfo, OllamaSettings, WhisperModel,
+};
 pub use template::{OwnedSection, OwnedTemplate, TemplateStore};
 
 /// Shared interface for downloadable model types (Whisper, LLM).

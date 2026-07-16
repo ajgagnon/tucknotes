@@ -66,6 +66,42 @@ pub struct DownloadProgress {
     pub total_bytes: u64,
 }
 
+/// Which engine powers summarization and chat: the built-in model downloaded
+/// by the app (run in-process via llama.cpp) or a user-managed local Ollama
+/// server.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmProvider {
+    #[default]
+    BuiltIn,
+    Ollama,
+}
+
+pub fn default_ollama_base_url() -> String {
+    "http://localhost:11434".to_string()
+}
+
+/// Connection details for a user-managed Ollama server. Only consulted when
+/// `AppSettings::llm_provider` is `Ollama`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OllamaSettings {
+    #[serde(default = "default_ollama_base_url")]
+    pub base_url: String,
+    /// Name of the Ollama model to run (e.g. "qwen3:4b"). `None` until the
+    /// user picks one.
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+impl Default for OllamaSettings {
+    fn default() -> Self {
+        OllamaSettings {
+            base_url: default_ollama_base_url(),
+            model: None,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct AppSettings {
     pub selected_model: Option<WhisperModel>,
@@ -85,6 +121,14 @@ pub struct AppSettings {
     /// on; the feature silently no-ops when no LLM model is downloaded.
     #[serde(default = "default_true")]
     pub live_minutes_enabled: bool,
+    /// Which LLM engine to use. `#[serde(default)]` keeps older settings.json
+    /// files (without this field) loading as `BuiltIn`.
+    #[serde(default)]
+    pub llm_provider: LlmProvider,
+    /// Ollama connection details, kept even while `llm_provider` is `BuiltIn`
+    /// so switching providers loses nothing.
+    #[serde(default)]
+    pub ollama: OllamaSettings,
 }
 
 fn default_true() -> bool {
@@ -99,6 +143,8 @@ impl Default for AppSettings {
             default_template: None,
             recording_consent_acknowledged: false,
             live_minutes_enabled: true,
+            llm_provider: LlmProvider::default(),
+            ollama: OllamaSettings::default(),
         }
     }
 }
@@ -176,6 +222,56 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         let back: AppSettings = serde_json::from_str(&json).unwrap();
         assert!(!back.live_minutes_enabled);
+    }
+
+    #[test]
+    fn app_settings_llm_provider_defaults_built_in() {
+        // An older settings.json without provider fields loads as BuiltIn with
+        // default Ollama connection details.
+        let legacy = r#"{"selected_model":null,"selected_llm_model":null}"#;
+        let parsed: AppSettings = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.llm_provider, LlmProvider::BuiltIn);
+        assert_eq!(parsed.ollama, OllamaSettings::default());
+        assert_eq!(parsed.ollama.base_url, "http://localhost:11434");
+
+        assert_eq!(AppSettings::default().llm_provider, LlmProvider::BuiltIn);
+
+        // Round-trips when set.
+        let settings = AppSettings {
+            llm_provider: LlmProvider::Ollama,
+            ollama: OllamaSettings {
+                base_url: "http://192.168.1.5:11434".to_string(),
+                model: Some("qwen3:4b".to_string()),
+            },
+            ..AppSettings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.llm_provider, LlmProvider::Ollama);
+        assert_eq!(back.ollama.base_url, "http://192.168.1.5:11434");
+        assert_eq!(back.ollama.model.as_deref(), Some("qwen3:4b"));
+    }
+
+    #[test]
+    fn llm_provider_serializes_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&LlmProvider::BuiltIn).unwrap(),
+            r#""built_in""#
+        );
+        assert_eq!(
+            serde_json::to_string(&LlmProvider::Ollama).unwrap(),
+            r#""ollama""#
+        );
+    }
+
+    #[test]
+    fn ollama_settings_partial_json_gets_default_base_url() {
+        // `{"ollama":{}}` (e.g. hand-edited settings) still yields a usable
+        // base URL.
+        let json = r#"{"selected_model":null,"selected_llm_model":null,"ollama":{}}"#;
+        let parsed: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.ollama.base_url, "http://localhost:11434");
+        assert_eq!(parsed.ollama.model, None);
     }
 
     #[test]

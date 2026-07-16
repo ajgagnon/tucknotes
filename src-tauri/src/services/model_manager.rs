@@ -5,7 +5,10 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncWriteExt;
 
 use crate::errors::AppError;
-use crate::models::{AppSettings, DownloadProgress, LlmModel, Model, ModelInfo, WhisperModel};
+use crate::models::{
+    AppSettings, DownloadProgress, EngineSelection, LlmModel, LlmProvider, Model, ModelInfo,
+    WhisperModel,
+};
 
 /// Resolve the Tauri app data directory (e.g. ~/Library/Application Support/com.andre.tucknotes).
 /// This is the only place we depend on the Tauri runtime for path resolution.
@@ -84,6 +87,23 @@ pub fn resolve_whisper_path(base_dir: &Path) -> Result<Option<PathBuf>, AppError
 /// Convenience wrapper: resolve selected LLM model path.
 pub fn resolve_llm_path(base_dir: &Path) -> Result<Option<PathBuf>, AppError> {
     resolve_path(base_dir, |s| s.selected_llm_model.clone())
+}
+
+/// Resolve the configured LLM engine from settings.
+///
+/// Returns `None` when nothing usable is configured: built-in provider with no
+/// model selected/downloaded, or Ollama provider with no model chosen. Whether
+/// the Ollama server is actually reachable is only known at inference time.
+pub fn resolve_llm_engine(base_dir: &Path) -> Result<Option<EngineSelection>, AppError> {
+    let settings = load_settings_from(base_dir)?;
+    match settings.llm_provider {
+        LlmProvider::BuiltIn => Ok(resolve_llm_path(base_dir)?
+            .map(|model_path| EngineSelection::LlamaCpp { model_path })),
+        LlmProvider::Ollama => Ok(settings.ollama.model.map(|model| EngineSelection::Ollama {
+            base_url: settings.ollama.base_url,
+            model,
+        })),
+    }
 }
 
 /// Remove a Whisper model file and any `.partial` download artifact from
@@ -510,6 +530,89 @@ mod tests {
             path,
             models_dir.join(LlmModel::Qwen3_5_4B_Q4KM.filename())
         );
+    }
+
+    #[test]
+    fn resolve_llm_engine_built_in_maps_path() {
+        let base = TempDir::new();
+        let settings = AppSettings {
+            selected_llm_model: Some(LlmModel::Qwen3_5_4B_Q4KM),
+            ..Default::default()
+        };
+        save_settings_to(base.path(), &settings).unwrap();
+        let models_dir = ensure_models_dir(base.path()).unwrap();
+        fs::write(
+            models_dir.join(LlmModel::Qwen3_5_4B_Q4KM.filename()),
+            b"fake",
+        )
+        .unwrap();
+        let engine = resolve_llm_engine(base.path()).unwrap().unwrap();
+        assert_eq!(
+            engine,
+            EngineSelection::LlamaCpp {
+                model_path: models_dir.join(LlmModel::Qwen3_5_4B_Q4KM.filename())
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_llm_engine_built_in_none_when_not_downloaded() {
+        let base = TempDir::new();
+        let settings = AppSettings {
+            selected_llm_model: Some(LlmModel::Qwen3_5_4B_Q4KM),
+            ..Default::default()
+        };
+        save_settings_to(base.path(), &settings).unwrap();
+        assert!(resolve_llm_engine(base.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn resolve_llm_engine_ollama_requires_model() {
+        let base = TempDir::new();
+        let mut settings = AppSettings {
+            llm_provider: LlmProvider::Ollama,
+            ..Default::default()
+        };
+        save_settings_to(base.path(), &settings).unwrap();
+        // No model chosen yet.
+        assert!(resolve_llm_engine(base.path()).unwrap().is_none());
+
+        settings.ollama.model = Some("qwen3:4b".to_string());
+        save_settings_to(base.path(), &settings).unwrap();
+        let engine = resolve_llm_engine(base.path()).unwrap().unwrap();
+        assert_eq!(
+            engine,
+            EngineSelection::Ollama {
+                base_url: "http://localhost:11434".to_string(),
+                model: "qwen3:4b".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_llm_engine_ollama_ignores_built_in_download() {
+        // Provider choice wins even when a built-in model is also on disk.
+        let base = TempDir::new();
+        let settings = AppSettings {
+            selected_llm_model: Some(LlmModel::Qwen3_5_4B_Q4KM),
+            llm_provider: LlmProvider::Ollama,
+            ollama: crate::models::OllamaSettings {
+                model: Some("llama3.2:3b".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        save_settings_to(base.path(), &settings).unwrap();
+        let models_dir = ensure_models_dir(base.path()).unwrap();
+        fs::write(
+            models_dir.join(LlmModel::Qwen3_5_4B_Q4KM.filename()),
+            b"fake",
+        )
+        .unwrap();
+        assert!(matches!(
+            resolve_llm_engine(base.path()).unwrap().unwrap(),
+            EngineSelection::Ollama { .. }
+        ));
     }
 
     #[test]

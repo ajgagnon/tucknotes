@@ -17,7 +17,8 @@ export function ModelSection({
   className,
   disabled,
 }: {
-  title: string;
+  /** Section heading; omit when embedding under a parent section's heading. */
+  title?: string;
   config: ModelManagerConfig;
   radioIdPrefix: string;
   className?: string;
@@ -40,9 +41,11 @@ export function ModelSection({
 
   return (
     <section className={cn(className)}>
-      <h2 className="text-sm font-medium text-muted-foreground mb-4">
-        {title}
-      </h2>
+      {title && (
+        <h2 className="text-sm font-medium text-muted-foreground mb-4">
+          {title}
+        </h2>
+      )}
 
       {loading ? (
         <div className="flex flex-col gap-3">

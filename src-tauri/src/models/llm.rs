@@ -1,6 +1,18 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use super::Model;
+
+/// A fully-resolved LLM engine choice, ready to run inference against.
+/// Produced by `model_manager::resolve_llm_engine` from `AppSettings`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EngineSelection {
+    /// Built-in model executed in-process via llama.cpp.
+    LlamaCpp { model_path: PathBuf },
+    /// User-managed local Ollama server, spoken to over HTTP.
+    Ollama { base_url: String, model: String },
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[allow(non_camel_case_types)]

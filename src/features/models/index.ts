@@ -12,3 +12,12 @@ export {
 } from "./use-llm-download-progress";
 export { useLlmModelReady } from "./use-llm-model-ready";
 export { LlmDownloadIndicator } from "./LlmDownloadIndicator";
+export {
+  useLlmEngine,
+  detectOllama,
+  listOllamaModels,
+  type LlmProvider,
+  type LlmEngineSettings,
+  type OllamaStatus,
+  type OllamaModelInfo,
+} from "./use-llm-engine";

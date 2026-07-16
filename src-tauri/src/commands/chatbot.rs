@@ -189,13 +189,15 @@ pub async fn chat_send_message(
         messages.push(serde_json::json!({ "role": role, "content": msg.text }));
     }
 
-    // 3. Resolve model path.
+    // 3. Resolve the configured LLM engine (built-in model file or Ollama).
     let base_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| AppError::IoError(e.to_string()))?;
-    let model_path = model_manager::resolve_llm_path(&base_dir)?.ok_or_else(|| {
-        AppError::SummarizationFailed("No LLM model selected or downloaded".into())
+    let engine = model_manager::resolve_llm_engine(&base_dir)?.ok_or_else(|| {
+        AppError::SummarizationFailed(
+            "No summarization model configured — pick one in Settings".into(),
+        )
     })?;
 
     // 4. Signal preemption to any running summarization.
@@ -240,11 +242,11 @@ pub async fn chat_send_message(
         let app_clone = app.clone();
         let chat_id_clone = chat_id.clone();
         let tools_clone = tools.clone();
-        let model_path_clone = model_path.clone();
+        let engine_clone = engine.clone();
 
         let result = tokio::task::spawn_blocking(move || {
             service.generate_chat_with_tools(
-                &model_path_clone,
+                &engine_clone,
                 &messages_json,
                 Some(&tools_clone),
                 &interrupt,
@@ -401,7 +403,7 @@ pub async fn chat_send_message(
 
     let final_result = tokio::task::spawn_blocking(move || {
         service.generate_chat_with_tools(
-            &model_path,
+            &engine,
             &messages_json,
             None,
             &interrupt,

@@ -1,10 +1,11 @@
 import { useEffect } from "react";
 import { AppearanceSection } from "./AppearanceSection";
+import { LlmEngineSection } from "./LlmEngineSection";
 import { ModelSection } from "./ModelSection";
 import { RecordingSection } from "./RecordingSection";
 import { TemplateSection } from "./TemplateSection";
 import { UpdateSection } from "./UpdateSection";
-import { LLM_MODEL_CONFIG, WHISPER_MODEL_CONFIG } from "@/features/models";
+import { WHISPER_MODEL_CONFIG } from "@/features/models";
 import { useRecording } from "@/features/recording";
 import { useSummarizationActive } from "./use-summarization-active";
 import { LicenseSection } from "@/features/licensing";
@@ -46,12 +47,7 @@ function SettingsView({
           radioIdPrefix="model"
           disabled={recording || paused}
         />
-        <ModelSection
-          title="Summarization Model"
-          config={LLM_MODEL_CONFIG}
-          radioIdPrefix="llm-model"
-          disabled={summarizing}
-        />
+        <LlmEngineSection disabled={summarizing} />
         <RecordingSection disabled={recording || paused} />
         <TemplateSection
           disabled={summarizing}

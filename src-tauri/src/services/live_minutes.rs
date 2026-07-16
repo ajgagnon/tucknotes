@@ -120,11 +120,11 @@ pub fn start_session(app: &tauri::AppHandle, meeting_id: &str) {
         return;
     }
 
-    let model_path = app
+    let engine = app
         .path()
         .app_data_dir()
         .ok()
-        .and_then(|dir| model_manager::resolve_llm_path(&dir).ok().flatten());
+        .and_then(|dir| model_manager::resolve_llm_engine(&dir).ok().flatten());
 
     let state: tauri::State<'_, LiveMinutesState> = app.state();
     {
@@ -134,9 +134,11 @@ pub fn start_session(app: &tauri::AppHandle, meeting_id: &str) {
                 return; // resume: keep accumulated minutes
             }
         }
-        let disabled = model_path.is_none();
+        let disabled = engine.is_none();
         if disabled {
-            eprintln!("[live-minutes] no LLM model downloaded; live minutes off for this session");
+            eprintln!(
+                "[live-minutes] no LLM engine configured; live minutes off for this session"
+            );
         }
         *guard = Some(Session {
             meeting_id: meeting_id.to_string(),
@@ -233,20 +235,20 @@ fn maybe_spawn_pass(app: &tauri::AppHandle, force: bool) {
     let interrupt = std::sync::Arc::clone(&summ.llm_interrupt);
 
     session.handle = Some(tokio::spawn(async move {
-        let model_path = app
+        let engine = app
             .path()
             .app_data_dir()
             .ok()
-            .and_then(|dir| model_manager::resolve_llm_path(&dir).ok().flatten());
-        let (result, gist_outcome) = match model_path {
-            Some(path) => {
+            .and_then(|dir| model_manager::resolve_llm_engine(&dir).ok().flatten());
+        let (result, gist_outcome) = match engine {
+            Some(engine) => {
                 let chunk_in = chunk.clone();
                 let gist_in = gist.clone();
                 let carry_in = carry;
                 let recorded_in = recorded_tail;
                 let svc = std::sync::Arc::clone(&service);
                 let intr = std::sync::Arc::clone(&interrupt);
-                let path_in = path.clone();
+                let engine_in = engine.clone();
                 let result = tokio::task::spawn_blocking(move || {
                     let input = LiveMinutesPassInput {
                         gist: &gist_in,
@@ -254,7 +256,7 @@ fn maybe_spawn_pass(app: &tauri::AppHandle, force: bool) {
                         carry: &carry_in,
                         new_transcript: &chunk_in,
                     };
-                    svc.update_live_minutes(&path_in, &input, &intr)
+                    svc.update_live_minutes(&engine_in, &input, &intr)
                 })
                 .await
                 .unwrap_or_else(|e| {
@@ -281,7 +283,7 @@ fn maybe_spawn_pass(app: &tauri::AppHandle, force: bool) {
                     Some(gist_chunk) if result.is_ok() && !finalizing && !service.is_busy() => {
                         let chunk_in = gist_chunk.clone();
                         let gist_result = tokio::task::spawn_blocking(move || {
-                            service.update_meeting_gist(&path, &gist, &chunk_in, &interrupt)
+                            service.update_meeting_gist(&engine, &gist, &chunk_in, &interrupt)
                         })
                         .await
                         .unwrap_or_else(|e| {

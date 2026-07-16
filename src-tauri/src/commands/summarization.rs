@@ -404,13 +404,15 @@ async fn do_summarize(
         return Ok(TOO_SHORT_SUMMARY.to_string());
     }
 
-    // 2. Resolve model path
+    // 2. Resolve the configured LLM engine (built-in model file or Ollama).
     let base_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| AppError::IoError(e.to_string()))?;
-    let model_path = model_manager::resolve_llm_path(&base_dir)?.ok_or_else(|| {
-        AppError::SummarizationFailed("No LLM model selected or downloaded".into())
+    let engine = model_manager::resolve_llm_engine(&base_dir)?.ok_or_else(|| {
+        AppError::SummarizationFailed(
+            "No summarization model configured — pick one in Settings".into(),
+        )
     })?;
 
     // Resolve the template (NULL / unknown / deleted → Default).
@@ -442,11 +444,11 @@ async fn do_summarize(
     let service = Arc::clone(&summ_state.service);
     let interrupt = Arc::clone(&summ_state.llm_interrupt);
     let app_clone = app.clone();
-    let model_path_clone = model_path.clone();
+    let engine_clone = engine.clone();
     let mid_owned = meeting_id.to_owned();
 
     let summary = tokio::task::spawn_blocking(move || {
-        service.summarize(&model_path, &transcript, &template, &interrupt, |event| match *event {
+        service.summarize(&engine, &transcript, &template, &interrupt, |event| match *event {
             SummaryEvent::SectionStart { index, .. } => {
                 let _ = app_clone.emit(
                     "summary:section_start",
@@ -535,7 +537,7 @@ async fn do_summarize(
         } else {
             let result = tokio::task::spawn_blocking(move || {
                 eprintln!("[title-gen] Starting title generation…");
-                service.generate_title(&model_path_clone, &summary_for_title)
+                service.generate_title(&engine_clone, &summary_for_title)
             })
             .await;
 

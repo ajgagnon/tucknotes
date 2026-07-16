@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
@@ -14,6 +14,8 @@ use llama_cpp_2::token::LlamaToken;
 
 use crate::errors::{lock_or_err, AppError};
 use crate::models::template::OwnedTemplate;
+use crate::models::EngineSelection;
+use crate::services::ollama::{self, TextOptions};
 use crate::services::templates;
 
 const THINK_OPEN: &str = "<think>";
@@ -194,6 +196,43 @@ impl SummarizationService {
         )?;
         *guard = Some((model_path.to_path_buf(), model));
         Ok(())
+    }
+
+    /// Take the model lock for one inference pass, prepared for `engine`:
+    /// local engines get the GGUF (re)loaded, Ollama passes drop any resident
+    /// GGUF so multi-GB of RAM isn't pinned while a server does the work.
+    /// Every pass holds this lock for its full duration regardless of engine,
+    /// so `is_busy()` and the chat-preemption hand-off behave identically.
+    fn acquire(
+        &self,
+        engine: &EngineSelection,
+    ) -> Result<MutexGuard<'_, Option<(PathBuf, LlamaModel)>>, AppError> {
+        match engine {
+            EngineSelection::LlamaCpp { model_path } => {
+                self.ensure_loaded(model_path)?;
+                lock_or_err(&self.model)
+            }
+            EngineSelection::Ollama { .. } => {
+                let mut guard = lock_or_err(&self.model)?;
+                if guard.is_some() {
+                    eprintln!(
+                        "[summarization] Ollama engine selected; unloading resident local model"
+                    );
+                    *guard = None;
+                }
+                Ok(guard)
+            }
+        }
+    }
+
+    /// Borrow the loaded local model out of an [`acquire`]d guard.
+    fn local_model<'g>(
+        guard: &'g MutexGuard<'_, Option<(PathBuf, LlamaModel)>>,
+    ) -> Result<&'g LlamaModel, AppError> {
+        guard
+            .as_ref()
+            .map(|(_, model)| model)
+            .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".to_string()))
     }
 
     /// Apply the model's built-in Jinja chat template to a pre-built
@@ -399,7 +438,7 @@ impl SummarizationService {
     /// for cancellation semantics. **Blocking**.
     pub fn summarize<F>(
         &self,
-        model_path: &Path,
+        engine: &EngineSelection,
         transcript: &str,
         template: &OwnedTemplate,
         interrupt: &AtomicBool,
@@ -408,12 +447,7 @@ impl SummarizationService {
     where
         F: FnMut(&SummaryEvent<'_>),
     {
-        self.ensure_loaded(model_path)?;
-
-        let guard = lock_or_err(&self.model)?;
-        let (_, model) = guard
-            .as_ref()
-            .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
+        let guard = self.acquire(engine)?;
 
         let mut sections_out: Vec<String> = Vec::with_capacity(template.sections.len());
 
@@ -424,7 +458,6 @@ impl SummarizationService {
                 {"role": "user", "content": transcript}
             ])
             .to_string();
-            let prompt = Self::apply_template(model, &messages_json, false)?;
 
             let heading = section.heading.as_str();
 
@@ -432,22 +465,36 @@ impl SummarizationService {
             // first token lands (that gap is this section's transcript prefill).
             on_event(&SummaryEvent::SectionStart { index, heading });
 
+            // Thinking is disabled for summarization and both engines drop
+            // `<think>` content from the stream, so the callback sees body text
+            // only. The heading is rendered by the UI, so the body streams alone.
+            let on_token = |text: &str, is_thinking: bool| {
+                if !is_thinking {
+                    on_event(&SummaryEvent::Token { index, text });
+                }
+            };
+
             // `?` propagates AppError::Interrupted (chat preempted) out of the
             // loop; the command layer re-queues and restarts the whole meeting.
-            let raw = self.run_inference(
-                model,
-                &prompt,
-                MAX_SECTION_TOKENS,
-                interrupt,
-                |text, is_thinking| {
-                    // Thinking is disabled for summarization and `run_inference`
-                    // already drops `<think>` content, so this is body text only.
-                    // The heading is rendered by the UI, so we stream the body alone.
-                    if !is_thinking {
-                        on_event(&SummaryEvent::Token { index, text });
-                    }
-                },
-            )?;
+            let raw = match engine {
+                EngineSelection::LlamaCpp { .. } => {
+                    let model = Self::local_model(&guard)?;
+                    let prompt = Self::apply_template(model, &messages_json, false)?;
+                    self.run_inference(model, &prompt, MAX_SECTION_TOKENS, interrupt, on_token)?
+                }
+                EngineSelection::Ollama { base_url, model } => ollama::chat_text(
+                    base_url,
+                    model,
+                    &messages_json,
+                    &TextOptions {
+                        max_tokens: MAX_SECTION_TOKENS,
+                        stop: None,
+                        keep_alive: None,
+                    },
+                    interrupt,
+                    on_token,
+                )?,
+            };
 
             // Persist from the cleaned output: strip the `<think>` block and any
             // `## {heading}` the model emitted despite the body-only instruction
@@ -486,16 +533,11 @@ impl SummarizationService {
     /// returns `AppError::Interrupted` if chat preempts mid-generation.
     pub fn update_live_minutes(
         &self,
-        model_path: &Path,
+        engine: &EngineSelection,
         input: &LiveMinutesPassInput<'_>,
         interrupt: &AtomicBool,
     ) -> Result<String, AppError> {
-        self.ensure_loaded(model_path)?;
-
-        let guard = lock_or_err(&self.model)?;
-        let (_, model) = guard
-            .as_ref()
-            .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
+        let guard = self.acquire(engine)?;
 
         interrupt.store(false, Ordering::Relaxed);
 
@@ -504,10 +546,28 @@ impl SummarizationService {
             {"role": "user", "content": input.user_message()}
         ])
         .to_string();
-        let prompt = Self::apply_template(model, &messages_json, false)?;
 
-        let raw =
-            self.run_inference(model, &prompt, MAX_MINUTES_TOKENS, interrupt, |_, _| {})?;
+        let raw = match engine {
+            EngineSelection::LlamaCpp { .. } => {
+                let model = Self::local_model(&guard)?;
+                let prompt = Self::apply_template(model, &messages_json, false)?;
+                self.run_inference(model, &prompt, MAX_MINUTES_TOKENS, interrupt, |_, _| {})?
+            }
+            EngineSelection::Ollama { base_url, model } => ollama::chat_text(
+                base_url,
+                model,
+                &messages_json,
+                &TextOptions {
+                    max_tokens: MAX_MINUTES_TOKENS,
+                    stop: None,
+                    // Recording is live: keep the model resident through quiet
+                    // stretches so the next pass doesn't pay a reload.
+                    keep_alive: Some(ollama::KEEP_ALIVE_RECORDING),
+                },
+                interrupt,
+                |_, _| {},
+            )?,
+        };
         Ok(extract_bullet_lines(&strip_think_tags(raw.trim())))
     }
 
@@ -521,17 +581,12 @@ impl SummarizationService {
     /// the same pass — a chat preemption signaled meanwhile must still win.
     pub fn update_meeting_gist(
         &self,
-        model_path: &Path,
+        engine: &EngineSelection,
         prev_gist: &str,
         new_transcript: &str,
         interrupt: &AtomicBool,
     ) -> Result<String, AppError> {
-        self.ensure_loaded(model_path)?;
-
-        let guard = lock_or_err(&self.model)?;
-        let (_, model) = guard
-            .as_ref()
-            .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
+        let guard = self.acquire(engine)?;
 
         let gist_block = gist_block(prev_gist);
         let user_message =
@@ -541,9 +596,26 @@ impl SummarizationService {
             {"role": "user", "content": user_message}
         ])
         .to_string();
-        let prompt = Self::apply_template(model, &messages_json, false)?;
 
-        let raw = self.run_inference(model, &prompt, MAX_GIST_TOKENS, interrupt, |_, _| {})?;
+        let raw = match engine {
+            EngineSelection::LlamaCpp { .. } => {
+                let model = Self::local_model(&guard)?;
+                let prompt = Self::apply_template(model, &messages_json, false)?;
+                self.run_inference(model, &prompt, MAX_GIST_TOKENS, interrupt, |_, _| {})?
+            }
+            EngineSelection::Ollama { base_url, model } => ollama::chat_text(
+                base_url,
+                model,
+                &messages_json,
+                &TextOptions {
+                    max_tokens: MAX_GIST_TOKENS,
+                    stop: None,
+                    keep_alive: Some(ollama::KEEP_ALIVE_RECORDING),
+                },
+                interrupt,
+                |_, _| {},
+            )?,
+        };
         Ok(strip_think_tags(raw.trim()).trim().to_string())
     }
 
@@ -552,7 +624,7 @@ impl SummarizationService {
     /// **Blocking**.
     pub fn generate_chat<F>(
         &self,
-        model_path: &Path,
+        engine: &EngineSelection,
         messages_json: &str,
         interrupt: &AtomicBool,
         on_token: F,
@@ -560,21 +632,32 @@ impl SummarizationService {
     where
         F: FnMut(&str, bool),
     {
-        self.ensure_loaded(model_path)?;
-
-        let guard = lock_or_err(&self.model)?;
-        let (_, model) = guard
-            .as_ref()
-            .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
+        let guard = self.acquire(engine)?;
 
         // We're past the preemption hand-off: the lock is ours. Clear the
         // shared flag so we don't immediately self-abort. It remains
         // available for the stop button to signal *this* run to bail.
         interrupt.store(false, Ordering::Relaxed);
 
-        let prompt = Self::apply_template(model, messages_json, false)?;
-
-        let raw = self.run_inference(model, &prompt, MAX_CHAT_TOKENS, interrupt, on_token)?;
+        let raw = match engine {
+            EngineSelection::LlamaCpp { .. } => {
+                let model = Self::local_model(&guard)?;
+                let prompt = Self::apply_template(model, messages_json, false)?;
+                self.run_inference(model, &prompt, MAX_CHAT_TOKENS, interrupt, on_token)?
+            }
+            EngineSelection::Ollama { base_url, model } => ollama::chat_text(
+                base_url,
+                model,
+                messages_json,
+                &TextOptions {
+                    max_tokens: MAX_CHAT_TOKENS,
+                    stop: None,
+                    keep_alive: None,
+                },
+                interrupt,
+                on_token,
+            )?,
+        };
         let cleaned = strip_think_tags(raw.trim());
         Ok(cleaned.trim().to_string())
     }
@@ -589,7 +672,7 @@ impl SummarizationService {
     #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
     pub fn generate_chat_with_tools<F>(
         &self,
-        model_path: &Path,
+        engine: &EngineSelection,
         messages_json: &str,
         tools_json: Option<&str>,
         interrupt: &AtomicBool,
@@ -598,18 +681,26 @@ impl SummarizationService {
     where
         F: FnMut(&InferenceEvent<'_>),
     {
-        self.ensure_loaded(model_path)?;
-
-        let guard = lock_or_err(&self.model)?;
-        let (_, model) = guard
-            .as_ref()
-            .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
-
-        let max_tokens = model.n_ctx_train();
+        let guard = self.acquire(engine)?;
 
         // We have the lock; clear the shared flag so we don't immediately
         // self-abort. The stop button can re-set it to interrupt this run.
         interrupt.store(false, Ordering::Relaxed);
+
+        if let EngineSelection::Ollama { base_url, model } = engine {
+            return ollama::chat_with_tools(
+                base_url,
+                model,
+                messages_json,
+                tools_json,
+                MAX_TOOL_CHAT_TOKENS,
+                interrupt,
+                on_event,
+            );
+        }
+
+        let model = Self::local_model(&guard)?;
+        let max_tokens = model.n_ctx_train();
 
         // Apply the template with tools enabled. Keep the full ChatTemplateResult
         // for grammar, preserved tokens, stops, and (most importantly) the
@@ -876,15 +967,10 @@ impl SummarizationService {
     #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
     pub fn generate_title(
         &self,
-        model_path: &Path,
+        engine: &EngineSelection,
         summary: &str,
     ) -> Result<String, AppError> {
-        self.ensure_loaded(model_path)?;
-
-        let guard = lock_or_err(&self.model)?;
-        let (_, model) = guard
-            .as_ref()
-            .ok_or_else(|| AppError::SummarizationFailed("Model not loaded".into()))?;
+        let guard = self.acquire(engine)?;
 
         let system = "Generate a very short, descriptive meeting title (5-6 words maximum) from the summary below. Output ONLY the title text — no quotes, no dashes, no colons, nothing else.";
         let messages_json = serde_json::json!([
@@ -892,6 +978,43 @@ impl SummarizationService {
             {"role": "user", "content": summary}
         ])
         .to_string();
+        let max_title_tokens: i32 = 512;
+
+        if let EngineSelection::Ollama { base_url, model } = engine {
+            // Title gen takes no interrupt (it runs after the summary, holding
+            // the model lock briefly); a local never-set flag keeps the client
+            // API uniform. The local path stops at the first newline after
+            // content — here the model runs to EOS and we keep the first
+            // non-empty line.
+            let interrupt = AtomicBool::new(false);
+            let raw = ollama::chat_text(
+                base_url,
+                model,
+                &messages_json,
+                &TextOptions {
+                    max_tokens: max_title_tokens,
+                    stop: None,
+                    keep_alive: None,
+                },
+                &interrupt,
+                |_, _| {},
+            )?;
+            let cleaned = strip_think_tags(raw.trim());
+            let first_line = cleaned
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .unwrap_or_default();
+            let title = first_line
+                .trim_matches('"')
+                .trim_matches(|c| c == '-' || c == '–' || c == '—')
+                .trim()
+                .to_string();
+            eprintln!("[title-gen] (ollama) Final title: {:?}", title);
+            return Ok(title);
+        }
+
+        let model = Self::local_model(&guard)?;
         let prompt = Self::apply_template(model, &messages_json, false)?;
 
         let tokens_list = model
@@ -899,7 +1022,6 @@ impl SummarizationService {
             .map_err(|e| AppError::SummarizationFailed(format!("Tokenization failed: {e}")))?;
 
         let n_input = tokens_list.len() as u32;
-        let max_title_tokens: i32 = 512;
         let n_ctx = (n_input + max_title_tokens as u32 + 64).max(512);
 
         let ctx_params = LlamaContextParams::default()
@@ -1004,7 +1126,7 @@ impl SummarizationService {
 ///
 /// Buffers across token boundaries so tags split across pieces are still
 /// recognised.
-struct StreamFilter {
+pub(crate) struct StreamFilter {
     state: FilterState,
     /// Pending text we haven't decided how to emit yet (may contain the start
     /// of a tag).
@@ -1055,14 +1177,14 @@ const GEMMA_RESPONSE_CLOSE: &str = "<channel|>";
 const GEMMA_STR_MARKER: &str = "<|\"|>";
 
 impl StreamFilter {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             state: FilterState::Plain,
             buf: String::new(),
         }
     }
 
-    fn push<F>(&mut self, piece: &str, on_event: &mut F)
+    pub(crate) fn push<F>(&mut self, piece: &str, on_event: &mut F)
     where
         F: FnMut(&InferenceEvent<'_>),
     {
@@ -1070,7 +1192,7 @@ impl StreamFilter {
         self.drain(on_event, false);
     }
 
-    fn flush<F>(&mut self, on_event: &mut F)
+    pub(crate) fn flush<F>(&mut self, on_event: &mut F)
     where
         F: FnMut(&InferenceEvent<'_>),
     {
@@ -1197,7 +1319,7 @@ impl StreamFilter {
 ///
 /// Malformed blocks are silently skipped — better to degrade to a plain reply
 /// than to crash.
-fn extract_tool_calls(text: &str) -> Vec<ToolCallSpec> {
+pub(crate) fn extract_tool_calls(text: &str) -> Vec<ToolCallSpec> {
     let mut out = Vec::new();
     let mut push = |name: String, arguments: String, out: &mut Vec<ToolCallSpec>| {
         let id = format!("call_{}", out.len());
